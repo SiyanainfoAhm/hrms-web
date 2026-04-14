@@ -1,6 +1,7 @@
 "use client";
 
 import { forwardRef } from "react";
+import Image from "next/image";
 import {
   governmentPayslipPeriodTitle,
   governmentPayslipTAccountRows,
@@ -81,9 +82,12 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
               <td colSpan={2} className="border border-black px-3 py-3 text-center">
                 {company?.logoUrl ? (
                   <div className="mb-2 flex justify-center border-b border-black/20 pb-2 print:mb-1 print:pb-1">
-                    <img
+                    <Image
+                      unoptimized
                       src={company.logoUrl}
                       alt=""
+                      width={260}
+                      height={64}
                       className="h-14 max-h-[64px] w-auto max-w-[min(100%,260px)] object-contain"
                     />
                   </div>

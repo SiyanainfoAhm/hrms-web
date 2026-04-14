@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import {
   BadgeCheck,
   CalendarDays,
@@ -98,7 +99,14 @@ export function SidebarTemplate({
               )}
               aria-hidden
             >
-              <img src={companyLogoUrl} alt="" className="h-full w-full object-contain" />
+              <Image
+                unoptimized
+                src={companyLogoUrl}
+                alt=""
+                width={expanded ? 32 : 40}
+                height={expanded ? 32 : 40}
+                className="h-full w-full object-contain"
+              />
             </div>
           ) : (
             <div

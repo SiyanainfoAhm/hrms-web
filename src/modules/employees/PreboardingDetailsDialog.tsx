@@ -116,7 +116,10 @@ export function PreboardingDetailsDialog(props: {
   const invite: InviteRow | null = bundle?.invite ?? null;
   const employee: any = bundle?.employee ?? null;
   const documents: CompanyDocRow[] = Array.isArray(bundle?.documents) ? bundle.documents : [];
-  const submissions: SubmissionRow[] = Array.isArray(bundle?.submissions) ? bundle.submissions : [];
+  const submissions: SubmissionRow[] = useMemo(
+    () => (Array.isArray(bundle?.submissions) ? bundle.submissions : []),
+    [bundle?.submissions]
+  );
 
   const inviteUrl = useMemo(() => {
     const token = invite?.token;

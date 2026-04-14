@@ -3,6 +3,7 @@
 import { useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useRef, FormEvent } from "react";
+import Image from "next/image";
 import { PasswordField } from "@/components/auth/PasswordField";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { supabase } from "@/lib/supabaseClient";
@@ -1154,9 +1155,12 @@ export function ProfileContent() {
                             <td colSpan={2} className="border border-black px-4 py-4 text-center">
                               {company?.logoUrl ? (
                                 <div className="payslip-logo-banner mb-3 flex justify-center border-b border-black/15 pb-3 print:mb-2 print:pb-2">
-                                  <img
+                                  <Image
+                                    unoptimized
                                     src={company.logoUrl}
                                     alt=""
+                                    width={280}
+                                    height={72}
                                     className="h-16 max-h-[72px] w-auto max-w-[min(100%,280px)] object-contain object-center"
                                   />
                                 </div>

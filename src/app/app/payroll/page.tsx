@@ -5,6 +5,7 @@ import Link from "next/link";
 import { HrmsShellPage } from "@/components/layout/HrmsShellPage";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
+import Image from "next/image";
 import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
@@ -3391,9 +3392,12 @@ function PayrollPageContent() {
                         <td colSpan={2} className="border border-black px-4 py-4 text-center">
                           {company?.logoUrl ? (
                             <div className="payslip-logo-banner mb-3 flex justify-center border-b border-black/15 pb-3 print:mb-2 print:pb-2">
-                              <img
+                              <Image
+                                unoptimized
                                 src={company.logoUrl}
                                 alt=""
+                                width={280}
+                                height={72}
                                 className="h-16 max-h-[72px] w-auto max-w-[min(100%,280px)] object-contain object-center"
                               />
                             </div>

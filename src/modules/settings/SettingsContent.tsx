@@ -1,11 +1,12 @@
 "use client";
 
 import { useHrmsSession } from "@/hooks/useHrmsSession";
-import { type ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { type ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
+import Image from "next/image";
 
 export function SettingsContent() {
   const { role } = useHrmsSession();
@@ -90,7 +91,7 @@ export function SettingsContent() {
   const [payrollCfgError, setPayrollCfgError] = useState<string | null>(null);
   const [payrollCfg, setPayrollCfg] = useState<PrivatePayrollConfig>(() => normalizePrivatePayrollConfig(null));
 
-  async function loadPayrollConfig() {
+  const loadPayrollConfig = useCallback(async () => {
     if (!isSuperAdmin) return;
     setPayrollCfgLoading(true);
     setPayrollCfgError(null);
@@ -104,7 +105,7 @@ export function SettingsContent() {
     } finally {
       setPayrollCfgLoading(false);
     }
-  }
+  }, [isSuperAdmin]);
 
   async function savePayrollConfig(e: FormEvent) {
     e.preventDefault();
@@ -368,7 +369,6 @@ export function SettingsContent() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   async function refreshShifts() {
@@ -674,7 +674,7 @@ export function SettingsContent() {
     if (!isSuperAdmin) return;
     if (activeTab !== "payroll") return;
     void loadPayrollConfig();
-  }, [activeTab, isSuperAdmin]);
+  }, [activeTab, isSuperAdmin, loadPayrollConfig]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -893,9 +893,12 @@ export function SettingsContent() {
                     <div className="mt-3 flex flex-wrap items-center gap-4">
                       <div className="flex h-20 w-40 items-center justify-center rounded-lg border border-slate-200 bg-slate-50 p-2">
                         {company?.logo_url ? (
-                          <img
+                          <Image
+                            unoptimized
                             src={String(company.logo_url)}
                             alt=""
+                            width={160}
+                            height={80}
                             className="max-h-full max-w-full object-contain"
                           />
                         ) : (

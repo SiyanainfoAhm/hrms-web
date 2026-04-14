@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { PageHeader } from "@/components/common/PageHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
@@ -194,7 +195,7 @@ export function DashboardContent() {
     if (!log?.check_in_at || log?.check_out_at) return;
     const t = setInterval(() => setTick(Date.now()), 1000);
     return () => clearInterval(t);
-  }, [attendance?.log?.check_in_at, attendance?.log?.check_out_at]);
+  }, [attendance?.log]);
 
   async function handleBreakToggle(kind: "lunch" | "tea") {
     const isLunch = kind === "lunch";
@@ -345,7 +346,8 @@ export function DashboardContent() {
           <div className="lg:col-span-1">
             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
               <div className="mb-6 flex items-center gap-4">
-                <img
+                <Image
+                  unoptimized
                   src={AvatarUrl({ userId: id, gender: user?.gender ?? null })}
                   alt=""
                   width={80}
