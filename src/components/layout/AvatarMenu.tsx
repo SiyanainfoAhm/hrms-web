@@ -9,6 +9,7 @@ export type AvatarMenuUser = {
   firstName?: string;
   lastName?: string;
   fullName?: string;
+  email?: string;
   roleLabel?: string;
 };
 
@@ -80,7 +81,12 @@ export function AvatarMenu({
             className="flex items-center gap-2 w-full px-4 py-3 text-gray-700 font-semibold hover:bg-gray-50 transition text-sm text-left"
             onClick={() => {
               setOpen(false);
-              onOpenProfile?.();
+              if (onOpenProfile) {
+                onOpenProfile();
+                return;
+              }
+              // Fallback: ensure Profile always navigates
+              window.location.href = "/app/profile";
             }}
             type="button"
           >

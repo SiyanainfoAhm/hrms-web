@@ -1,22 +1,17 @@
 import type { RoleId } from "./roleConfig";
 
 /**
- * Master-template convention: one place to decide where an authenticated user
- * should land, based on their role.
- *
- * For now all roles point to the demo dashboard. In a real app you can change
- * these to role-specific routes (e.g. "/app/admin", "/app/staff", etc).
+ * Default landing route after login, per HRMS role.
  */
 export const roleHomeHref: Record<RoleId, string> = {
-  owner: "/app/demo",
-  admin: "/app/demo",
-  manager: "/app/demo",
-  staff: "/app/demo",
-  viewer: "/app/demo"
+  super_admin: "/app/dashboard",
+  admin: "/app/dashboard",
+  hr: "/app/dashboard",
+  manager: "/app/dashboard",
+  employee: "/app/dashboard"
 };
 
 export function getRoleHomeHref(role: RoleId | undefined | null): string {
-  if (!role) return roleHomeHref.viewer;
-  return roleHomeHref[role] ?? roleHomeHref.viewer;
+  if (!role) return roleHomeHref.employee;
+  return roleHomeHref[role] ?? roleHomeHref.employee;
 }
-

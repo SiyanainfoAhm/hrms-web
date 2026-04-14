@@ -3,8 +3,8 @@ import "./globals.css";
 import { ThemeProvider } from "../components/common/ThemeProvider";
 
 export const metadata: Metadata = {
-  title: "Master Frontend Starter",
-  description: "Reusable frontend starter for CRUD-heavy web apps."
+  title: "HRMS Web",
+  description: "Human resources management system"
 };
 
 export default function RootLayout({

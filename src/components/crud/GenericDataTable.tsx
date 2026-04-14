@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ArrowDownUp, MoreHorizontal } from "lucide-react";
 import type { Actor } from "../../lib/permissions";
 import { cn } from "../../lib/cn";
@@ -70,8 +70,9 @@ export function GenericDataTable<TRow>({
     });
   }, [columns, filtered, sortDir, sortKey]);
 
-  const visibleActions = useMemo(
-    () => (rowActions ?? []).filter((a) => isVisible(actor, a.visible)),
+  const actionsForRow = useCallback(
+    (row: TRow) =>
+      (rowActions ?? []).filter((a) => isVisible(actor, a.visible) && (a.visibleForRow ? a.visibleForRow(row) : true)),
     [actor, rowActions]
   );
 
@@ -125,52 +126,76 @@ export function GenericDataTable<TRow>({
                     </th>
                   );
                 })}
-                {visibleActions.length > 0 && (
+                {(rowActions ?? []).some((a) => isVisible(actor, a.visible)) && (
                   <th className="px-4 py-2 text-left text-xs font-semibold text-gray-500">{actionsHeader}</th>
                 )}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {sorted.map((row) => (
-                <tr
-                  key={rowKey(row)}
-                  className={cn("hover:bg-gray-50 transition", onRowClick && "cursor-pointer")}
-                  onClick={() => onRowClick?.(row)}
-                >
-                  {columns.map((col) => (
-                    <td key={col.key} className={cn("px-4 py-3 text-sm text-gray-700", col.className)}>
-                      {col.render(row)}
-                    </td>
-                  ))}
-                  {visibleActions.length > 0 && (
-                    <td className="px-4 py-3 text-sm text-gray-700">
-                      <div className="flex items-center gap-2">
-                        {visibleActions.slice(0, 2).map((a) => (
-                          <button
-                            key={a.key}
-                            type="button"
-                            className={cn(
-                              "text-sm font-medium hover:underline",
-                              a.intent === "danger" ? "text-red-600" : "text-[var(--primary)]"
-                            )}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void a.onClick(row);
-                            }}
-                          >
-                            {a.label}
-                          </button>
-                        ))}
-                        {visibleActions.length > 2 && (
-                          <div className="text-gray-400" title="More actions">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                  )}
-                </tr>
-              ))}
+              {sorted.map((row) => {
+                const visibleActions = actionsForRow(row);
+                return (
+                  <tr
+                    key={rowKey(row)}
+                    className={cn("hover:bg-gray-50 transition", onRowClick && "cursor-pointer")}
+                    onClick={() => onRowClick?.(row)}
+                  >
+                    {columns.map((col) => (
+                      <td key={col.key} className={cn("px-4 py-3 text-sm text-gray-700", col.className)}>
+                        {col.render(row)}
+                      </td>
+                    ))}
+                    {(rowActions ?? []).some((a) => isVisible(actor, a.visible)) && (
+                      <td className="px-4 py-3 text-sm text-gray-700">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {visibleActions.slice(0, 4).map((a) => (
+                            <button
+                              key={a.key}
+                              type="button"
+                              className={cn(
+                                a.icon
+                                  ? "inline-flex items-center justify-center h-8 w-8 rounded-lg border transition"
+                                  : "text-sm font-medium hover:underline",
+                                a.icon
+                                  ? a.intent === "danger"
+                                    ? "border-red-200 text-red-600 hover:bg-red-50"
+                                    : "border-gray-200 text-gray-700 hover:bg-gray-50"
+                                  : a.intent === "danger"
+                                    ? "text-red-600"
+                                    : "text-[var(--primary)]"
+                                ,
+                                // Allow per-action and per-row overrides (must come last)
+                                a.className,
+                                a.classNameForRow ? a.classNameForRow(row) : null,
+                              )}
+                              title={a.label}
+                              aria-label={a.label}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void a.onClick(row);
+                              }}
+                            >
+                              {a.icon ? (
+                                <>
+                                  {a.icon}
+                                  <span className="sr-only">{a.label}</span>
+                                </>
+                              ) : (
+                                a.label
+                              )}
+                            </button>
+                          ))}
+                          {visibleActions.length > 4 && (
+                            <div className="text-gray-400" title="More actions">
+                              <MoreHorizontal className="w-4 h-4" />
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -49,8 +49,16 @@ export type TableColumn<TRow> = {
 export type RowAction<TRow> = {
   key: string;
   label: string;
+  /** Optional icon for compact action buttons (e.g. tables). */
+  icon?: React.ReactNode;
+  /** Optional extra classes for the action button. */
+  className?: string;
+  /** Compute extra classes per-row (useful for status coloring). */
+  classNameForRow?: (row: TRow) => string | undefined;
   intent?: "default" | "danger";
   visible?: VisibilityRule;
+  /** If set, action shows only when this returns true for the row. */
+  visibleForRow?: (row: TRow) => boolean;
   onClick: (row: TRow) => void | Promise<void>;
 };
 

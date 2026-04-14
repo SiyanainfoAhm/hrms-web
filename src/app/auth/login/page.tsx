@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { AuthLayout } from "../../../components/auth/AuthLayout";
 import { LoginTemplate } from "../../../components/auth/LoginTemplate";
+import type { RoleId } from "../../../config/roleConfig";
 import { getRoleHomeHref } from "../../../config/roleHomeConfig";
 
 export default function LoginPage() {
@@ -20,30 +21,34 @@ export default function LoginPage() {
       <LoginTemplate
         loading={loading}
         error={error}
-        onGoogleLogin={async () => {
+        onEmailPasswordLogin={async ({ email, password }) => {
           setError(undefined);
           setLoading(true);
           try {
-            // Demo-only: replace with real OAuth flow later.
-            localStorage.setItem(
-              "demoUser",
-              JSON.stringify({ id: "u1", fullName: "Demo User", role: "admin" })
-            );
-            router.push(getRoleHomeHref("admin"));
-          } finally {
-            setLoading(false);
-          }
-        }}
-        onEmailPasswordLogin={async ({ email }) => {
-          setError(undefined);
-          setLoading(true);
-          try {
-            // Demo-only: wire to your backend using `authConfig.endpoints.login`.
-            localStorage.setItem(
-              "demoUser",
-              JSON.stringify({ id: "u1", fullName: email.split("@")[0] || "User", role: "admin", email })
-            );
-            router.push(getRoleHomeHref("admin"));
+            const res = await fetch("/api/auth/login", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ email, password })
+            });
+            const data = (await res.json().catch(() => ({}))) as { error?: string; user?: { id: string; email: string; name: string | null; role: string } };
+            if (!res.ok) {
+              setError(data?.error || "Login failed.");
+              return;
+            }
+            const u = data.user;
+            if (u) {
+              localStorage.setItem(
+                "demoUser",
+                JSON.stringify({
+                  id: u.id,
+                  email: u.email,
+                  fullName: u.name || u.email.split("@")[0] || "User",
+                  role: u.role
+                })
+              );
+              router.push(getRoleHomeHref(u.role as RoleId));
+            }
           } catch {
             setError("Login failed.");
           } finally {

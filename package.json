@@ -11,13 +11,23 @@
   },
   "dependencies": {
     "@headlessui/react": "^2.2.2",
+    "@supabase/supabase-js": "^2.49.1",
+    "bcryptjs": "^3.0.3",
     "clsx": "^2.1.1",
+    "google-auth-library": "^9.15.1",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
+    "html2canvas": "^1.4.1",
+    "jspdf": "^3.0.4",
     "lucide-react": "^0.508.0",
     "next": "^15.3.8",
+    "react-day-picker": "^9.4.4",
+    "xlsx-js-style": "^1.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@eslint/eslintrc": "^3",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",

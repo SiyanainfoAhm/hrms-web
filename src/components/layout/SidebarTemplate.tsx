@@ -2,16 +2,26 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CreditCard, Grid3X3, Settings, Users, ClipboardList } from "lucide-react";
+import { useEffect, useState } from "react";
+import {
+  BadgeCheck,
+  CalendarDays,
+  ClipboardList,
+  CreditCard,
+  Grid3X3,
+  Settings,
+  User,
+  Users
+} from "lucide-react";
 import { appConfig } from "../../config/appConfig";
-import type { SidebarSection } from "../../config/sidebarConfig";
+import type { SidebarIconId, SidebarSection } from "../../config/sidebarConfig";
 import { sidebarConfig } from "../../config/sidebarConfig";
 import type { Actor } from "../../lib/permissions";
 import { hasAnyPermission, hasAnyRole } from "../../lib/permissions";
 import { cn } from "../../lib/cn";
 import { useSidebarState } from "./SidebarState";
 
-function iconFor(kind: NonNullable<SidebarSection["items"][number]["icon"]>) {
+function iconFor(kind: NonNullable<SidebarIconId>) {
   switch (kind) {
     case "grid":
       return Grid3X3;
@@ -23,6 +33,12 @@ function iconFor(kind: NonNullable<SidebarSection["items"][number]["icon"]>) {
       return Settings;
     case "credit-card":
       return CreditCard;
+    case "calendar":
+      return CalendarDays;
+    case "badge-check":
+      return BadgeCheck;
+    case "user":
+      return User;
     default:
       return Grid3X3;
   }
@@ -39,6 +55,26 @@ export function SidebarTemplate({
 }) {
   const pathname = usePathname();
   const { expanded, toggle } = useSidebarState();
+  const [companyLogoUrl, setCompanyLogoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/company/me");
+        const data = await res.json();
+        if (cancelled) return;
+        const raw = data?.company?.logo_url;
+        const url = typeof raw === "string" && raw.trim() ? raw.trim() : null;
+        setCompanyLogoUrl(url);
+      } catch {
+        if (!cancelled) setCompanyLogoUrl(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <aside
@@ -54,9 +90,26 @@ export function SidebarTemplate({
         )}
       >
         <div className={cn("flex items-center min-w-0", expanded ? "gap-3" : "justify-center w-full")}>
-          <div className={cn("rounded-full border bg-[var(--primary-soft)] text-[var(--primary)] font-bold flex items-center justify-center", expanded ? "w-8 h-8" : "w-10 h-10")}>
-            {branding.logoText ?? branding.appShortName.slice(0, 1)}
-          </div>
+          {companyLogoUrl ? (
+            <div
+              className={cn(
+                "rounded-full border border-[var(--border)] bg-white flex items-center justify-center overflow-hidden",
+                expanded ? "w-8 h-8" : "w-10 h-10",
+              )}
+              aria-hidden
+            >
+              <img src={companyLogoUrl} alt="" className="h-full w-full object-contain" />
+            </div>
+          ) : (
+            <div
+              className={cn(
+                "rounded-full border bg-[var(--primary-soft)] text-[var(--primary)] font-bold flex items-center justify-center",
+                expanded ? "w-8 h-8" : "w-10 h-10",
+              )}
+            >
+              {branding.logoText ?? branding.appShortName.slice(0, 1)}
+            </div>
+          )}
           {expanded && <span className="font-bold text-lg flex-1 truncate">{branding.appShortName}</span>}
         </div>
 
@@ -96,7 +149,9 @@ export function SidebarTemplate({
               )}
               {visibleItems.map((item) => {
                 const Icon = item.icon ? iconFor(item.icon) : Grid3X3;
-                const active = pathname === item.href;
+                const hrefPath = item.href.split("#")[0] ?? item.href;
+                const active =
+                  pathname === hrefPath || (hrefPath !== "/" && pathname.startsWith(`${hrefPath}/`));
 
                 return (
                   <Link

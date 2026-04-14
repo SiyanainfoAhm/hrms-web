@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { authConfig, type AuthConfig } from "../../config/authConfig";
 import { cn } from "../../lib/cn";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 
 export function SignupTemplate({
   config = authConfig,
@@ -23,20 +24,6 @@ export function SignupTemplate({
 
   return (
     <div className="space-y-3">
-      {methods.google && (
-        <button
-          type="button"
-          onClick={() => onGoogleSignup?.()}
-          className="w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-300 rounded-md bg-white hover:bg-gray-50 transition shadow-sm"
-          disabled={loading || !onGoogleSignup}
-        >
-          <span className="w-5 h-5 rounded-sm bg-gray-100 inline-flex items-center justify-center text-xs text-gray-600">
-            G
-          </span>
-          <span className="text-gray-800 font-medium">Sign up with Google</span>
-        </button>
-      )}
-
       {methods.facebook && (
         <button
           type="button"
@@ -99,6 +86,8 @@ export function SignupTemplate({
           </button>
         </form>
       )}
+
+      {methods.google && <GoogleAuthButton mode="signup" onSuccessRedirect="/app/dashboard" />}
 
       {!methods.emailPassword && !methods.google && !methods.facebook && (
         <div className="text-sm text-gray-500 text-center">

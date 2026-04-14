@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "react-day-picker/style.css";
 
 /* Token-driven theme (overridden by `src/config/themeConfig.ts`). */
 :root {
@@ -41,6 +42,22 @@ body {
   color: var(--text);
 }
 
+/* Theme-consistent focus/highlight across the app */
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  border-color: var(--primary);
+}
+
 /* Small, Sociomate-like animation used by dialogs/toasts. */
 @keyframes fade-in {
   from {
@@ -55,5 +72,60 @@ body {
 
 .animate-fade-in {
   animation: fade-in 160ms ease-out both;
+}
+
+/* Legacy helpers kept temporarily for migrated pages.
+   IMPORTANT: these must follow the master theme tokens (var(--primary), etc.),
+   not any legacy HRMS green/teal styling. */
+.page-title {
+  font-size: 1.5rem;
+  line-height: 2rem;
+  font-weight: 700;
+  color: rgb(15 23 42);
+}
+.muted {
+  font-size: 0.875rem;
+  line-height: 1.25rem;
+  color: rgb(100 116 139);
+}
+.grid-3 {
+  display: grid;
+  grid-template-columns: repeat(1, minmax(0, 1fr));
+  gap: 1rem;
+}
+@media (min-width: 768px) {
+  .grid-3 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (min-width: 1280px) {
+  .grid-3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+.card {
+  border-radius: 0.75rem;
+  border: 1px solid var(--border);
+  background: white;
+  padding: 1.25rem;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.05);
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.5rem;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+}
+.btn-outline {
+  border: 1px solid var(--border);
+  background: white;
+  color: rgb(55 65 81);
+}
+.btn-primary {
+  background: var(--primary);
+  color: white;
 }
 

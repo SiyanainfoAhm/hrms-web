@@ -21,16 +21,6 @@ export default function SignupPage() {
       <SignupTemplate
         loading={loading}
         error={error}
-        onGoogleSignup={async () => {
-          setError(undefined);
-          setLoading(true);
-          try {
-            localStorage.setItem("demoUser", JSON.stringify({ id: "u1", fullName: "Demo User", role: "admin" }));
-            router.push(getRoleHomeHref("admin"));
-          } finally {
-            setLoading(false);
-          }
-        }}
         onEmailPasswordSignup={async ({ name, email }) => {
           setError(undefined);
           setLoading(true);

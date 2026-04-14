@@ -7,9 +7,8 @@ export type AppBranding = {
 };
 
 export const appConfig: AppBranding = {
-  appName: "Master Frontend Starter",
-  appShortName: "Master",
+  appName: "HRMS Web",
+  appShortName: "HRMS",
   supportEmail: "support@example.com",
-  logoText: "M"
+  logoText: "H"
 };
-

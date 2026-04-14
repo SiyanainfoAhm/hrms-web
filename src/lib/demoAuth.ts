@@ -1,5 +1,6 @@
 import type { RoleId } from "../config/roleConfig";
 
+/** Mirrors `/api/auth/login` user payload for UI; session cookie is source of truth for APIs. */
 export type DemoUser = {
   id?: string;
   fullName?: string;

@@ -27,8 +27,7 @@ export type ThemeTokens = {
 };
 
 /**
- * Default theme is intentionally Sociomate-adjacent (clean white surfaces, violet accent),
- * but fully editable from this single file.
+ * HRMS Web default theme: clean surfaces with a violet accent. Edit tokens here only.
  */
 export const themeConfig: ThemeTokens = {
   colors: {
