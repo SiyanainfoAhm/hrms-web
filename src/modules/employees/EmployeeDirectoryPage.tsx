@@ -20,7 +20,8 @@ import {
   deleteEmployee,
   fetchCompanyMe,
   fetchEmployeesPage,
-  patchEmployee
+  patchEmployee,
+  fetchOnboardingBundle,
 } from "./employeeDirectoryService";
 import type { EmployeeListRow, EmploymentStatusTab } from "./types";
 import { EmployeeFormModal } from "./EmployeeFormModal";
