@@ -5,6 +5,9 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
