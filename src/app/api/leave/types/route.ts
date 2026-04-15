@@ -8,11 +8,17 @@ function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
 
-const PAYSLIP_SLOTS = new Set(["CL", "EL", "HPL", "HL"]);
+function isSuperAdmin(role: string): boolean {
+  return role === "super_admin";
+}
+
+const PAYSLIP_SLOTS = new Set(["CL", "PL", "SL"]);
 
 function normalizePayslipSlot(raw: unknown): string | null {
   if (raw === null || raw === undefined || raw === "") return null;
   const s = String(raw).trim().toUpperCase();
+  // Backward compatibility: older data used EL; treat it as PL.
+  if (s === "EL") return "PL";
   return PAYSLIP_SLOTS.has(s) ? s : null;
 }
 
@@ -48,15 +54,16 @@ export async function GET() {
       .from("HRMS_leave_types")
       .upsert(
         [
-          { company_id: me.company_id, name: "Earned Leave", code: "PAID", is_paid: true, payslip_slot: "EL" },
-          { company_id: me.company_id, name: "Casual Leave", code: "SICK", is_paid: true, payslip_slot: "CL" },
+          { company_id: me.company_id, name: "Paid Leave", code: "PL", is_paid: true, payslip_slot: "PL" },
+          { company_id: me.company_id, name: "Casual Leave", code: "CL", is_paid: true, payslip_slot: "CL" },
+          { company_id: me.company_id, name: "Sick Leave", code: "SL", is_paid: true, payslip_slot: "SL" },
           { company_id: me.company_id, name: "Unpaid Leave", code: "UNPAID", is_paid: false, payslip_slot: null },
           {
             company_id: me.company_id,
             name: "Half Leave",
             code: "HL",
             is_paid: true,
-            payslip_slot: "HL",
+            payslip_slot: null,
             description: "Half-day leave (counts in days, e.g. 0.5)",
           },
           {
@@ -64,7 +71,7 @@ export async function GET() {
             name: "Half Pay Leave",
             code: "HPL",
             is_paid: true,
-            payslip_slot: "HPL",
+            payslip_slot: null,
             description: "Leave on half pay",
           },
         ],
@@ -75,8 +82,8 @@ export async function GET() {
     if (seedErr) return NextResponse.json({ error: seedErr.message }, { status: 400 });
 
     // Seed default policies too (idempotent).
-    const paid = (seededTypes ?? []).find((t) => t.code === "PAID");
-    const sick = (seededTypes ?? []).find((t) => t.code === "SICK");
+    const paid = (seededTypes ?? []).find((t) => t.code === "PL");
+    const sick = (seededTypes ?? []).find((t) => t.code === "SL");
     const unpaid = (seededTypes ?? []).find((t) => t.code === "UNPAID");
     const hl = (seededTypes ?? []).find((t) => t.code === "HL");
     const hpl = (seededTypes ?? []).find((t) => t.code === "HPL");
@@ -143,6 +150,56 @@ export async function GET() {
   }
 
   return NextResponse.json({ types: data ?? [] });
+}
+
+export async function DELETE(request: NextRequest) {
+  const cookieStore = await cookies();
+  const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
+  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isSuperAdmin(session.role)) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+
+  const { searchParams } = new URL(request.url);
+  const leaveTypeId = searchParams.get("leaveTypeId") || "";
+  if (!leaveTypeId) return NextResponse.json({ error: "leaveTypeId is required" }, { status: 400 });
+
+  const { data: me, error: meErr } = await supabase
+    .from("HRMS_users")
+    .select("company_id")
+    .eq("id", session.id)
+    .maybeSingle();
+  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
+  if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
+
+  // Block deleting leave types that already have leave requests.
+  const { count, error: reqErr } = await supabase
+    .from("HRMS_leave_requests")
+    .select("id", { count: "exact", head: true })
+    .eq("company_id", me.company_id)
+    .eq("leave_type_id", leaveTypeId);
+  if (reqErr) return NextResponse.json({ error: reqErr.message }, { status: 400 });
+  if ((count ?? 0) > 0) {
+    return NextResponse.json(
+      { error: "Cannot delete this leave type because leave requests already exist for it." },
+      { status: 400 },
+    );
+  }
+
+  // Delete policy first (if any), then delete the leave type.
+  const { error: polErr } = await supabase
+    .from("HRMS_leave_policies")
+    .delete()
+    .eq("company_id", me.company_id)
+    .eq("leave_type_id", leaveTypeId);
+  if (polErr) return NextResponse.json({ error: polErr.message }, { status: 400 });
+
+  const { error: ltErr } = await supabase
+    .from("HRMS_leave_types")
+    .delete()
+    .eq("company_id", me.company_id)
+    .eq("id", leaveTypeId);
+  if (ltErr) return NextResponse.json({ error: ltErr.message }, { status: 400 });
+
+  return NextResponse.json({ ok: true });
 }
 
 export async function POST(request: NextRequest) {

@@ -229,11 +229,11 @@ export function DatePickerField({
 
   const triggerClass =
     "flex w-full items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm " +
-    "focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 " +
+    "focus:outline-none focus-visible:shadow-[var(--focus-ring)] " +
     (disabled ? "cursor-not-allowed bg-slate-50 text-slate-500" : "text-slate-900 hover:border-slate-400");
 
   const navBtn =
-    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-emerald-700 transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent";
+    "inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-slate-200 text-[var(--primary)] transition hover:bg-[var(--primary-soft)] disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent";
 
   const panel =
     typeof document !== "undefined" &&
@@ -389,8 +389,8 @@ export function DatePickerField({
                     (dis
                       ? "cursor-not-allowed border-slate-100 text-slate-300"
                       : isCurrent
-                        ? "border-emerald-600 bg-emerald-50 text-emerald-900"
-                        : "border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60")
+                        ? "border-[var(--primary)] bg-[var(--primary-soft)] text-slate-900"
+                        : "border-slate-200 text-slate-700 hover:border-[color:var(--primary)] hover:bg-[var(--primary-soft)]/60")
                   }
                 >
                   {label}
@@ -422,8 +422,8 @@ export function DatePickerField({
                     (dis
                       ? "cursor-not-allowed border-slate-100 text-slate-300"
                       : isCurrent
-                        ? "border-emerald-600 bg-emerald-50 text-emerald-900"
-                        : "border-slate-200 text-slate-700 hover:border-emerald-300 hover:bg-emerald-50/60")
+                        ? "border-[var(--primary)] bg-[var(--primary-soft)] text-slate-900"
+                        : "border-slate-200 text-slate-700 hover:border-[color:var(--primary)] hover:bg-[var(--primary-soft)]/60")
                   }
                 >
                   {y}
@@ -438,7 +438,7 @@ export function DatePickerField({
             {!required && (
               <button
                 type="button"
-                className="text-xs font-medium text-slate-600 hover:text-emerald-800"
+                className="text-xs font-medium text-slate-600 hover:text-[var(--primary)]"
                 onClick={() => {
                   onChange("");
                   setOpen(false);
@@ -449,7 +449,7 @@ export function DatePickerField({
             )}
             <button
               type="button"
-              className="text-xs font-medium text-emerald-700 hover:underline"
+              className="text-xs font-medium text-[var(--primary)] hover:underline"
               onClick={() => {
                 const t = istTodayYmd();
                 if (min && t < min) return;

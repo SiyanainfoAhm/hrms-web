@@ -8,6 +8,7 @@ import { PaginationBar } from "@/components/common/PaginationBar";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { fmtDmy } from "@/lib/dateFormat";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -43,6 +44,7 @@ export function ApprovalsContent() {
     () => role === "super_admin" || role === "admin" || role === "hr",
     [role]
   );
+  const isSuperAdmin = role === "super_admin";
 
   const [types, setTypes] = useState<{ id: string; name: string }[]>([]);
   const [typeRows, setTypeRows] = useState<any[]>([]);
@@ -93,6 +95,9 @@ export function ApprovalsContent() {
   const [editProrateOnJoin, setEditProrateOnJoin] = useState(true);
   const [savingPolicy, setSavingPolicy] = useState(false);
 
+  const [deleteTypeFor, setDeleteTypeFor] = useState<null | { leaveTypeId: string; name: string }>(null);
+  const [deletingType, setDeletingType] = useState(false);
+
   const [reimbClaims, setReimbClaims] = useState<any[]>([]);
   const [reimbLoading, setReimbLoading] = useState(false);
   const [reimbCat, setReimbCat] = useState("");
@@ -119,8 +124,16 @@ export function ApprovalsContent() {
     return Math.floor((e - s) / (24 * 60 * 60 * 1000)) + 1;
   }
 
+  function fmtDays(n: number): string {
+    if (!Number.isFinite(n)) return "0";
+    const rounded = Math.round(n * 2) / 2; // show in 0.5 steps
+    return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+  }
+
   const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
-  const totalDays = diffDaysInclusive(startDate, endDate);
+  const baseDays = diffDaysInclusive(startDate, endDate);
+  const isHalfLeave = String(selectedLeaveType?.code ?? "").toUpperCase() === "HL";
+  const totalDays = isHalfLeave ? baseDays * 0.5 : baseDays;
   const reimbPayrollHint = useMemo(() => payrollHintFromClaimDate(reimbClaimDate), [reimbClaimDate]);
 
   useEffect(() => {
@@ -290,6 +303,25 @@ export function ApprovalsContent() {
     setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
   }
 
+  async function confirmDeleteLeaveType() {
+    if (!deleteTypeFor) return;
+    setDeletingType(true);
+    try {
+      const res = await fetch(`/api/leave/types?leaveTypeId=${encodeURIComponent(deleteTypeFor.leaveTypeId)}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as any)?.error || "Failed to delete leave type");
+      await refreshLeaveData();
+      showToast("success", "Leave type deleted");
+      setDeleteTypeFor(null);
+    } catch (e: any) {
+      showToast("error", e?.message || "Failed to delete leave type");
+    } finally {
+      setDeletingType(false);
+    }
+  }
+
   async function submitLeave(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -391,7 +423,8 @@ export function ApprovalsContent() {
     setEditPolicyFor({ leaveTypeId: t.id, name: t.name });
     setEditTypeName(String(t.name ?? ""));
     const ps = t.payslip_slot != null && String(t.payslip_slot).trim() ? String(t.payslip_slot).trim().toUpperCase() : "";
-    setEditPayslipSlot(["CL", "EL", "HPL", "HL"].includes(ps) ? ps : "");
+    const normalized = ps === "EL" ? "PL" : ps;
+    setEditPayslipSlot(["CL", "PL", "SL"].includes(normalized) ? normalized : "");
     setEditAccrualMethod((p?.accrual_method as any) || "monthly");
     setEditMonthlyRate(String(p?.monthly_accrual_rate ?? "1"));
     setEditAnnualQuota(String(p?.annual_quota ?? "12"));
@@ -659,6 +692,21 @@ export function ApprovalsContent() {
 
       {tab === "leave" && (
         <div className="space-y-4">
+          <ConfirmDialog
+            open={!!deleteTypeFor}
+            title="Delete leave type?"
+            description={
+              deleteTypeFor
+                ? `This will delete the leave type "${deleteTypeFor.name}" and its policy for the company. This is blocked if any leave requests exist for this type.`
+                : ""
+            }
+            confirmText="Yes, delete"
+            cancelText="Cancel"
+            danger
+            loading={deletingType}
+            onClose={() => (deletingType ? null : setDeleteTypeFor(null))}
+            onConfirm={confirmDeleteLeaveType}
+          />
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">{canApprove ? "Add leave" : "Request leave"}</h2>
             <p className="muted">
@@ -725,9 +773,20 @@ export function ApprovalsContent() {
                           <td className="px-3 py-2">{p?.monthly_accrual_rate ?? "-"}</td>
                           <td className="px-3 py-2">{p?.annual_quota ?? "-"}</td>
                           <td className="px-3 py-2">
-                            <button type="button" className="btn btn-outline" onClick={() => openEditPolicy(t)}>
-                              Edit policy
-                            </button>
+                            <div className="flex flex-wrap gap-2">
+                              <button type="button" className="btn btn-outline" onClick={() => openEditPolicy(t)}>
+                                Edit policy
+                              </button>
+                              {isSuperAdmin && (
+                                <button
+                                  type="button"
+                                  className="btn btn-outline text-red-700 hover:bg-red-50"
+                                  onClick={() => setDeleteTypeFor({ leaveTypeId: t.id, name: t.name })}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                           </td>
                         </tr>
                       );
@@ -971,14 +1030,20 @@ export function ApprovalsContent() {
                     </div>
                     {totalDays > 0 && (
                       <div className="rounded-lg bg-slate-50 px-4 py-2 text-sm text-slate-700">
-                        <span className="font-medium">Total: {totalDays} day{totalDays !== 1 ? "s" : ""}</span>
+                        <span className="font-medium">
+                          Total: {fmtDays(totalDays)} day{totalDays === 1 ? "" : "s"}
+                        </span>
                         {balancePreview ? (
                           <>
-                            {balancePreview.paidDays > 0 && <span className="ml-2 text-emerald-700">{Math.round(balancePreview.paidDays)} paid</span>}
-                            {balancePreview.unpaidDays > 0 && <span className="ml-2 text-amber-700">{Math.round(balancePreview.unpaidDays)} unpaid</span>}
+                            {balancePreview.paidDays > 0 && (
+                              <span className="ml-2 text-emerald-700">{fmtDays(balancePreview.paidDays)} paid</span>
+                            )}
+                            {balancePreview.unpaidDays > 0 && (
+                              <span className="ml-2 text-amber-700">{fmtDays(balancePreview.unpaidDays)} unpaid</span>
+                            )}
                           </>
                         ) : selectedLeaveType?.is_paid === false ? (
-                          <span className="ml-2 text-amber-700">{totalDays} unpaid</span>
+                          <span className="ml-2 text-amber-700">{fmtDays(totalDays)} unpaid</span>
                         ) : (
                           <span className="ml-2 text-slate-500">Calculating...</span>
                         )}
@@ -1037,7 +1102,7 @@ export function ApprovalsContent() {
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-sm font-medium text-slate-700">Payslip line (government slip)</label>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Payslip line</label>
                       <select
                         value={newPayslipSlot}
                         onChange={(e) => setNewPayslipSlot(e.target.value)}
@@ -1045,9 +1110,8 @@ export function ApprovalsContent() {
                       >
                         <option value="">Not shown</option>
                         <option value="CL">CL — Casual leave</option>
-                        <option value="EL">EL — Earned leave</option>
-                        <option value="HPL">HPL — Half pay leave</option>
-                        <option value="HL">HL — Half leave</option>
+                        <option value="PL">PL — Paid leave</option>
+                        <option value="SL">SL — Sick leave</option>
                       </select>
                     </div>
 
@@ -1151,9 +1215,8 @@ export function ApprovalsContent() {
                       >
                         <option value="">Not shown</option>
                         <option value="CL">CL — Casual leave</option>
-                        <option value="EL">EL — Earned leave</option>
-                        <option value="HPL">HPL — Half pay leave</option>
-                        <option value="HL">HL — Half leave</option>
+                        <option value="PL">PL — Paid leave</option>
+                        <option value="SL">SL — Sick leave</option>
                       </select>
                     </div>
                     <div>

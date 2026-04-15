@@ -31,6 +31,12 @@ type Row = {
   grossMinutes: number | null;
   activeMinutes: number | null;
   meetsEightHourWork: boolean;
+  inOffice?: boolean;
+  checkInLat?: number | null;
+  checkInLng?: number | null;
+  checkOutLat?: number | null;
+  checkOutLng?: number | null;
+  notes?: string | null;
 };
 
 function formatTimeIST(iso: string | null | undefined): string {
@@ -109,6 +115,20 @@ function AttendanceRow({
         ) : (
           <span className="text-slate-400">—</span>
         )}
+      </td>
+      <td className="px-3 py-3">
+        {r.inOffice ? (
+          <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
+            Inside
+          </span>
+        ) : (
+          <span className="inline-flex rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-800">
+            Outside
+          </span>
+        )}
+      </td>
+      <td className="max-w-[320px] px-3 py-3 text-xs text-slate-600">
+        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : <span className="text-slate-400">—</span>}
       </td>
     </tr>
   );
@@ -378,6 +398,12 @@ export default function AttendancePage() {
                       </th>
                       <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         ≥8h
+                      </th>
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                        Office
+                      </th>
+                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                        Notes
                       </th>
                     </tr>
                   </thead>

@@ -278,8 +278,8 @@ export default function HolidaysPage() {
               onClick={() => setActiveLocationTab(tab.key)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
                 activeLocationTab === tab.key
-                  ? "bg-emerald-600 text-white"
-                  : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  ? "bg-[var(--primary)] text-white shadow-sm ring-1 ring-black/5 hover:brightness-95"
+                  : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               }`}
             >
               {tab.label}
@@ -334,7 +334,7 @@ export default function HolidaysPage() {
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus-visible:shadow-[var(--focus-ring)]"
                   />
                 </div>
                 <div className="md:col-span-1">
@@ -358,7 +358,7 @@ export default function HolidaysPage() {
                     value={location}
                     onChange={(e) => setLocation(e.target.value)}
                     placeholder="e.g. Ahmedabad, or leave empty for all offices"
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus-visible:shadow-[var(--focus-ring)]"
                   />
                 </div>
                 <div className="md:col-span-4 flex flex-wrap items-center justify-between gap-3">

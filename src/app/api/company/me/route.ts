@@ -36,6 +36,15 @@ export async function PUT(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({}));
+  const latRaw = body?.latitude;
+  const lngRaw = body?.longitude;
+  const radiusRaw = body?.officeRadiusM;
+  const latitude =
+    latRaw == null || latRaw === "" ? null : Number(latRaw);
+  const longitude =
+    lngRaw == null || lngRaw === "" ? null : Number(lngRaw);
+  const officeRadiusM =
+    radiusRaw == null || radiusRaw === "" ? null : Math.max(10, Math.round(Number(radiusRaw)));
   const payload: Record<string, any> = {
     name: typeof body?.name === "string" ? body.name.trim() : undefined,
     code: typeof body?.code === "string" ? body.code.trim() || null : undefined,
@@ -49,11 +58,18 @@ export async function PUT(request: NextRequest) {
     phone: typeof body?.phone === "string" ? body.phone.trim() || null : undefined,
     professional_tax_annual: body?.professionalTaxAnnual != null ? Math.max(0, Number(body.professionalTaxAnnual)) : undefined,
     professional_tax_monthly: body?.professionalTaxMonthly != null ? Math.max(0, Number(body.professionalTaxMonthly)) : undefined,
+    latitude: latitude == null || Number.isNaN(latitude) ? undefined : latitude,
+    longitude: longitude == null || Number.isNaN(longitude) ? undefined : longitude,
+    office_radius_m: officeRadiusM == null || Number.isNaN(officeRadiusM) ? undefined : officeRadiusM,
     updated_at: new Date().toISOString(),
   };
   for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
 
   if (!payload.name) return NextResponse.json({ error: "Company name is required" }, { status: 400 });
+  // Require geofence location for attendance-in-office logic.
+  if (payload.latitude == null || payload.longitude == null) {
+    return NextResponse.json({ error: "Company latitude and longitude are required" }, { status: 400 });
+  }
 
   const { data: me, error: meErr } = await supabase
     .from("HRMS_users")

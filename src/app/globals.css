@@ -27,6 +27,22 @@
   --focus-ring: 0 0 0 3px rgba(124, 58, 237, 0.22);
 }
 
+/* React Day Picker: align calendar highlight with app theme */
+.rdp-theme,
+.rdp-root {
+  --rdp-accent-color: var(--primary);
+  --rdp-background-color: var(--primary-soft);
+  --rdp-outline: var(--primary);
+  --rdp-outline-selected: var(--primary);
+}
+
+.rdp-theme .rdp-day_selected,
+.rdp-theme .rdp-day_selected:focus-visible,
+.rdp-theme .rdp-day_selected:hover {
+  background-color: var(--primary);
+  color: var(--primary-foreground);
+}
+
 @theme inline {
   --color-background: var(--bg);
   --color-foreground: var(--text);

@@ -53,7 +53,7 @@ export async function GET(request: NextRequest) {
   const { data: logs, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
+      "id, employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office, check_in_lat, check_in_lng, check_out_lat, check_out_lng, notes"
     )
     .eq("company_id", me.company_id)
     .gte("work_date", startDate)
@@ -149,6 +149,12 @@ export async function GET(request: NextRequest) {
         grossMinutes: grossMin,
         activeMinutes: activeMin,
         meetsEightHourWork: activeMin != null && activeMin >= 8 * 60,
+        inOffice: Boolean(log.in_office),
+        checkInLat: log.check_in_lat ?? null,
+        checkInLng: log.check_in_lng ?? null,
+        checkOutLat: log.check_out_lat ?? null,
+        checkOutLng: log.check_out_lng ?? null,
+        notes: log.notes ?? null,
       };
     })
     .filter(Boolean);

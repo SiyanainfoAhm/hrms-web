@@ -23,6 +23,20 @@ function addAccumulatedMinutes(accumMin: number, startedAtIso: string | null | u
   return clampMinutes(base + Math.round((n - s) / 60000));
 }
 
+function haversineMeters(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const sLat1 = toRad(aLat);
+  const sLat2 = toRad(bLat);
+  const x =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(sLat1) * Math.cos(sLat2) * Math.sin(dLng / 2) * Math.sin(dLng / 2);
+  const c = 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x));
+  return R * c;
+}
+
 type AttendanceRow = {
   id: string;
   check_in_at: string | null;
@@ -67,7 +81,7 @@ export async function GET() {
   const { data: log, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status"
+      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status, in_office"
     )
     .eq("company_id", me.company_id)
     .eq("employee_id", emp.id)
@@ -88,6 +102,10 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await request.json().catch(() => ({}));
+  const loc = body?.location && typeof body.location === "object" ? body.location : null;
+  const reqLat = loc?.lat != null ? Number(loc.lat) : null;
+  const reqLng = loc?.lng != null ? Number(loc.lng) : null;
+  const reqAcc = loc?.accuracyM != null ? Math.round(Number(loc.accuracyM)) : null;
   const actionRaw = typeof body?.action === "string" ? body.action : "";
   const action =
     actionRaw === "in" || actionRaw === "out" || actionRaw === "break"
@@ -107,6 +125,16 @@ export async function POST(request: NextRequest) {
   if (!me?.company_id) {
     return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
   }
+
+  const { data: company, error: compErr } = await supabase
+    .from("HRMS_companies")
+    .select("latitude, longitude, office_radius_m")
+    .eq("id", me.company_id)
+    .maybeSingle();
+  if (compErr) return NextResponse.json({ error: compErr.message }, { status: 400 });
+  const officeLat = company?.latitude != null ? Number(company.latitude) : null;
+  const officeLng = company?.longitude != null ? Number(company.longitude) : null;
+  const officeRadiusM = company?.office_radius_m != null ? Math.max(10, Number(company.office_radius_m)) : 150;
 
   const { data: emp, error: empErr } = await supabase
     .from("HRMS_employees")
@@ -128,7 +156,7 @@ export async function POST(request: NextRequest) {
   const { data: existing, error: exErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at"
+      "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, notes, check_in_in_office, in_office, office_note"
     )
     .eq("company_id", me.company_id)
     .eq("employee_id", emp.id)
@@ -224,6 +252,22 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "You are already punched in. Punch out to end your shift." }, { status: 400 });
     }
 
+    if (officeLat == null || officeLng == null) {
+      return NextResponse.json(
+        { error: "Company office location is not configured. Ask Super Admin to set it in Settings → Company." },
+        { status: 400 },
+      );
+    }
+    if (reqLat == null || reqLng == null || Number.isNaN(reqLat) || Number.isNaN(reqLng)) {
+      return NextResponse.json({ error: "Location permission is required to punch in." }, { status: 400 });
+    }
+    const distanceM = haversineMeters(reqLat, reqLng, officeLat, officeLng);
+    const inOffice = distanceM <= officeRadiusM;
+    const warn = !inOffice
+      ? "Outside office: punch-in recorded. This will be marked as outside office in attendance logs."
+      : null;
+    const noteIn = `Punch in: ${inOffice ? "Inside office." : "Outside office."}`;
+
     const { data: inserted, error: insErr } = await supabase
       .from("HRMS_attendance_logs")
       .insert([
@@ -243,15 +287,22 @@ export async function POST(request: NextRequest) {
           tea_check_in_at: null,
           total_hours: null,
           status: "present",
+          check_in_lat: reqLat,
+          check_in_lng: reqLng,
+          check_in_accuracy_m: reqAcc,
+          in_office: inOffice,
+          check_in_in_office: inOffice,
+          office_note: !inOffice ? "Punched in from outside office." : null,
+          notes: noteIn,
           updated_at: nowIso,
         },
       ])
       .select(
-        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
+        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office, office_note, notes"
       )
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
-    return NextResponse.json({ ok: true, log: inserted });
+    return NextResponse.json({ ok: true, log: inserted, warning: warn });
   }
 
   // punch out
@@ -275,6 +326,18 @@ export async function POST(request: NextRequest) {
   if (rowPre.tea_break_started_at) {
     return NextResponse.json({ error: "End tea break before final check out." }, { status: 400 });
   }
+
+  if (reqLat == null || reqLng == null || Number.isNaN(reqLat) || Number.isNaN(reqLng)) {
+    return NextResponse.json({ error: "Location permission is required to punch out." }, { status: 400 });
+  }
+  const distanceOutM =
+    officeLat != null && officeLng != null ? haversineMeters(reqLat, reqLng, officeLat, officeLng) : null;
+  const outInOffice = distanceOutM != null ? distanceOutM <= officeRadiusM : null;
+  const warnOut =
+    outInOffice === false ? "Outside office: punch-out recorded. This will be marked as outside office in attendance logs." : null;
+  const noteOut = `Punch out: ${
+    outInOffice === false ? "Outside office." : outInOffice === true ? "Inside office." : "Unknown (office not configured)."
+  }`;
 
   const inMs = new Date(String(existing.check_in_at)).getTime();
   const outMs = new Date(nowIso).getTime();
@@ -316,13 +379,23 @@ export async function POST(request: NextRequest) {
       tea_check_in_at: row.tea_break_started_at ? nowIso : (row as AttendanceRow).tea_check_in_at ?? null,
       total_hours: totalHours,
       status: "present",
+      check_out_lat: reqLat == null || Number.isNaN(reqLat) ? null : reqLat,
+      check_out_lng: reqLng == null || Number.isNaN(reqLng) ? null : reqLng,
+      check_out_accuracy_m: reqAcc == null || Number.isNaN(reqAcc) ? null : reqAcc,
+      check_out_in_office: outInOffice,
+      in_office: Boolean((existing as any)?.check_in_in_office ?? (existing as any)?.in_office) && outInOffice !== false,
+      office_note:
+        outInOffice === false
+          ? `${(existing as any)?.office_note ? String((existing as any).office_note) + " " : ""}Punched out from outside office.`
+          : (existing as any)?.office_note ?? null,
+      notes: `${(existing as any)?.notes ? String((existing as any).notes) + " " : ""}${noteOut}`,
       updated_at: nowIso,
     })
     .eq("id", existing.id)
     .select(
-      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
+      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office, office_note, notes"
     )
     .single();
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
-  return NextResponse.json({ ok: true, log: updated });
+  return NextResponse.json({ ok: true, log: updated, warning: warnOut });
 }

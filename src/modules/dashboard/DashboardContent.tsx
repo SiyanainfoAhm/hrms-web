@@ -242,17 +242,39 @@ export function DashboardContent() {
     if (!ok) return;
     setPunching(true);
     try {
+      const location =
+        typeof navigator !== "undefined" && navigator.geolocation
+          ? await new Promise<{ lat: number; lng: number; accuracyM: number }>((resolve, reject) => {
+              navigator.geolocation.getCurrentPosition(
+                (pos) =>
+                  resolve({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                    accuracyM: Math.round(pos.coords.accuracy),
+                  }),
+                (err) => reject(err),
+                { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+              );
+            }).catch(() => null)
+          : null;
+      if ((action === "in" || action === "out") && !location) {
+        throw new Error(action === "in" ? "Location permission is required to punch in." : "Location permission is required to punch out.");
+      }
       const res = await fetch("/api/attendance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action,
           allowRepunchOut: opts?.allowRepunchOut === true ? true : undefined,
+          location: location || undefined,
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(typeof data?.error === "string" ? data.error : "Request failed");
       showToast("success", action === "in" ? "Punched in successfully" : "Punched out successfully");
+      if (typeof (data as any)?.warning === "string" && (data as any).warning) {
+        showToast("error", String((data as any).warning));
+      }
       if (data.log) {
         setAttendance((prev) =>
           prev ? { ...prev, log: data.log as AttendanceLog } : null

@@ -66,7 +66,339 @@ export function SettingsContent() {
     postalCode: "",
     professionalTaxAnnual: "200",
     professionalTaxMonthly: "200",
+    latitude: "",
+    longitude: "",
+    officeRadiusM: "150",
   });
+
+  const [mapsReady, setMapsReady] = useState(false);
+  const mapsApiKey = (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY || "").trim();
+
+  const [showPinMapInline, setShowPinMapInline] = useState(false);
+  const [pinMapLoading, setPinMapLoading] = useState(false);
+  const [pinMapError, setPinMapError] = useState<string | null>(null);
+  const pinMapDivRef = useRef<HTMLDivElement>(null);
+  const [pinMapContainerVersion, setPinMapContainerVersion] = useState(0);
+  const mapRef = useRef<any>(null);
+  const markerRef = useRef<any>(null);
+  const geocoderRef = useRef<any>(null);
+  const pinListenerRefs = useRef<any[]>([]);
+
+  const setPinMapContainerRef = useCallback((el: HTMLDivElement | null) => {
+    pinMapDivRef.current = el;
+    if (el) setPinMapContainerVersion((v) => v + 1);
+  }, []);
+
+  function parseLatLngFromForm(): { lat: number; lng: number } | null {
+    const lat = form.latitude ? Number(form.latitude) : NaN;
+    const lng = form.longitude ? Number(form.longitude) : NaN;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+  }
+
+  function setLatLngInForm(lat: number, lng: number) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+    setForm((p) => ({ ...p, latitude: String(lat), longitude: String(lng) }));
+  }
+
+  function normalizeAddressComponents(comps: any[] | undefined | null): {
+    city: string;
+    state: string;
+    country: string;
+    postalCode: string;
+  } {
+    const arr = Array.isArray(comps) ? comps : [];
+    const pick = (type: string) => arr.find((c: any) => (c?.types || []).includes(type));
+    const city = pick("locality")?.long_name || pick("administrative_area_level_2")?.long_name || "";
+    const state = pick("administrative_area_level_1")?.long_name || "";
+    const country = pick("country")?.long_name || "";
+    const postalCode = pick("postal_code")?.long_name || "";
+    return { city, state, country, postalCode };
+  }
+
+  function applyGeocodeResultToForm(result: any, lat: number, lng: number) {
+    const formatted = result?.formatted_address ? String(result.formatted_address) : "";
+    const { city, state, country, postalCode } = normalizeAddressComponents(result?.address_components);
+    setForm((p) => ({
+      ...p,
+      addressLine1: formatted || p.addressLine1,
+      city: city || p.city,
+      state: state || p.state,
+      country: country || p.country,
+      postalCode: postalCode || p.postalCode,
+      latitude: String(lat),
+      longitude: String(lng),
+    }));
+  }
+
+  async function reverseGeocodeAndApply(lat: number, lng: number) {
+    const w = window as any;
+    if (!w.google?.maps?.Geocoder) return;
+    const geocoder = geocoderRef.current || new w.google.maps.Geocoder();
+    geocoderRef.current = geocoder;
+    return await new Promise<void>((resolve) => {
+      geocoder.geocode({ location: { lat, lng } }, (results: any[], status: string) => {
+        if (status === "OK" && results?.length) {
+          applyGeocodeResultToForm(results[0], lat, lng);
+        } else {
+          setLatLngInForm(lat, lng);
+        }
+        resolve();
+      });
+    });
+  }
+
+  async function useCurrentLocationForOffice() {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      setPinMapError("Geolocation is not supported in this browser.");
+      return;
+    }
+    setPinMapError(null);
+    setPinMapLoading(true);
+    try {
+      const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
+        navigator.geolocation.getCurrentPosition(resolve, reject, {
+          enableHighAccuracy: true,
+          timeout: 15000,
+          maximumAge: 30000,
+        });
+      });
+      const lat = pos.coords.latitude;
+      const lng = pos.coords.longitude;
+      setLatLngInForm(lat, lng);
+      await reverseGeocodeAndApply(lat, lng);
+      const map = mapRef.current;
+      const marker = markerRef.current;
+      if (map && marker) {
+        marker.setPosition({ lat, lng });
+        map.setCenter({ lat, lng });
+        map.setZoom(16);
+      }
+      if (!showPinMapInline) setShowPinMapInline(true);
+      setTimeout(() => pinMapDivRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+    } catch (e: any) {
+      const msg =
+        e?.code === 1
+          ? "Location permission denied. Allow location access to use current location."
+          : e?.message || "Failed to get current location.";
+      setPinMapError(msg);
+    } finally {
+      setPinMapLoading(false);
+    }
+  }
+
+  async function pinMapFromTypedAddress() {
+    setPinMapError(null);
+    if (!mapsApiKey) {
+      setPinMapError("Google Maps API key is missing. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.");
+      return;
+    }
+    if (!showPinMapInline) setShowPinMapInline(true);
+    setTimeout(() => pinMapDivRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+
+    // Wait for maps script
+    if (!mapsReady) {
+      setPinMapLoading(true);
+      return;
+    }
+
+    const addr = (form.addressLine1 || "").trim();
+    const map = mapRef.current;
+    const marker = markerRef.current;
+
+    // If user typed an address, geocode it and pin there.
+    if (addr) {
+      setPinMapLoading(true);
+      const loc = await geocodeAddress(addr);
+      setPinMapLoading(false);
+      if (loc) {
+        setLatLngInForm(loc.lat, loc.lng);
+        if (map && marker) {
+          marker.setPosition(loc);
+          map.setCenter(loc);
+          map.setZoom(16);
+        }
+        await reverseGeocodeAndApply(loc.lat, loc.lng);
+        return;
+      }
+      setPinMapError("Address not found on map. Please click on map to pin location.");
+    }
+
+    // Fallback: if lat/lng already present, just recenter.
+    const center = parseLatLngFromForm();
+    if (center && map && marker) {
+      marker.setPosition(center);
+      map.setCenter(center);
+      map.setZoom(16);
+    }
+  }
+
+  async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
+    const w = window as any;
+    if (!w.google?.maps?.Geocoder) return null;
+    const geocoder = geocoderRef.current || new w.google.maps.Geocoder();
+    geocoderRef.current = geocoder;
+    return await new Promise((resolve) => {
+      geocoder.geocode({ address }, (results: any[], status: string) => {
+        if (status === "OK" && results?.length && results[0]?.geometry?.location) {
+          const loc = results[0].geometry.location;
+          const lat = typeof loc.lat === "function" ? loc.lat() : Number(loc.lat);
+          const lng = typeof loc.lng === "function" ? loc.lng() : Number(loc.lng);
+          if (Number.isFinite(lat) && Number.isFinite(lng)) return resolve({ lat, lng });
+        }
+        resolve(null);
+      });
+    });
+  }
+
+  useEffect(() => {
+    if (!isCompanyDialogOpen) return;
+    if (!mapsApiKey) return;
+    if (typeof window === "undefined") return;
+    const w = window as any;
+    if (w.google?.maps) {
+      setMapsReady(true);
+      return;
+    }
+    const existing = document.querySelector('script[data-google-maps="1"]') as HTMLScriptElement | null;
+    if (existing) return;
+    const s = document.createElement("script");
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(mapsApiKey)}&loading=async`;
+    s.async = true;
+    s.defer = true;
+    s.dataset.googleMaps = "1";
+    s.onload = () => setMapsReady(true);
+    document.head.appendChild(s);
+  }, [isCompanyDialogOpen, mapsApiKey]);
+
+  // Inline map UX: if user opened the map but Maps JS isn't ready yet,
+  // show a loading overlay until the script finishes.
+  useEffect(() => {
+    if (!isCompanyDialogOpen) return;
+    if (!showPinMapInline) return;
+    if (!mapsApiKey) {
+      setPinMapError("Google Maps API key is missing. Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY.");
+      return;
+    }
+    if (!mapsReady) {
+      setPinMapLoading(true);
+      return;
+    }
+    setPinMapLoading(false);
+  }, [isCompanyDialogOpen, showPinMapInline, mapsApiKey, mapsReady]);
+
+  useEffect(() => {
+    if (!isCompanyDialogOpen) return;
+    if (!showPinMapInline) return;
+    if (!mapsApiKey) return;
+    if (!mapsReady) return;
+    if (!pinMapDivRef.current) return;
+    const w = window as any;
+    if (!w.google?.maps) return;
+
+    let cancelled = false;
+    async function init() {
+      setPinMapLoading(true);
+      setPinMapError(null);
+      try {
+        const google = w.google;
+        const existingMap = mapRef.current;
+        let center = parseLatLngFromForm();
+        if (!center) {
+          const addr = form.addressLine1?.trim();
+          center = addr ? await geocodeAddress(addr) : null;
+        }
+        if (!center) center = { lat: 23.0225, lng: 72.5714 }; // Ahmedabad default
+
+        if (!existingMap) {
+          const map = new google.maps.Map(pinMapDivRef.current, {
+            center,
+            zoom: center ? 16 : 5,
+            mapTypeControl: false,
+            fullscreenControl: false,
+            streetViewControl: false,
+          });
+          mapRef.current = map;
+
+          const marker = new google.maps.Marker({
+            position: center,
+            map,
+            draggable: false,
+          });
+          markerRef.current = marker;
+          geocoderRef.current = geocoderRef.current || new google.maps.Geocoder();
+
+          const clearListeners = () => {
+            for (const l of pinListenerRefs.current) {
+              try {
+                google.maps.event.removeListener(l);
+              } catch {
+                // ignore
+              }
+            }
+            pinListenerRefs.current = [];
+          };
+          clearListeners();
+
+          // Click-to-pin (inline map requirement)
+          pinListenerRefs.current.push(
+            map.addListener("click", async (e: any) => {
+              const lat = e?.latLng?.lat?.();
+              const lng = e?.latLng?.lng?.();
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+              marker.setPosition({ lat, lng });
+              setLatLngInForm(lat, lng);
+              await reverseGeocodeAndApply(lat, lng);
+            }),
+          );
+        } else {
+          existingMap.setCenter(center);
+          existingMap.setZoom(16);
+          const marker = markerRef.current;
+          if (marker) marker.setPosition(center);
+        }
+
+        // If we centered from typed address or default, do one reverse-geocode to keep fields consistent.
+        if (!cancelled && center) {
+          setLatLngInForm(center.lat, center.lng);
+          await reverseGeocodeAndApply(center.lat, center.lng);
+        }
+      } catch (e: any) {
+        if (!cancelled) setPinMapError(e?.message || "Failed to load map.");
+      } finally {
+        if (!cancelled) setPinMapLoading(false);
+      }
+    }
+
+    init();
+    return () => {
+      cancelled = true;
+      setPinMapLoading(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isCompanyDialogOpen, showPinMapInline, mapsReady, mapsApiKey, pinMapContainerVersion]);
+
+  // Keep marker in sync when lat/lng change via autocomplete/manual edits.
+  useEffect(() => {
+    if (!showPinMapInline) return;
+    const center = parseLatLngFromForm();
+    const map = mapRef.current;
+    const marker = markerRef.current;
+    if (!center || !map || !marker) return;
+    marker.setPosition(center);
+    map.setCenter(center);
+  }, [form.latitude, form.longitude, showPinMapInline]);
+
+  // Cleanup map objects when dialog closes to avoid a stale map bound to a detached DOM node.
+  useEffect(() => {
+    if (isCompanyDialogOpen) return;
+    mapRef.current = null;
+    markerRef.current = null;
+    geocoderRef.current = null;
+    pinListenerRefs.current = [];
+    setPinMapLoading(false);
+    setPinMapError(null);
+  }, [isCompanyDialogOpen]);
 
   // Settings modules
   const [isShiftsDialogOpen, setIsShiftsDialogOpen] = useState(false);
@@ -701,6 +1033,8 @@ export function SettingsContent() {
     ];
     const existingIndustry = (company?.industry ?? "") as string;
     const isCommon = commonIndustries.includes(existingIndustry);
+    const nextLat = company?.latitude != null ? String(company.latitude) : "";
+    const nextLng = company?.longitude != null ? String(company.longitude) : "";
     setForm({
       name: company?.name ?? "",
       code: company?.code ?? "",
@@ -715,7 +1049,12 @@ export function SettingsContent() {
       postalCode: company?.postal_code ?? "",
       professionalTaxAnnual: String(company?.professional_tax_annual ?? 200),
       professionalTaxMonthly: String(company?.professional_tax_monthly ?? 200),
+      latitude: nextLat,
+      longitude: nextLng,
+      officeRadiusM: String(company?.office_radius_m ?? 150),
     });
+    // If office coordinates already exist, show map inline by default.
+    setShowPinMapInline(Boolean(nextLat && nextLng));
     setIsCompanyDialogOpen(true);
   }
 
@@ -730,6 +1069,9 @@ export function SettingsContent() {
         industry: form.industry === "Other" ? form.industryOther.trim() : form.industry,
         professionalTaxAnnual: form.professionalTaxAnnual ? parseFloat(form.professionalTaxAnnual) : 200,
         professionalTaxMonthly: form.professionalTaxMonthly ? parseFloat(form.professionalTaxMonthly) : 200,
+        latitude: form.latitude ? parseFloat(form.latitude) : null,
+        longitude: form.longitude ? parseFloat(form.longitude) : null,
+        officeRadiusM: form.officeRadiusM ? parseInt(form.officeRadiusM, 10) : 150,
       };
       const res = await fetch("/api/company/me", {
         method: "PUT",
@@ -1662,6 +2004,94 @@ export function SettingsContent() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
+
+                <div className="md:col-span-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold text-slate-900">Office location (mandatory for attendance)</h3>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={useCurrentLocationForOffice}
+                        title="Use your current device location"
+                      >
+                        Use current location
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-outline"
+                        onClick={pinMapFromTypedAddress}
+                        disabled={!mapsApiKey}
+                        title={
+                          !mapsApiKey
+                            ? "Set NEXT_PUBLIC_GOOGLE_MAPS_API_KEY to enable map pinning."
+                            : "Pin office location on map"
+                        }
+                      >
+                        Pin on map
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Latitude</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    required
+                    value={form.latitude}
+                    onChange={(e) => setForm((p) => ({ ...p, latitude: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Longitude</label>
+                  <input
+                    type="number"
+                    step="0.000001"
+                    required
+                    value={form.longitude}
+                    onChange={(e) => setForm((p) => ({ ...p, longitude: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                </div>
+                <div className="md:col-span-1">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Office radius (meters)</label>
+                  <input
+                    type="number"
+                    min="10"
+                    step="1"
+                    value={form.officeRadiusM}
+                    onChange={(e) => setForm((p) => ({ ...p, officeRadiusM: e.target.value }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  />
+                  <p className="mt-1 text-xs text-slate-500">Employees can punch in only inside this radius.</p>
+                </div>
+
+                {showPinMapInline ? (
+                  <div className="md:col-span-3">
+                    {pinMapError ? (
+                      <div className="mb-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                        {pinMapError}
+                      </div>
+                    ) : null}
+                    <div className="relative overflow-hidden rounded-xl border border-slate-200">
+                      <div ref={setPinMapContainerRef} className="h-[380px] w-full" />
+                      {pinMapLoading ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-white/70 text-sm text-slate-600">
+                          Loading map…
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                      <span>Click on the map to pin office location. Fields update automatically.</span>
+                      <span>
+                        Lat: <span className="font-mono">{form.latitude || "—"}</span> • Lng:{" "}
+                        <span className="font-mono">{form.longitude || "—"}</span>
+                      </span>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="md:col-span-3">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Address line 2</label>
                   <input

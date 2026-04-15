@@ -3134,7 +3134,7 @@ function PayrollPageContent() {
                         : "Payroll generated for this period. Values are read-only."
                       : previewAllGovernment
                         ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions."}
+                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. Note: Days can be 0.5 — if active hours < 8, the day counts as 0.5 and the missing 0.5 is covered by available Earned Leave (EL) when possible; otherwise pay days reduce by 0.5."}
                   </p>
                   {previewAllGovernment && preview?.daysInMonth ? (
                     <GovernmentRunPreviewTable

@@ -97,7 +97,7 @@ export async function POST(request: NextRequest) {
   if (!leaveTypeId || !startDate || !endDate) {
     return NextResponse.json({ error: "Leave type, start date and end date are required" }, { status: 400 });
   }
-  const totalDays = diffDaysInclusive(startDate, endDate);
+  let totalDays = diffDaysInclusive(startDate, endDate);
   if (!totalDays) return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
 
   const { data: me, error: meErr } = await supabase
@@ -149,6 +149,12 @@ export async function POST(request: NextRequest) {
     .maybeSingle();
   if (ltErr) return NextResponse.json({ error: ltErr.message }, { status: 400 });
   if (!lt) return NextResponse.json({ error: "Invalid leave type" }, { status: 400 });
+
+  // Half Leave (HL) counts each calendar day as 0.5
+  if (String((lt as any)?.code ?? "").toUpperCase() === "HL") {
+    totalDays = totalDays * 0.5;
+  }
+
   if (!isApprover(session.role) && lt.is_paid === false) {
     return NextResponse.json({ error: "You are not allowed to request unpaid leave" }, { status: 403 });
   }
