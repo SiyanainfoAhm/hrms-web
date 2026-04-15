@@ -1,14 +1,24 @@
-/** Excel column order (simplified): identity + key amounts (no government-only LIC/CPF/etc). */
+/** Excel column order aligned with Run Payroll grid (identity + pay days + amounts). */
 export const PAYROLL_EXCEL_HEADER = [
   "EmployeeName",
   "AccountNumber",
   "BankName",
   "IFSC",
+  "PayDays",
   "Gross",
+  "Net",
   "PF",
+  "PFEmployer",
+  "ESIC",
+  "ESICEmployer",
   "PT",
+  "Bonus",
+  "Incentive",
+  "Reimbursement",
   "TDS",
+  "Deductions",
   "TakeHome",
+  "CTC",
 ] as const;
 
 export type PayrollExcelHeader = (typeof PAYROLL_EXCEL_HEADER)[number];
@@ -46,7 +56,9 @@ function n(v: unknown): number {
 }
 
 /**
- * One payroll Excel row (simplified). TakeHome matches the final credit.
+ * One payroll Excel row. `net_pay` on payslips is stored as final take-home (after statutory deductions
+ * and after TDS / incentive / bonus / reimbursement adjustments). `Net` is reconstructed for export to
+ * match the Run Payroll preview (salary after deductions, before those variable lines).
  */
 export function buildPayrollExcelRow(
   p: PayslipExcelInput,
@@ -55,22 +67,32 @@ export function buildPayrollExcelRow(
   const accountNum = p.bank_account_number != null ? String(p.bank_account_number) : "";
   const bankName = p.bank_name != null ? String(p.bank_name) : "";
   const ifsc = p.bank_ifsc != null ? String(p.bank_ifsc) : "";
-  const gross = Math.round(n(p.gross_pay));
-  const pf = Math.round(n(p.pf_employee));
-  const pt = Math.round(n(p.professional_tax));
-  const tds = Math.round(n(p.tds));
-  // Take-home should match the final credited amount.
   const takeHome = Math.round(n(p.net_pay));
+  const tds = Math.round(n(p.tds));
+  const inc = Math.round(n(p.incentive));
+  const bonus = Math.round(n(p.pr_bonus));
+  const reimb = Math.round(n(p.reimbursement));
+  const net = Math.round(takeHome + tds - inc - bonus - reimb);
   return {
     EmployeeName: userName,
     AccountNumber: accountNum,
     BankName: bankName,
     IFSC: ifsc,
-    Gross: gross,
-    PF: pf,
-    PT: pt,
+    PayDays: Math.round(n(p.pay_days)),
+    Gross: Math.round(n(p.gross_pay)),
+    Net: net,
+    PF: Math.round(n(p.pf_employee)),
+    PFEmployer: Math.round(n(p.pf_employer)),
+    ESIC: Math.round(n(p.esic_employee)),
+    ESICEmployer: Math.round(n(p.esic_employer)),
+    PT: Math.round(n(p.professional_tax)),
+    Bonus: bonus,
+    Incentive: inc,
+    Reimbursement: reimb,
     TDS: tds,
+    Deductions: Math.round(n(p.deductions)),
     TakeHome: takeHome,
+    CTC: Math.round(n(p.ctc)),
   };
 }
 

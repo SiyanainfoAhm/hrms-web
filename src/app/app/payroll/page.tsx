@@ -275,6 +275,24 @@ function breakupIfMatchesGross(row: Pick<MasterGridRow, "basic" | "hra" | "medic
     : undefined;
 }
 
+function sliceYmd(v: string | null | undefined): string {
+  return String(v ?? "").trim().slice(0, 10);
+}
+
+function dayBeforeYmd(isoYmd: string): string {
+  const d = new Date(sliceYmd(isoYmd) + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return "";
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function dayAfterYmd(isoYmd: string): string {
+  const d = new Date(sliceYmd(isoYmd) + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return new Date().toISOString().slice(0, 10);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
 /** True if the six components match `defaultSalaryBreakup(gross)` within rounding tolerance. */
 function isDefaultSalaryBreakupForGross(
   gross: number,
@@ -560,6 +578,21 @@ function PayrollPageContent() {
   const [editPfEligible, setEditPfEligible] = useState(false);
   const [editEsicEligible, setEditEsicEligible] = useState(false);
   const [editEffectiveDate, setEditEffectiveDate] = useState("");
+  /** Last calendar day the current (open) master row remains valid; new row starts next calendar day or later. */
+  const [editPreviousEndDate, setEditPreviousEndDate] = useState("");
+  const [payrollMasterHistory, setPayrollMasterHistory] = useState<
+    {
+      id: string;
+      payroll_mode?: string | null;
+      gross_salary?: number | null;
+      gross_basic?: number | null;
+      ctc?: number | null;
+      effective_start_date?: string | null;
+      effective_end_date?: string | null;
+      reason_for_change?: string | null;
+    }[]
+  >([]);
+  const [payrollHistoryLoading, setPayrollHistoryLoading] = useState(false);
   const [editReason, setEditReason] = useState("");
   const [editPt, setEditPt] = useState("");
   const [editTds, setEditTds] = useState("");
@@ -607,6 +640,8 @@ function PayrollPageContent() {
       payDaysSuppressedMinAttendance?: boolean;
       unpaidLeaveDays: number;
       grossPay: number;
+      pfEligible?: boolean;
+      esicEligible?: boolean;
       pfEmployee: number;
       pfEmployer: number;
       esicEmployee: number;
@@ -644,6 +679,8 @@ function PayrollPageContent() {
       unpaidLeaveDays: number;
       grossMonthly?: number;
       grossPay: number;
+      pfEligible?: boolean;
+      esicEligible?: boolean;
       pfEmployee: number;
       pfEmployer: number;
       esicEmployee: number;
@@ -989,14 +1026,46 @@ function PayrollPageContent() {
           next.takeHome = next.netPay - (next.tds ?? 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
         };
         const recalcCtc = () => {
-          const base = row.ctcBase ?? row.ctc;
+          const base = next.ctcBase ?? row.ctcBase ?? row.ctc;
           next.ctc = base + (next.incentive ?? 0) + (next.prBonus ?? 0);
         };
+        if (field === "grossPay" && row.payrollMode !== "government") {
+          const newGrossPay = Math.max(0, Math.round(value));
+          next.grossPay = newGrossPay;
+          const payPd = next.payDays;
+          const gm =
+            payPd > 0 ? Math.round((newGrossPay * payDenom) / Math.max(1, payPd)) : Math.max(0, newGrossPay);
+          next.grossMonthly = gm;
+          const profMonth = Math.round(
+            row.profTaxMonthly != null && Number(row.profTaxMonthly) >= 0 ? Number(row.profTaxMonthly) : companyPt,
+          );
+          const ratio = payPd / Math.max(1, payDenom);
+          const calc = computePayrollFromGross(
+            gm,
+            row.pfEligible !== false,
+            row.esicEligible === true,
+            profMonth,
+            undefined,
+          );
+          next.pfEmployee = Math.round(calc.pfEmp * ratio);
+          next.pfEmployer = Math.round(calc.pfEmpr * ratio);
+          next.esicEmployee = Math.round(calc.esicEmp * ratio);
+          next.esicEmployer = Math.round(calc.esicEmpr * ratio);
+          next.ctcBase = Math.round(calc.ctc);
+          const profTaxApplied = payPd > 0 ? profMonth : 0;
+          next.profTax = profTaxApplied;
+          next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
+          next.netPay = next.grossPay - next.deductions;
+          recalcTakeHome();
+          recalcCtc();
+          return next;
+        }
         if (field === "payDays") {
           const newPayDays = Math.max(0, Math.min(payDaysMax, value));
           const grossMonthly =
             row.grossMonthly ?? Math.round((row.grossPay * payDenom) / (row.payDays || row.rawPayDays || 1));
           next.payDays = newPayDays;
+          next.grossMonthly = grossMonthly;
           if (newPayDays > 0) next.payDaysSuppressedMinAttendance = false;
           next.grossPay = newPayDays === 0 ? 0 : Math.round((grossMonthly * newPayDays) / payDenom);
           if (newPayDays === 0) {
@@ -1004,16 +1073,37 @@ function PayrollPageContent() {
           } else if (row.payDays === 0 && row.profTax === 0) {
             next.profTax = row.profTaxMonthly ?? companyPt;
           }
-          const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
-          next.pfEmployee = Math.round(row.pfEmployee * ratio);
-          next.pfEmployer = Math.round(row.pfEmployer * ratio);
-          next.esicEmployee = Math.round(row.esicEmployee * ratio);
-          next.esicEmployer = Math.round(row.esicEmployer * ratio);
+          const ratioPd = newPayDays / Math.max(1, payDenom);
+          if (row.payrollMode !== "government") {
+            const profMonth = Math.round(
+              row.profTaxMonthly != null && Number(row.profTaxMonthly) >= 0 ? Number(row.profTaxMonthly) : companyPt,
+            );
+            const calc = computePayrollFromGross(
+              grossMonthly,
+              row.pfEligible !== false,
+              row.esicEligible === true,
+              profMonth,
+              undefined,
+            );
+            next.pfEmployee = Math.round(calc.pfEmp * ratioPd);
+            next.pfEmployer = Math.round(calc.pfEmpr * ratioPd);
+            next.esicEmployee = Math.round(calc.esicEmp * ratioPd);
+            next.esicEmployer = Math.round(calc.esicEmpr * ratioPd);
+            next.ctcBase = Math.round(calc.ctc);
+            const profTaxApplied = newPayDays > 0 ? profMonth : 0;
+            next.profTax = profTaxApplied;
+          } else {
+            const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
+            next.pfEmployee = Math.round(row.pfEmployee * ratio);
+            next.pfEmployer = Math.round(row.pfEmployer * ratio);
+            next.esicEmployee = Math.round(row.esicEmployee * ratio);
+            next.esicEmployer = Math.round(row.esicEmployer * ratio);
+          }
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           next.netPay = next.grossPay - next.deductions;
           recalcTakeHome();
           recalcCtc();
-        } else if (["grossPay", "pfEmployee", "esicEmployee", "profTax"].includes(field)) {
+        } else if (field === "pfEmployee" || field === "esicEmployee" || field === "profTax") {
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           next.netPay = next.grossPay - next.deductions;
           recalcTakeHome();
@@ -1188,6 +1278,40 @@ function PayrollPageContent() {
     if (tab !== "master" && editMasterOpen) setEditMasterOpen(null);
   }, [tab, editMasterOpen]);
 
+  useEffect(() => {
+    const uid = editMasterOpen?.employeeUserId as string | undefined;
+    if (!uid || editMasterTab !== "structure") return;
+    let cancelled = false;
+    setPayrollHistoryLoading(true);
+    (async () => {
+      try {
+        const res = await fetch(`/api/payroll/master?employeeUserId=${encodeURIComponent(uid)}&history=1`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (res.ok && Array.isArray(data.history)) setPayrollMasterHistory(data.history);
+        else setPayrollMasterHistory([]);
+      } catch {
+        if (!cancelled) setPayrollMasterHistory([]);
+      } finally {
+        if (!cancelled) setPayrollHistoryLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [editMasterOpen?.employeeUserId, editMasterTab]);
+
+  function handleEditEffectiveStartChange(v: string) {
+    setEditEffectiveDate(v);
+    setEditPreviousEndDate((prev) => {
+      const cap = dayBeforeYmd(v);
+      if (!cap) return prev;
+      if (!prev || prev >= v) return cap;
+      if (prev > cap) return cap;
+      return prev;
+    });
+  }
+
   const editMasterPreview = useMemo(() => {
     if (!editMasterOpen) return null;
     if (editPayrollMode === "government" && editGovLevel != null) {
@@ -1328,6 +1452,7 @@ function PayrollPageContent() {
 
   /** Opens the salary breakup modal from the current grid row (includes unsaved inline edits). */
   function openPayrollMasterEditDialog(gridRow: MasterGridRow, apiRow?: any) {
+    setPayrollMasterHistory([]);
     const gross = gridRow.gross;
     const componentsSum =
       gridRow.basic + gridRow.hra + gridRow.medical + gridRow.trans + gridRow.lta + gridRow.personal;
@@ -1365,11 +1490,10 @@ function PayrollPageContent() {
     setEditPersonal(String(split.personal));
     setEditPfEligible(gridRow.pfEligible);
     setEditEsicEligible(gridRow.esicEligible);
-    setEditEffectiveDate(
-      gridRow.effectiveStartDate
-        ? String(gridRow.effectiveStartDate).slice(0, 10)
-        : new Date().toISOString().slice(0, 10)
-    );
+    const curMasterStart = gridRow.effectiveStartDate ? String(gridRow.effectiveStartDate).slice(0, 10) : "";
+    const defaultNewStart = curMasterStart ? dayAfterYmd(curMasterStart) : new Date().toISOString().slice(0, 10);
+    setEditEffectiveDate(defaultNewStart);
+    setEditPreviousEndDate(dayBeforeYmd(defaultNewStart) || curMasterStart);
     const mpt = gridRow.pt;
     setEditPt(mpt != null && Number(mpt) >= 0 ? String(mpt) : String(companyPt));
     setEditTds(String(gridRow.tds ?? 0));
@@ -1534,6 +1658,21 @@ function PayrollPageContent() {
     }
     setEditSaving(true);
     try {
+      const pe = sliceYmd(editPreviousEndDate);
+      const ps = sliceYmd(editEffectiveDate);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(pe) || !/^\d{4}-\d{2}-\d{2}$/.test(ps)) {
+        showToast("error", "Set both effective dates using a full calendar day (YYYY-MM-DD).");
+        setEditSaving(false);
+        return;
+      }
+      if (pe >= ps) {
+        showToast(
+          "error",
+          "The current master’s effective end date must be strictly before the new master’s effective start date (e.g. end 2026-05-31, start 2026-06-01).",
+        );
+        setEditSaving(false);
+        return;
+      }
       const pt = parseFloat(editPt);
       const tds = parseFloat(editTds) || 0;
       const advanceBonus = parseFloat(editAdvanceBonus) || 0;
@@ -1562,7 +1701,7 @@ function PayrollPageContent() {
             transportDaPercent: parseFloat(editTransportDaPercent) || 48.06,
             pfEligible: true,
             esicEligible: false,
-            effectiveStartDate: editEffectiveDate,
+            effectiveStartDate: ps,
             reasonForChange: editReason,
             tds,
             advanceBonus,
@@ -1570,6 +1709,7 @@ function PayrollPageContent() {
             cpfDefault: parseFloat(editCpfDefault) || 0,
             daCpfDefault: parseFloat(editDaCpfDefault) || 0,
             incomeTaxDefault: tds,
+            previousEffectiveEndDate: pe,
           }),
         });
         const data = await res.json();
@@ -1604,11 +1744,12 @@ function PayrollPageContent() {
           personal: personal || undefined,
           pfEligible: editPfEligible,
           esicEligible: editEsicEligible,
-          effectiveStartDate: editEffectiveDate,
+          effectiveStartDate: ps,
           reasonForChange: editReason,
           pt: Number.isFinite(pt) && pt >= 0 ? pt : undefined,
           tds,
           advanceBonus,
+          previousEffectiveEndDate: pe,
         }),
       });
       const data = await res.json();
@@ -2778,11 +2919,73 @@ function PayrollPageContent() {
                 </div>
               )}
               <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Effective start date *</label>
-                <DatePickerField value={editEffectiveDate} onChange={setEditEffectiveDate} required className="w-full" />
+                <label className="mb-1 block text-sm font-medium text-slate-700">New master effective start *</label>
+                <DatePickerField
+                  value={editEffectiveDate}
+                  onChange={handleEditEffectiveStartChange}
+                  required
+                  className="w-full"
+                />
                 <p className="mt-1 text-xs text-slate-500">
-                  Saving creates a new payroll master from this date. The employee&apos;s previous open row is closed with an end date the day before this start date. Reason for change is stored on the new row.
+                  First calendar day the new structure applies (for example 1 June). Run payroll uses the latest applicable row for that salary month once the previous row has an end date.
                 </p>
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium text-slate-700">Current master effective end *</label>
+                <DatePickerField value={editPreviousEndDate} onChange={setEditPreviousEndDate} required className="w-full" />
+                <p className="mt-1 text-xs text-slate-500">
+                  Last day the previous snapshot remains valid (e.g. 31 May). It must be strictly before the new start. The new row is saved with no end date until the next change. Defaults to the day before the new start when you change the start date.
+                </p>
+              </div>
+              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payroll master history</p>
+                  {payrollHistoryLoading ? <span className="text-xs text-slate-500">Loading…</span> : null}
+                </div>
+                {!payrollHistoryLoading && payrollMasterHistory.length === 0 ? (
+                  <p className="text-xs text-slate-500">No rows yet for this employee.</p>
+                ) : null}
+                {payrollMasterHistory.length > 0 ? (
+                  <div className="max-h-40 overflow-auto rounded border border-slate-200 bg-white">
+                    <table className="w-full min-w-[28rem] text-left text-xs">
+                      <thead className="sticky top-0 bg-slate-100 text-slate-600">
+                        <tr>
+                          <th className="px-2 py-1.5 font-medium">Start</th>
+                          <th className="px-2 py-1.5 font-medium">End</th>
+                          <th className="px-2 py-1.5 font-medium">Mode</th>
+                          <th className="px-2 py-1.5 font-medium">Gross / basic</th>
+                          <th className="px-2 py-1.5 font-medium">Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {payrollMasterHistory.map((h) => {
+                          const start = h.effective_start_date ? String(h.effective_start_date).slice(0, 10) : "—";
+                          const end = h.effective_end_date ? String(h.effective_end_date).slice(0, 10) : "Open";
+                          const mode = h.payroll_mode === "government" ? "Gov" : "Pvt";
+                          const amt =
+                            h.payroll_mode === "government"
+                              ? h.gross_basic != null
+                                ? `₹${Math.round(Number(h.gross_basic)).toLocaleString("en-IN")}`
+                                : "—"
+                              : h.gross_salary != null
+                                ? `₹${Math.round(Number(h.gross_salary)).toLocaleString("en-IN")}`
+                                : "—";
+                          return (
+                            <tr key={h.id} className="border-t border-slate-100">
+                              <td className="px-2 py-1.5 tabular-nums text-slate-800">{start}</td>
+                              <td className="px-2 py-1.5 tabular-nums text-slate-800">{end}</td>
+                              <td className="px-2 py-1.5 text-slate-700">{mode}</td>
+                              <td className="px-2 py-1.5 tabular-nums text-slate-800">{amt}</td>
+                              <td className="max-w-[10rem] truncate px-2 py-1.5 text-slate-600" title={h.reason_for_change ?? ""}>
+                                {h.reason_for_change || "—"}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
               </div>
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Reason for change *</label>

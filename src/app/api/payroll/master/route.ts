@@ -27,7 +27,18 @@ function companyAllowsGovernmentPayroll(company: any): boolean {
   return false;
 }
 
-export async function GET() {
+function ymd(v: string | null | undefined): string {
+  return String(v ?? "").trim().slice(0, 10);
+}
+
+function dayBeforeUtc(ymdDate: string): string {
+  const d = new Date(ymd(ymdDate) + "T00:00:00Z");
+  if (Number.isNaN(d.getTime())) return "";
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -40,6 +51,33 @@ export async function GET() {
     .maybeSingle();
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ masters: [] });
+
+  const { searchParams } = new URL(request.url);
+  const historyEmployeeId = searchParams.get("employeeUserId")?.trim() || "";
+  const wantHistory =
+    searchParams.get("history") === "1" ||
+    searchParams.get("includeHistory") === "1" ||
+    searchParams.get("includeHistory") === "true";
+  if (wantHistory && historyEmployeeId) {
+    const { data: target } = await supabase
+      .from("HRMS_users")
+      .select("id, company_id")
+      .eq("id", historyEmployeeId)
+      .maybeSingle();
+    if (!target || target.company_id !== me.company_id) {
+      return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
+    }
+    const { data: histRows, error: histErr } = await supabase
+      .from("HRMS_payroll_master")
+      .select(
+        "id, payroll_mode, gross_salary, gross_basic, ctc, effective_start_date, effective_end_date, reason_for_change, created_at",
+      )
+      .eq("company_id", me.company_id)
+      .eq("employee_user_id", historyEmployeeId)
+      .order("effective_start_date", { ascending: false });
+    if (histErr) return NextResponse.json({ error: histErr.message }, { status: 400 });
+    return NextResponse.json({ history: histRows ?? [] });
+  }
 
   const { data: masters } = await supabase
     .from("HRMS_payroll_master")
@@ -230,19 +268,59 @@ export async function PATCH(request: NextRequest) {
 
   const { data: oldMaster } = await supabase
     .from("HRMS_payroll_master")
-    .select("id")
+    .select("id, effective_start_date")
     .eq("employee_user_id", userId)
     .is("effective_end_date", null)
     .maybeSingle();
 
+  const previousEffectiveEndDateRaw =
+    typeof body?.previousEffectiveEndDate === "string" ? ymd(body.previousEffectiveEndDate) : "";
+
   if (oldMaster) {
-    const d = new Date(effectiveStartDate + "T00:00:00Z");
-    d.setUTCDate(d.getUTCDate() - 1);
-    const prevDay = d.toISOString().slice(0, 10);
-    await supabase
-      .from("HRMS_payroll_master")
-      .update({ effective_end_date: prevDay })
-      .eq("id", oldMaster.id);
+    const oldStart = ymd(oldMaster.effective_start_date as string | null);
+    if (oldStart && ymd(effectiveStartDate) <= oldStart) {
+      return NextResponse.json(
+        {
+          error:
+            "New effective start date must be after the current payroll master’s start date. Close the previous row with an effective end on or after that start, before the new start (e.g. old ends 31 May, new starts 1 June).",
+        },
+        { status: 400 },
+      );
+    }
+
+    let endDateToSet: string;
+    if (/^\d{4}-\d{2}-\d{2}$/.test(previousEffectiveEndDateRaw)) {
+      endDateToSet = previousEffectiveEndDateRaw;
+      if (endDateToSet >= ymd(effectiveStartDate)) {
+        return NextResponse.json(
+          { error: "Effective end date for the previous master must be strictly before the new effective start date." },
+          { status: 400 },
+        );
+      }
+      if (oldStart && endDateToSet < oldStart) {
+        return NextResponse.json(
+          { error: "Effective end date for the previous master cannot be before that row’s effective start date." },
+          { status: 400 },
+        );
+      }
+    } else {
+      const prevDay = dayBeforeUtc(effectiveStartDate);
+      if (!prevDay) {
+        return NextResponse.json({ error: "Invalid effective start date" }, { status: 400 });
+      }
+      endDateToSet = prevDay;
+      if (oldStart && endDateToSet < oldStart) {
+        return NextResponse.json(
+          {
+            error:
+              "Computed end date for the previous master would be before its start. Choose a later new effective start date or set an explicit previous effective end date.",
+          },
+          { status: 400 },
+        );
+      }
+    }
+
+    await supabase.from("HRMS_payroll_master").update({ effective_end_date: endDateToSet }).eq("id", oldMaster.id);
   }
 
   if (payrollMode === "government") {
