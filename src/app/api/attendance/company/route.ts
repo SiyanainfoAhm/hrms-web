@@ -27,6 +27,7 @@ export async function GET(request: NextRequest) {
   const workDateRaw = searchParams.get("workDate") || "";
   const startRaw = searchParams.get("startDate") || "";
   const endRaw = searchParams.get("endDate") || "";
+  const userIdFilter = searchParams.get("userId")?.trim() || "";
   const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
   let startDate: string;
@@ -50,7 +51,22 @@ export async function GET(request: NextRequest) {
   if (!me?.company_id)
     return NextResponse.json({ startDate, endDate, workDate, rows: [] });
 
-  const { data: logs, error: logErr } = await supabase
+  let filterEmployeeId: string | null = null;
+  if (userIdFilter) {
+    const { data: filterEmp, error: feErr } = await supabase
+      .from("HRMS_employees")
+      .select("id")
+      .eq("company_id", me.company_id)
+      .eq("user_id", userIdFilter)
+      .maybeSingle();
+    if (feErr) return NextResponse.json({ error: feErr.message }, { status: 400 });
+    if (!filterEmp?.id) {
+      return NextResponse.json({ startDate, endDate, workDate, rows: [] });
+    }
+    filterEmployeeId = filterEmp.id as string;
+  }
+
+  let logQuery = supabase
     .from("HRMS_attendance_logs")
     .select(
       "id, employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office, check_in_lat, check_in_lng, check_out_lat, check_out_lng, notes"
@@ -58,6 +74,10 @@ export async function GET(request: NextRequest) {
     .eq("company_id", me.company_id)
     .gte("work_date", startDate)
     .lte("work_date", endDate);
+  if (filterEmployeeId) {
+    logQuery = logQuery.eq("employee_id", filterEmployeeId);
+  }
+  const { data: logs, error: logErr } = await logQuery;
   if (logErr) return NextResponse.json({ error: logErr.message }, { status: 400 });
 
   const empIds = [...new Set((logs ?? []).map((l: any) => l.employee_id).filter(Boolean))];

@@ -6,7 +6,7 @@ import { PaginationBar } from "@/components/common/PaginationBar";
 import { SkeletonTable } from "@/components/common/Skeleton";
 import { HrmsShellPage } from "@/components/layout/HrmsShellPage";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtDmy } from "@/lib/dateFormat";
 
 type Row = {
@@ -230,36 +230,90 @@ export default function AttendancePage() {
   const [hasEmployee, setHasEmployee] = useState(true);
   const [mobilePage, setMobilePage] = useState(1);
   const mobilePageSize = useResponsivePageSize();
+  /** HRMS_users.id; empty = all employees (managerial only). */
+  const [employeeFilterUserId, setEmployeeFilterUserId] = useState("");
+  const [managerEmployees, setManagerEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
+  const [employeesLoading, setEmployeesLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isManagerial) {
+      setManagerEmployees([]);
+      setEmployeeFilterUserId("");
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      setEmployeesLoading(true);
+      try {
+        const res = await fetch("/api/employees");
+        const data = await res.json();
+        if (!cancelled && res.ok) {
+          const raw = data.employees ?? [];
+          const current = raw.filter((e: { employmentStatus?: string }) => e.employmentStatus === "current");
+          setManagerEmployees(
+            current.map((e: { id: string; name: string | null; email: string }) => ({
+              id: e.id,
+              name: e.name,
+              email: e.email,
+            })),
+          );
+        } else if (!cancelled) {
+          setManagerEmployees([]);
+        }
+      } finally {
+        if (!cancelled) setEmployeesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isManagerial]);
+
+  const loadSeq = useRef(0);
+  const loadAbort = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    loadAbort.current?.abort();
+    const ac = new AbortController();
+    loadAbort.current = ac;
+    const seq = ++loadSeq.current;
+
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams();
       params.set("startDate", startDate);
       params.set("endDate", endDate);
+      if (isManagerial && employeeFilterUserId) {
+        params.set("userId", employeeFilterUserId);
+      }
       const url = isManagerial
         ? `/api/attendance/company?${params.toString()}`
         : `/api/attendance/me?${params.toString()}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: ac.signal });
       const data = await res.json();
+      if (ac.signal.aborted || seq !== loadSeq.current) return;
       if (!res.ok) throw new Error(data?.error || "Failed to load");
       setRows(data.rows ?? []);
       setHasEmployee(data.hasEmployee !== false);
     } catch (e: unknown) {
+      if (e instanceof Error && e.name === "AbortError") return;
+      if (ac.signal.aborted || seq !== loadSeq.current) return;
       setError(e instanceof Error ? e.message : "Failed to load");
       setRows([]);
     } finally {
-      setLoading(false);
+      if (!ac.signal.aborted && seq === loadSeq.current) {
+        setLoading(false);
+      }
     }
-  }, [isManagerial, startDate, endDate]);
+  }, [isManagerial, startDate, endDate, employeeFilterUserId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const showDateCol = startDate !== endDate;
-  const showEmployeeCols = isManagerial;
+  const showEmployeeCols = isManagerial && !employeeFilterUserId;
 
   const grouped = useMemo(() => {
     if (!showDateCol) return null;
@@ -285,7 +339,7 @@ export default function AttendancePage() {
 
   useEffect(() => {
     setMobilePage(1);
-  }, [startDate, endDate]);
+  }, [startDate, endDate, employeeFilterUserId]);
 
   useEffect(() => {
     setMobilePage(1);
@@ -294,7 +348,17 @@ export default function AttendancePage() {
   const baseCols = showEmployeeCols ? 11 : 10;
   const colCount = showDateCol ? baseCols + 1 : baseCols;
 
-  const title = isManagerial ? "Company attendance" : "My attendance";
+  const filteredEmployeeLabel = useMemo(() => {
+    if (!employeeFilterUserId) return null;
+    const e = managerEmployees.find((x) => x.id === employeeFilterUserId);
+    return e?.name?.trim() || e?.email || "Selected employee";
+  }, [employeeFilterUserId, managerEmployees]);
+
+  const title = isManagerial
+    ? filteredEmployeeLabel
+      ? `Attendance — ${filteredEmployeeLabel}`
+      : "Company attendance"
+    : "My attendance";
   const description = isManagerial
     ? "Punch sequence: first check in → lunch out → lunch in → final check out. If lunch punches are missing, a mandatory 1 hour lunch is applied for that day (stored on final check out when possible). Active time = gross minus lunch (effective) and tea. Present for payroll when active work is at least 8 hours. Dates use the IST calendar."
     : "Your records for the selected period (IST). Same punch rules as on the dashboard. Use the Dashboard to punch in/out for today.";
@@ -311,20 +375,41 @@ export default function AttendancePage() {
           </div>
         ) : (
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4 sm:p-6">
-            <div className="mb-5 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-              <AttendanceDateFilter
-                startDate={startDate}
-                endDate={endDate}
-                preset={preset}
-                onChange={(next) => {
-                  setStartDate(next.startDate);
-                  setEndDate(next.endDate);
-                  setPreset(next.preset);
-                }}
-              />
+            <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-wrap">
+                <AttendanceDateFilter
+                  startDate={startDate}
+                  endDate={endDate}
+                  preset={preset}
+                  onChange={(next) => {
+                    setStartDate(next.startDate);
+                    setEndDate(next.endDate);
+                    setPreset(next.preset);
+                  }}
+                />
+                {isManagerial && (
+                  <label className="flex min-w-[min(100%,14rem)] flex-col gap-1 text-sm">
+                    <span className="font-medium text-slate-700">Employee</span>
+                    <select
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:opacity-60"
+                      value={employeeFilterUserId}
+                      onChange={(e) => setEmployeeFilterUserId(e.target.value)}
+                      disabled={employeesLoading}
+                    >
+                      <option value="">{employeesLoading ? "Loading…" : "All employees"}</option>
+                      {!employeesLoading &&
+                        managerEmployees.map((e) => (
+                          <option key={e.id} value={e.id}>
+                            {e.name?.trim() || e.email}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                )}
+              </div>
               <button
                 type="button"
-                className="shrink-0 rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition disabled:opacity-50"
+                className="shrink-0 self-start rounded-lg border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm hover:bg-gray-50 transition disabled:opacity-50 lg:self-auto"
                 onClick={() => void load()}
                 disabled={loading}
               >
@@ -352,7 +437,11 @@ export default function AttendancePage() {
             <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50 py-12 text-center">
               <p className="text-sm font-semibold text-gray-700">No attendance records for this period.</p>
               <p className="mt-1 text-sm text-gray-600">
-                {isManagerial ? "Try another date range or refresh after employees punch." : "Try another date range, or punch in from the Dashboard for today."}
+                {isManagerial
+                  ? employeeFilterUserId
+                    ? "No records for this employee in the selected period, or their profile may not be linked to an employee record."
+                    : "Try another date range, pick a different employee, or refresh after employees punch."
+                  : "Try another date range, or punch in from the Dashboard for today."}
               </p>
             </div>
           ) : (
