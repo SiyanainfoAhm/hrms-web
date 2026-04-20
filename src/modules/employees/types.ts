@@ -11,6 +11,8 @@ export type EmployeeListRow = {
   employeeCode: string;
   phone: string;
   dateOfJoining: string;
+  offerDate?: string;
+  employmentType?: string;
   dateOfLeaving?: string;
   ctc?: number | null;
   createdAt: string;
@@ -31,6 +33,8 @@ export type EmployeeDetail = {
   phone: string;
   dateOfBirth: string;
   dateOfJoining: string;
+  offerDate: string;
+  employmentType: string;
   gender: string;
   designation: string;
   designationId: string;

@@ -69,6 +69,7 @@ export function EmployeeFormModal({
   const [pan, setPan] = useState("");
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [dateOfJoining, setDateOfJoining] = useState("");
+  const [offerDate, setOfferDate] = useState("");
   const [uanNumber, setUanNumber] = useState("");
   const [pfNumber, setPfNumber] = useState("");
   const [showGovernmentPayroll, setShowGovernmentPayroll] = useState(false);
@@ -126,6 +127,7 @@ export function EmployeeFormModal({
     setPan("");
     setDateOfBirth("");
     setDateOfJoining("");
+    setOfferDate("");
     setUanNumber("");
     setPfNumber("");
     setShowGovernmentPayroll(false);
@@ -218,6 +220,7 @@ export function EmployeeFormModal({
         setGender((u.gender as typeof gender) || "");
         setDateOfBirth(String(u.dateOfBirth ?? ""));
         setDateOfJoining(String(u.dateOfJoining ?? ""));
+        setOfferDate(String((u as any).offerDate ?? ""));
         setDesignation(String(u.designation ?? ""));
         setDesignationId(String(u.designationId ?? ""));
         setDepartmentId(String(u.departmentId ?? ""));
@@ -332,6 +335,7 @@ export function EmployeeFormModal({
         phone: phoneDigits,
         dateOfBirth: dateOfBirth || undefined,
         dateOfJoining: dateOfJoining || undefined,
+          offerDate: offerDate || undefined,
         currentAddressLine1: currentAddressLine1.trim() || undefined,
         currentAddressLine2: currentAddressLine2.trim() || undefined,
         currentCity: currentCity.trim() || undefined,
@@ -704,6 +708,10 @@ export function EmployeeFormModal({
                   <label className="text-sm">
                     <span className="text-gray-600">Date of joining</span>
                     <input className={field} type="date" value={dateOfJoining} onChange={(e) => setDateOfJoining(e.target.value)} />
+                  </label>
+                  <label className="text-sm">
+                    <span className="text-gray-600">Offer date</span>
+                    <input className={field} type="date" value={offerDate} onChange={(e) => setOfferDate(e.target.value)} />
                   </label>
                   {mode === "edit" && (
                     <label className="text-sm">

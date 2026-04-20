@@ -93,6 +93,8 @@ function mapRow(row: any, lookups?: {
     employeeCode: (row.employee_code ?? "") as string,
     phone: (row.phone ?? "") as string,
     dateOfJoining: row.date_of_joining ? String(row.date_of_joining) : "",
+    offerDate: row.offer_date ? String(row.offer_date).slice(0, 10) : "",
+    employmentType: (row.employment_type ?? "") as string,
     dateOfLeaving: row.date_of_leaving ? String(row.date_of_leaving) : "",
     ctc,
     createdAt: new Date(row.created_at).toISOString(),
@@ -258,6 +260,8 @@ export async function GET(request: NextRequest) {
         phone: u.phone ?? "",
         dateOfBirth: u.date_of_birth ? String(u.date_of_birth).slice(0, 10) : "",
         dateOfJoining: u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : "",
+        offerDate: u.offer_date ? String(u.offer_date).slice(0, 10) : "",
+        employmentType: u.employment_type ? String(u.employment_type) : "",
         gender: u.gender ?? "",
         designation: u.designation ?? "",
         designationId: u.designation_id ?? "",
@@ -451,6 +455,8 @@ export async function POST(request: NextRequest) {
   const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
   const dateOfBirth = typeof body?.dateOfBirth === "string" ? body.dateOfBirth.trim() : "";
   const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
+  const offerDate = typeof body?.offerDate === "string" ? body.offerDate.trim() : "";
+  const employmentType = typeof body?.employmentType === "string" ? body.employmentType.trim() : "";
   const employmentStatus = typeof body?.employmentStatus === "string" ? body.employmentStatus : "";
   const currentAddressLine1 = typeof body?.currentAddressLine1 === "string" ? body.currentAddressLine1.trim() : "";
   const currentAddressLine2 = typeof body?.currentAddressLine2 === "string" ? body.currentAddressLine2.trim() : "";
@@ -659,6 +665,8 @@ export async function POST(request: NextRequest) {
         phone: phoneDigits,
         date_of_birth: ymdOrNull(dateOfBirth),
         date_of_joining: dateOfJoining || null,
+        offer_date: offerDate || null,
+        employment_type: employmentType || null,
         ctc: calculatedCtc,
         gross_salary: finalGrossSalary,
         tds_monthly: incomeTaxVal,
@@ -750,6 +758,8 @@ export async function POST(request: NextRequest) {
           email,
           phone: phoneDigits,
           date_of_joining: dateOfJoining || null,
+          offer_date: offerDate || null,
+          employment_type: employmentType || null,
           emergency_contact_name: emergencyContactName || null,
           emergency_contact_phone: emergencyContactPhone || null,
           bank_account_number: bankAccountNumber || null,
@@ -835,6 +845,8 @@ export async function PUT(request: NextRequest) {
   const phone = typeof body?.phone === "string" ? body.phone.trim() : "";
   const dateOfBirth = typeof body?.dateOfBirth === "string" ? body.dateOfBirth.trim() : "";
   const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
+  const offerDate = typeof body?.offerDate === "string" ? body.offerDate.trim() : "";
+  const employmentType = typeof body?.employmentType === "string" ? body.employmentType.trim() : "";
   const employmentStatus = typeof body?.employmentStatus === "string" ? body.employmentStatus : "";
   const currentAddressLine1 = typeof body?.currentAddressLine1 === "string" ? body.currentAddressLine1.trim() : "";
   const currentAddressLine2 = typeof body?.currentAddressLine2 === "string" ? body.currentAddressLine2.trim() : "";
@@ -1012,6 +1024,8 @@ export async function PUT(request: NextRequest) {
     ...(phoneDigits ? { phone: phoneDigits } : {}),
     ...(dateOfBirth ? { date_of_birth: ymdOrNull(dateOfBirth) } : { date_of_birth: null }),
     ...(dateOfJoining ? { date_of_joining: dateOfJoining } : {}),
+    ...(offerDate ? { offer_date: offerDate } : {}),
+    ...(employmentType ? { employment_type: employmentType } : {}),
     ...(finalRole ? { role: finalRole } : {}),
     ...(finalStatus ? { employment_status: finalStatus } : {}),
     gender: gender ?? null,
@@ -1073,6 +1087,8 @@ export async function PUT(request: NextRequest) {
         email: email || null,
         phone: phoneDigits || null,
         date_of_joining: dateOfJoining || null,
+        offer_date: offerDate || null,
+        employment_type: employmentType || null,
         designation_id: designationId ?? null,
         department_id: departmentId ?? null,
         division_id: divisionId ?? null,
@@ -1170,6 +1186,7 @@ export async function PATCH(request: NextRequest) {
   const action = typeof body?.action === "string" ? body.action : "";
   const userId = typeof body?.userId === "string" ? body.userId : "";
   const dateOfJoining = typeof body?.dateOfJoining === "string" ? body.dateOfJoining.trim() : "";
+  const employmentType = typeof body?.employmentType === "string" ? body.employmentType.trim() : "";
   const lastWorkingDate = typeof body?.lastWorkingDate === "string" ? body.lastWorkingDate.trim() : "";
   if (!userId) return NextResponse.json({ error: "userId is required" }, { status: 400 });
   if (
@@ -1321,14 +1338,26 @@ export async function PATCH(request: NextRequest) {
 
     const { error: updErr } = await supabase
       .from("HRMS_users")
-      .update({ employment_status: "current", date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .update({
+        employment_status: "current",
+        date_of_joining: doj,
+        date_of_leaving: null,
+        ...(employmentType ? { employment_type: employmentType } : null),
+        updated_at: new Date().toISOString(),
+      })
       .eq("company_id", me.company_id)
       .eq("id", userId);
     if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
 
     await supabase
       .from("HRMS_employees")
-      .update({ is_active: true, date_of_joining: doj, date_of_leaving: null, updated_at: new Date().toISOString() })
+      .update({
+        is_active: true,
+        date_of_joining: doj,
+        date_of_leaving: null,
+        ...(employmentType ? { employment_type: employmentType } : null),
+        updated_at: new Date().toISOString(),
+      })
       .eq("company_id", me.company_id)
       .eq("user_id", userId);
 

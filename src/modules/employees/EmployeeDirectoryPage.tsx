@@ -73,6 +73,7 @@ export function EmployeeDirectoryPage() {
   const [convertTarget, setConvertTarget] = useState<EmployeeListRow | null>(null);
   const [convertKind, setConvertKind] = useState<"current" | "past">("current");
   const [convertDate, setConvertDate] = useState("");
+  const [convertEmploymentType, setConvertEmploymentType] = useState("Permanent");
   const [convertStep, setConvertStep] = useState<1 | 2>(1);
   const [convertPayrollForm, setConvertPayrollForm] = useState<Record<string, number> | null>(null);
   const [convertPrivatePreview, setConvertPrivatePreview] = useState<{
@@ -237,7 +238,14 @@ export function EmployeeDirectoryPage() {
             </span>
           );
         }
-      }
+      },
+      {
+        key: "offerDate",
+        header: "Offer date",
+        sortable: true,
+        sortValue: (r) => (r.offerDate ?? "").slice(0, 10),
+        render: (r) => <span className="text-sm text-gray-700">{(r.offerDate ?? "").slice(0, 10) || "—"}</span>,
+      },
     ],
     [activeTab]
   );
@@ -303,6 +311,7 @@ export function EmployeeDirectoryPage() {
           setConvertKind("current");
           setConvertTarget(r);
           setConvertDate(new Date().toISOString().slice(0, 10));
+          setConvertEmploymentType(r.employmentType || "Permanent");
           setConvertStep(1);
           setConvertPayrollForm(null);
           setConvertOpen(true);
@@ -356,7 +365,8 @@ export function EmployeeDirectoryPage() {
       const data = (await patchEmployee({
         action: "preview_convert_to_current",
         userId: convertTarget.id,
-        dateOfJoining: convertDate || undefined
+        dateOfJoining: convertDate || undefined,
+        employmentType: convertEmploymentType || undefined,
       })) as { payrollMaster?: Record<string, number>; payrollMode?: string; computed?: any };
       if (data?.payrollMode === "private") {
         setConvertPayrollForm(null);
@@ -390,6 +400,7 @@ export function EmployeeDirectoryPage() {
           action: "convert_to_current",
           userId: convertTarget.id,
           dateOfJoining: convertDate || undefined,
+          employmentType: convertEmploymentType || undefined,
           payrollMode: convertPayrollForm ? "government" : "private",
           payrollMaster: convertPayrollForm ?? undefined
         });
@@ -627,6 +638,19 @@ export function EmployeeDirectoryPage() {
                     value={convertDate}
                     onChange={(e) => setConvertDate(e.target.value)}
                   />
+                </label>
+                <label className="block text-sm">
+                  <span className="text-gray-600">Employment type</span>
+                  <select
+                    className="mt-1 block w-full rounded-lg border border-gray-200 px-3 py-2"
+                    value={convertEmploymentType}
+                    onChange={(e) => setConvertEmploymentType(e.target.value)}
+                  >
+                    <option value="Permanent">Permanent</option>
+                    <option value="Trainee/Intern">Trainee/Intern</option>
+                    <option value="Remote">Remote</option>
+                    <option value="Consultant">Consultant</option>
+                  </select>
                 </label>
                 <p className="text-xs text-gray-500">Company PT (monthly) used in preview: ₹{companyPt}</p>
                 <div className="flex justify-end gap-2 pt-2">
