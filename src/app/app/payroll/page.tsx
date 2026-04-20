@@ -9,7 +9,7 @@ import Image from "next/image";
 import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
-import { computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
+import { computePayrollFromCtc, computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
 import {
   computeGovernmentMonthlyPayroll,
   deriveTransportSlabFromLevel,
@@ -320,6 +320,7 @@ function computeRowStatutory(
   row: Pick<
     MasterGridRow,
     | "gross"
+    | "ctc"
     | "pt"
     | "tds"
     | "advanceBonus"
@@ -334,7 +335,8 @@ function computeRowStatutory(
   >
 ) {
   const br = breakupIfMatchesGross(row);
-  const calc = computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br);
+  const calc =
+    row.ctc > 0 ? computePayrollFromCtc(row.ctc, row.pfEligible, row.esicEligible, row.pt, br) : computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br);
   const takeHome = Math.max(0, calc.takeHome - row.tds + row.advanceBonus);
   return {
     ctc: calc.ctc,
@@ -349,6 +351,7 @@ function computeRowStatutory(
     trans: calc.trans,
     lta: calc.lta,
     personal: calc.personal,
+    ...(row.ctc > 0 ? { gross: (calc as any).gross ?? row.gross } : null),
   };
 }
 
@@ -499,6 +502,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
   }
 
   const gross = Number(m.grossSalary) || 0;
+  const ctcFromDb = Math.round(Number((m as any).ctc) || 0);
   const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : companyPt;
   const tds = Number(m.tds) || 0;
   const advanceBonus = Number(m.advanceBonus) || 0;
@@ -527,6 +531,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     payrollMode: "private",
     governmentPayLevel: null,
     gross,
+    ctc: ctcFromDb,
     pt,
     tds,
     incomeTaxDefault: tds,
@@ -540,7 +545,6 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     trans,
     lta,
     personal,
-    ctc: 0,
     pfEmp: 0,
     pfEmpr: 0,
     esicEmp: 0,
@@ -1022,6 +1026,12 @@ function PayrollPageContent() {
         }
 
         const next = { ...row, [field]: value } as typeof row;
+        if (field === "ctc" || field === "pt" || field === "tds" || field === "advanceBonus" || field === "pfEligible" || field === "esicEligible") {
+          // Keep private payroll master row consistent with company policy: CTC → derived gross → take-home.
+          const stat = computeRowStatutory(next);
+          Object.assign(next, stat);
+          return next;
+        }
         const recalcTakeHome = () => {
           next.takeHome = next.netPay - (next.tds ?? 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
         };
@@ -1591,6 +1601,7 @@ function PayrollPageContent() {
         body: JSON.stringify({
           employeeUserId,
           grossSalary: row.gross,
+          ctc: row.ctc,
           basic: row.basic,
           hra: row.hra,
           medical: row.medical,

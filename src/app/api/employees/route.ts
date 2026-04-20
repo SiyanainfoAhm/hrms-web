@@ -5,6 +5,7 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { computeGovernmentMonthlyPayroll, masterRowToDeductionDefaults } from "@/lib/governmentPayroll";
 import {
+  computePayrollFromCtc,
   computePayrollFromGross,
   isWithinEsicGrossCeiling,
   isPfStatutorilyMandatory,
@@ -479,6 +480,8 @@ export async function POST(request: NextRequest) {
 
   const grossPrivateRaw = body?.grossSalary ?? body?.gross ?? body?.grossMonthly;
   const grossPrivate = grossPrivateRaw != null && grossPrivateRaw !== "" ? Number(grossPrivateRaw) : NaN;
+  const ctcPrivateRaw = body?.ctc ?? body?.ctcMonthly ?? body?.monthlyCtc;
+  const ctcPrivate = ctcPrivateRaw != null && ctcPrivateRaw !== "" ? Number(ctcPrivateRaw) : NaN;
 
   const grossBasicRaw = body?.grossBasic;
   const grossBasic = grossBasicRaw != null && grossBasicRaw !== "" ? Number(grossBasicRaw) : NaN;
@@ -539,7 +542,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Monthly gross basic pay is required" }, { status: 400 });
     }
   } else {
-    if (!Number.isFinite(grossPrivate) || grossPrivate <= 0) {
+    // Gross is preferred; allow legacy CTC-only payloads.
+    if ((!Number.isFinite(grossPrivate) || grossPrivate <= 0) && (!Number.isFinite(ctcPrivate) || ctcPrivate <= 0)) {
       return NextResponse.json({ error: "Monthly gross salary is required" }, { status: 400 });
     }
   }
@@ -623,15 +627,22 @@ export async function POST(request: NextRequest) {
     finalEsicEligible = false;
     finalGovernmentPayLevel = governmentPayLevelPost;
   } else {
-    finalGrossSalary = grossPrivate;
+    // Private payroll input is gross (CTC may be provided by legacy clients).
+    // When CTC is provided (and gross is not), derive gross from CTC since CTC includes employer PF/ESIC.
+    const hasGross = Number.isFinite(grossPrivate) && grossPrivate > 0;
+    const hasCtc = !hasGross && Number.isFinite(ctcPrivate) && ctcPrivate > 0;
+    finalGrossSalary = hasGross ? grossPrivate : ctcPrivate;
     // Defaults: PF generally on; ESIC only if within ceiling.
     // Allow explicit override from UI when provided.
     const pfDefault = isPfStatutorilyMandatory(finalGrossSalary, Math.round(finalGrossSalary * 0.2)) || true;
     const esicDefault = isWithinEsicGrossCeiling(finalGrossSalary, privateCfg);
     finalPfEligible = typeof pfEligibleRaw === "boolean" ? pfEligibleRaw : pfDefault;
     finalEsicEligible = typeof esicEligibleRaw === "boolean" ? esicEligibleRaw : esicDefault;
-    const calc = computePayrollFromGross(finalGrossSalary, finalPfEligible, finalEsicEligible, ptMonthly, undefined, privateCfg);
-    calculatedCtc = calc.ctc;
+    const calc = hasCtc
+      ? computePayrollFromCtc(ctcPrivate, finalPfEligible, finalEsicEligible, ptMonthly, undefined, privateCfg)
+      : computePayrollFromGross(finalGrossSalary, finalPfEligible, finalEsicEligible, ptMonthly, undefined, privateCfg);
+    calculatedCtc = hasCtc ? Math.round(ctcPrivate) : calc.ctc;
+    if (hasCtc && (calc as any).gross != null) finalGrossSalary = Math.round(Number((calc as any).gross) || finalGrossSalary);
     finalGovernmentPayLevel = null;
   }
 
@@ -1405,7 +1416,21 @@ export async function PATCH(request: NextRequest) {
         }
         const pfEligible = Boolean((u as any).pf_eligible);
         const esicEligible = Boolean((u as any).esic_eligible);
-        const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
+
+        // Use company-level private payroll config (same as preview) so persisted values match UI.
+        let privateCfg = normalizePrivatePayrollConfig(null);
+        try {
+          const { data: cfgRow } = await supabase
+            .from("HRMS_company_payroll_config")
+            .select("private_config")
+            .eq("company_id", me.company_id)
+            .maybeSingle();
+          privateCfg = normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
+        } catch {
+          // ignore
+        }
+
+        const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, undefined, privateCfg);
         const takeHome = Math.max(0, Math.round(calc.takeHome - tdsBase));
         const { error: insErr } = await supabase.from("HRMS_payroll_master").insert([
           {
@@ -1473,7 +1498,21 @@ export async function PATCH(request: NextRequest) {
       const gross = Number(u.gross_salary ?? 0);
       const pfEligible = Boolean((u as any).pf_eligible);
       const esicEligible = Boolean((u as any).esic_eligible);
-      const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly);
+
+      // Use company-level private payroll config for consistency with previews and master inserts.
+      let privateCfg = normalizePrivatePayrollConfig(null);
+      try {
+        const { data: cfgRow } = await supabase
+          .from("HRMS_company_payroll_config")
+          .select("private_config")
+          .eq("company_id", me.company_id)
+          .maybeSingle();
+        privateCfg = normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
+      } catch {
+        // ignore
+      }
+
+      const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, undefined, privateCfg);
       await supabase
         .from("HRMS_users")
         .update({

@@ -436,15 +436,17 @@ export async function PATCH(request: NextRequest) {
   const salaryBreakup = componentsSum > 0
     ? { basic, hra, medical, trans, lta, personal }
     : undefined;
-  const calc = (await import("@/lib/payrollCalc")).computePayrollFromGross(
-    grossSalary,
-    pfEligible,
-    esicEligible,
-    ptMonthly,
-    salaryBreakup
-  );
+  const inputCtc = body?.ctc != null && Number.isFinite(Number(body.ctc)) ? Math.max(0, Number(body.ctc)) : null;
+  const calcLib = await import("@/lib/payrollCalc");
+  const calc =
+    inputCtc != null && inputCtc > 0
+      ? calcLib.computePayrollFromCtc(inputCtc, pfEligible, esicEligible, ptMonthly, salaryBreakup)
+      : calcLib.computePayrollFromGross(grossSalary, pfEligible, esicEligible, ptMonthly, salaryBreakup);
   const { pfEmp, pfEmpr, esicEmp, esicEmpr, ctc, takeHome: baseTakeHome, basic: calcBasic, hra: calcHra, medical: calcMedical, trans: calcTrans, lta: calcLta, personal: calcPersonal } = calc;
   const takeHome = Math.max(0, baseTakeHome - tdsVal + advanceBonusVal);
+  if (inputCtc != null && inputCtc > 0 && (calc as any).gross != null) {
+    grossSalary = Number((calc as any).gross) || grossSalary;
+  }
 
   const salaryComponents = {
     basic: calcBasic,

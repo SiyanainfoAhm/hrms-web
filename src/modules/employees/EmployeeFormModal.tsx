@@ -5,11 +5,13 @@ import type { RoleId } from "../../config/roleConfig";
 import {
   normalizeDigits,
   normalizePanInput,
+  validateRequired,
   validateEmailField,
-  validateIndianMobileDigits,
-  validateAadhaarDigits,
+  validateIndianMobileInteractive,
+  validateAadhaarInteractive,
   validatePanNormalized
 } from "../../lib/employeeValidators";
+import { computePayrollFromGross } from "@/lib/payrollCalc";
 import {
   fetchCompanyDocuments,
   fetchCompanyMe,
@@ -22,7 +24,6 @@ import {
   fetchEmployeeDetail
 } from "./employeeDirectoryService";
 import type { EmploymentStatusTab } from "./types";
-import { computePayrollFromGross } from "@/lib/payrollCalc";
 import type { PrivatePayrollConfig } from "@/lib/payrollConfig";
 
 type Lookup = { id: string; title?: string; name?: string; division_id?: string };
@@ -98,6 +99,8 @@ export function EmployeeFormModal({
   const [bankIfsc, setBankIfsc] = useState("");
 
   const [formError, setFormError] = useState<string | null>(null);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [submitted, setSubmitted] = useState(false);
 
   const departmentsInDivision = useMemo(() => {
     if (!divisionId) return departments;
@@ -106,6 +109,8 @@ export function EmployeeFormModal({
 
   function reset() {
     setFormError(null);
+    setTouched({});
+    setSubmitted(false);
     setName("");
     setEmail("");
     setFormRole("employee");
@@ -290,65 +295,32 @@ export function EmployeeFormModal({
   async function submit(e: FormEvent) {
     e.preventDefault();
     setFormError(null);
-    const eErr = validateEmailField(email.trim().toLowerCase());
-    const phoneDigits = normalizeDigits(phone);
-    const phErr = validateIndianMobileDigits(phoneDigits);
-    const aDigits = normalizeDigits(aadhaar);
-    const ahErr = validateAadhaarDigits(aDigits);
-    const panNorm = normalizePanInput(pan);
-    const pnErr = validatePanNormalized(panNorm);
-    const pl = parseInt(governmentPayLevel.trim(), 10);
-    const gbParsed = parseFloat(grossBasic.trim());
-    const gsParsed = parseFloat(grossSalary.trim());
-    const payLvErr =
-      showGovernmentPayroll
-        ? !governmentPayLevel.trim() || !Number.isFinite(pl) || pl < 1
-          ? "Government pay level is required (≥ 1)"
-          : null
-        : null;
-    const gbErr =
-      showGovernmentPayroll
-        ? !grossBasic.trim() || !Number.isFinite(gbParsed) || gbParsed <= 0
-          ? "Monthly gross basic pay is required"
-          : null
-        : null;
-    const gsErr =
-      !showGovernmentPayroll
-        ? !grossSalary.trim() || !Number.isFinite(gsParsed) || gsParsed <= 0
-          ? "Monthly gross salary is required"
-          : null
-        : null;
-    if (
-      eErr ||
-      phErr ||
-      ahErr ||
-      pnErr ||
-      !name.trim() ||
-      !designation.trim() ||
-      !departmentId ||
-      !divisionId ||
-      !shiftId ||
-      payLvErr ||
-      gbErr ||
-      gsErr
-    ) {
+    setSubmitted(true);
+    if (hasErrors) {
       setFormError(
-        eErr ||
-          phErr ||
-          ahErr ||
-          pnErr ||
-          payLvErr ||
-          gbErr ||
-          gsErr ||
-          (!name.trim() ? "Name is required" : null) ||
-          (!designation.trim() ? "Designation is required" : null) ||
-          (!departmentId ? "Department is required" : null) ||
-          (!divisionId ? "Division is required" : null) ||
-          (!shiftId ? "Shift is required" : null) ||
+        errors.name ||
+          errors.email ||
+          errors.phone ||
+          errors.aadhaar ||
+          errors.pan ||
+          errors.divisionId ||
+          errors.departmentId ||
+          errors.designationId ||
+          errors.shiftId ||
+          errors.governmentPayLevel ||
+          errors.grossBasic ||
+          errors.grossSalary ||
           "Fix validation errors"
       );
       return;
     }
+
+    const phoneDigits = normalizeDigits(phone);
+    const aDigits = normalizeDigits(aadhaar);
+    const panNorm = normalizePanInput(pan);
+    const pl = parseInt(governmentPayLevel.trim(), 10);
+    const gbParsed = parseFloat(grossBasic.trim());
+    const gsParsed = parseFloat(grossSalary.trim());
 
     setLoading(true);
     try {
@@ -436,6 +408,70 @@ export function EmployeeFormModal({
 
   const field =
     "block w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]";
+  const fieldErr =
+    "block w-full rounded-lg border border-red-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-200";
+
+  function markTouched(key: string) {
+    setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
+  }
+
+  const errors = useMemo(() => {
+    const phoneDigits = normalizeDigits(phone);
+    const aadhaarDigits = normalizeDigits(aadhaar);
+    const panNorm = normalizePanInput(pan);
+
+    const payLvParsed = parseInt(governmentPayLevel.trim(), 10);
+    const grossBasicParsed = parseFloat(grossBasic.trim());
+    const grossSalaryParsed = parseFloat(grossSalary.trim());
+
+    const payLevelErr =
+      showGovernmentPayroll && (!governmentPayLevel.trim() || !Number.isFinite(payLvParsed) || payLvParsed < 1)
+        ? "Government pay level is required (≥ 1)"
+        : null;
+    const grossBasicErr =
+      showGovernmentPayroll && (!grossBasic.trim() || !Number.isFinite(grossBasicParsed) || grossBasicParsed <= 0)
+        ? "Monthly gross basic pay is required"
+        : null;
+    const grossSalaryErr =
+      !showGovernmentPayroll && (!grossSalary.trim() || !Number.isFinite(grossSalaryParsed) || grossSalaryParsed <= 0)
+        ? "Monthly gross salary is required"
+        : null;
+
+    return {
+      name: validateRequired(name, "Name"),
+      email: validateEmailField(email),
+      phone: validateIndianMobileInteractive(phoneDigits),
+      aadhaar: validateAadhaarInteractive(aadhaarDigits),
+      pan: validatePanNormalized(panNorm),
+      divisionId: divisionId ? null : "Division is required",
+      departmentId: departmentId ? null : "Department is required",
+      designationId: designationId ? null : "Designation is required",
+      shiftId: shiftId ? null : "Shift is required",
+      governmentPayLevel: payLevelErr,
+      grossBasic: grossBasicErr,
+      grossSalary: grossSalaryErr,
+    };
+  }, [
+    name,
+    email,
+    phone,
+    aadhaar,
+    pan,
+    divisionId,
+    departmentId,
+    designationId,
+    shiftId,
+    showGovernmentPayroll,
+    governmentPayLevel,
+    grossBasic,
+    grossSalary,
+  ]);
+
+  const hasErrors = useMemo(() => Object.values(errors).some(Boolean), [errors]);
+
+  function showErr<K extends keyof typeof errors>(key: K) {
+    return Boolean(errors[key]) && (submitted || touched[String(key)]);
+  }
 
   const privatePreview = useMemo(() => {
     if (showGovernmentPayroll) return null;
@@ -466,7 +502,7 @@ export function EmployeeFormModal({
             Close
           </button>
         </div>
-        <form id="hrms-employee-form" onSubmit={submit} className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
+        <form id="hrms-employee-form" onSubmit={submit} noValidate className="flex-1 overflow-y-auto px-5 py-4 space-y-6">
           {formError && (
             <div className="rounded-lg bg-red-50 text-red-800 text-sm px-3 py-2 border border-red-100">{formError}</div>
           )}
@@ -479,15 +515,48 @@ export function EmployeeFormModal({
                 <div className="grid sm:grid-cols-2 gap-3">
                   <label className="text-sm">
                     <span className="text-gray-600">Name</span>
-                    <input className={field} value={name} onChange={(e) => setName(e.target.value)} required />
+                    <input
+                      className={showErr("name") ? fieldErr : field}
+                      value={name}
+                      onChange={(e) => {
+                        setName(e.target.value);
+                        markTouched("name");
+                      }}
+                      onBlur={() => markTouched("name")}
+                      aria-invalid={showErr("name")}
+                    />
+                    {showErr("name") && <div className="mt-1 text-xs text-red-700">{errors.name}</div>}
                   </label>
                   <label className="text-sm">
                     <span className="text-gray-600">Email</span>
-                    <input className={field} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required disabled={mode === "edit"} />
+                    <input
+                      className={showErr("email") ? fieldErr : field}
+                      type="email"
+                      value={email}
+                      onChange={(e) => {
+                        setEmail(e.target.value);
+                        markTouched("email");
+                      }}
+                      onBlur={() => markTouched("email")}
+                      aria-invalid={showErr("email")}
+                      disabled={mode === "edit"}
+                    />
+                    {showErr("email") && <div className="mt-1 text-xs text-red-700">{errors.email}</div>}
                   </label>
                   <label className="text-sm">
                     <span className="text-gray-600">Phone (10 digits)</span>
-                    <input className={field} value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="numeric" required />
+                    <input
+                      className={showErr("phone") ? fieldErr : field}
+                      value={phone}
+                      onChange={(e) => {
+                        setPhone(normalizeDigits(e.target.value).slice(0, 10));
+                        markTouched("phone");
+                      }}
+                      onBlur={() => markTouched("phone")}
+                      inputMode="numeric"
+                      aria-invalid={showErr("phone")}
+                    />
+                    {showErr("phone") && <div className="mt-1 text-xs text-red-700">{errors.phone}</div>}
                   </label>
                   <label className="text-sm">
                     <span className="text-gray-600">Role</span>
@@ -513,11 +582,32 @@ export function EmployeeFormModal({
                   </label>
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">Aadhaar (12 digits)</span>
-                    <input className={field} value={aadhaar} onChange={(e) => setAadhaar(e.target.value)} inputMode="numeric" required />
+                    <input
+                      className={showErr("aadhaar") ? fieldErr : field}
+                      value={aadhaar}
+                      onChange={(e) => {
+                        setAadhaar(normalizeDigits(e.target.value).slice(0, 12));
+                        markTouched("aadhaar");
+                      }}
+                      onBlur={() => markTouched("aadhaar")}
+                      inputMode="numeric"
+                      aria-invalid={showErr("aadhaar")}
+                    />
+                    {showErr("aadhaar") && <div className="mt-1 text-xs text-red-700">{errors.aadhaar}</div>}
                   </label>
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">PAN</span>
-                    <input className={field} value={pan} onChange={(e) => setPan(normalizePanInput(e.target.value))} required />
+                    <input
+                      className={showErr("pan") ? fieldErr : field}
+                      value={pan}
+                      onChange={(e) => {
+                        setPan(normalizePanInput(e.target.value));
+                        markTouched("pan");
+                      }}
+                      onBlur={() => markTouched("pan")}
+                      aria-invalid={showErr("pan")}
+                    />
+                    {showErr("pan") && <div className="mt-1 text-xs text-red-700">{errors.pan}</div>}
                   </label>
                 </div>
               </section>
@@ -527,7 +617,18 @@ export function EmployeeFormModal({
                 <div className="grid sm:grid-cols-2 gap-3">
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">Division</span>
-                    <select className={field} value={divisionId} onChange={(e) => { setDivisionId(e.target.value); setDepartmentId(""); }} required>
+                    <select
+                      className={showErr("divisionId") ? fieldErr : field}
+                      value={divisionId}
+                      onChange={(e) => {
+                        setDivisionId(e.target.value);
+                        setDepartmentId("");
+                        markTouched("divisionId");
+                        markTouched("departmentId");
+                      }}
+                      onBlur={() => markTouched("divisionId")}
+                      aria-invalid={showErr("divisionId")}
+                    >
                       <option value="">Select</option>
                       {divisions.map((d) => (
                         <option key={d.id} value={d.id}>
@@ -535,10 +636,20 @@ export function EmployeeFormModal({
                         </option>
                       ))}
                     </select>
+                    {showErr("divisionId") && <div className="mt-1 text-xs text-red-700">{errors.divisionId}</div>}
                   </label>
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">Department</span>
-                    <select className={field} value={departmentId} onChange={(e) => setDepartmentId(e.target.value)} required>
+                    <select
+                      className={showErr("departmentId") ? fieldErr : field}
+                      value={departmentId}
+                      onChange={(e) => {
+                        setDepartmentId(e.target.value);
+                        markTouched("departmentId");
+                      }}
+                      onBlur={() => markTouched("departmentId")}
+                      aria-invalid={showErr("departmentId")}
+                    >
                       <option value="">Select</option>
                       {departmentsInDivision.map((d) => (
                         <option key={d.id} value={d.id}>
@@ -546,10 +657,20 @@ export function EmployeeFormModal({
                         </option>
                       ))}
                     </select>
+                    {showErr("departmentId") && <div className="mt-1 text-xs text-red-700">{errors.departmentId}</div>}
                   </label>
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">Designation</span>
-                    <select className={field} value={designationId} onChange={(e) => pickDesignation(e.target.value)} required>
+                    <select
+                      className={showErr("designationId") ? fieldErr : field}
+                      value={designationId}
+                      onChange={(e) => {
+                        pickDesignation(e.target.value);
+                        markTouched("designationId");
+                      }}
+                      onBlur={() => markTouched("designationId")}
+                      aria-invalid={showErr("designationId")}
+                    >
                       <option value="">Select</option>
                       {designations.map((d) => (
                         <option key={d.id} value={d.id}>
@@ -557,10 +678,20 @@ export function EmployeeFormModal({
                         </option>
                       ))}
                     </select>
+                    {showErr("designationId") && <div className="mt-1 text-xs text-red-700">{errors.designationId}</div>}
                   </label>
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">Shift</span>
-                    <select className={field} value={shiftId} onChange={(e) => setShiftId(e.target.value)} required>
+                    <select
+                      className={showErr("shiftId") ? fieldErr : field}
+                      value={shiftId}
+                      onChange={(e) => {
+                        setShiftId(e.target.value);
+                        markTouched("shiftId");
+                      }}
+                      onBlur={() => markTouched("shiftId")}
+                      aria-invalid={showErr("shiftId")}
+                    >
                       <option value="">Select</option>
                       {shifts.map((d) => (
                         <option key={d.id} value={d.id}>
@@ -568,6 +699,7 @@ export function EmployeeFormModal({
                         </option>
                       ))}
                     </select>
+                    {showErr("shiftId") && <div className="mt-1 text-xs text-red-700">{errors.shiftId}</div>}
                   </label>
                   <label className="text-sm">
                     <span className="text-gray-600">Date of joining</span>
@@ -605,8 +737,19 @@ export function EmployeeFormModal({
                   {!showGovernmentPayroll ? (
                     <>
                       <label className="text-sm">
-                        <span className="text-gray-600">Monthly gross salary</span>
-                        <input className={field} inputMode="decimal" value={grossSalary} onChange={(e) => setGrossSalary(e.target.value)} required />
+                        <span className="text-gray-600">Gross (monthly)</span>
+                        <input
+                          className={showErr("grossSalary") ? fieldErr : field}
+                          inputMode="decimal"
+                          value={grossSalary}
+                          onChange={(e) => {
+                            setGrossSalary(e.target.value);
+                            markTouched("grossSalary");
+                          }}
+                          onBlur={() => markTouched("grossSalary")}
+                          aria-invalid={showErr("grossSalary")}
+                        />
+                        {showErr("grossSalary") && <div className="mt-1 text-xs text-red-700">{errors.grossSalary}</div>}
                       </label>
                       <label className="text-sm">
                         <span className="text-gray-600">Income tax / month</span>
@@ -658,14 +801,38 @@ export function EmployeeFormModal({
                     </>
                   ) : (
                     <>
-                  <label className="text-sm">
-                    <span className="text-gray-600">Pay level (≥ 1)</span>
-                    <input className={field} inputMode="numeric" value={governmentPayLevel} onChange={(e) => setGovernmentPayLevel(e.target.value)} required />
-                  </label>
-                  <label className="text-sm">
-                    <span className="text-gray-600">Monthly gross basic</span>
-                    <input className={field} inputMode="decimal" value={grossBasic} onChange={(e) => setGrossBasic(e.target.value)} required />
-                  </label>
+                      <label className="text-sm">
+                        <span className="text-gray-600">Pay level (≥ 1)</span>
+                        <input
+                          className={showErr("governmentPayLevel") ? fieldErr : field}
+                          inputMode="numeric"
+                          value={governmentPayLevel}
+                          onChange={(e) => {
+                            setGovernmentPayLevel(e.target.value);
+                            markTouched("governmentPayLevel");
+                          }}
+                          onBlur={() => markTouched("governmentPayLevel")}
+                          aria-invalid={showErr("governmentPayLevel")}
+                        />
+                        {showErr("governmentPayLevel") && (
+                          <div className="mt-1 text-xs text-red-700">{errors.governmentPayLevel}</div>
+                        )}
+                      </label>
+                      <label className="text-sm">
+                        <span className="text-gray-600">Monthly gross basic</span>
+                        <input
+                          className={showErr("grossBasic") ? fieldErr : field}
+                          inputMode="decimal"
+                          value={grossBasic}
+                          onChange={(e) => {
+                            setGrossBasic(e.target.value);
+                            markTouched("grossBasic");
+                          }}
+                          onBlur={() => markTouched("grossBasic")}
+                          aria-invalid={showErr("grossBasic")}
+                        />
+                        {showErr("grossBasic") && <div className="mt-1 text-xs text-red-700">{errors.grossBasic}</div>}
+                      </label>
                   <label className="text-sm">
                     <span className="text-gray-600">Income tax / month</span>
                     <input className={field} inputMode="decimal" value={incomeTaxMonthly} onChange={(e) => setIncomeTaxMonthly(e.target.value)} />

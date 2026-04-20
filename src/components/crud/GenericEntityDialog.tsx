@@ -6,6 +6,7 @@ import type { Actor } from "../../lib/permissions";
 import { isVisible } from "../../lib/visibility";
 import { cn } from "../../lib/cn";
 import type { EntityField } from "../../types/crud";
+import { validateRequired } from "../../lib/validationMaster";
 
 function canEdit(actor: Actor | null | undefined, rule: EntityField["editable"] | undefined) {
   if (!rule) return true;
@@ -38,6 +39,8 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
   onSubmit: (values: TValues) => void | Promise<void>;
 }) {
   const [values, setValues] = useState<TValues>(initialValues);
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const [submitted, setSubmitted] = useState(false);
 
   const visibleFields = useMemo(
     () => fields.filter((f) => isVisible(actor, f.visible)),
@@ -46,6 +49,26 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
 
   function setValue(key: keyof TValues & string, next: unknown) {
     setValues((prev) => ({ ...prev, [key]: next } as TValues));
+  }
+
+  const errors = useMemo(() => {
+    const e: Record<string, string | null> = {};
+    for (const f of visibleFields) {
+      if (!f.required) continue;
+      const val = (values as any)[f.key];
+      e[f.key] = validateRequired(val, f.label);
+    }
+    return e as Record<keyof TValues & string, string | null>;
+  }, [values, visibleFields]);
+
+  const hasErrors = useMemo(() => Object.values(errors).some(Boolean), [errors]);
+
+  function markTouched(key: string) {
+    setTouched((t) => (t[key] ? t : { ...t, [key]: true }));
+  }
+
+  function showErr(key: string) {
+    return Boolean((errors as any)[key]) && (submitted || touched[key]);
   }
 
   return (
@@ -77,8 +100,11 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
           <form
             onSubmit={(e) => {
               e.preventDefault();
+              setSubmitted(true);
+              if (hasErrors) return;
               void onSubmit(values);
             }}
+            noValidate
             className="space-y-3"
           >
             {visibleFields.map((field) => {
@@ -86,9 +112,10 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
               const raw = values[field.key];
               const value = raw ?? (field.type === "checkbox" ? false : "");
               const commonInput = cn(
-                "w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm bg-white",
+                "w-full border rounded-lg px-4 py-2.5 text-sm bg-white",
                 "focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20",
-                disabled && "bg-gray-100 text-gray-400 cursor-not-allowed"
+                disabled && "bg-gray-100 text-gray-400 cursor-not-allowed",
+                showErr(field.key) ? "border-red-300 focus:ring-red-200" : "border-gray-300"
               );
 
               return (
@@ -111,14 +138,22 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
                       placeholder={field.placeholder}
                       disabled={disabled}
                       value={String(value)}
-                      onChange={(e) => setValue(field.key, e.target.value)}
+                      onChange={(e) => {
+                        setValue(field.key, e.target.value);
+                        markTouched(field.key);
+                      }}
+                      onBlur={() => markTouched(field.key)}
                     />
                   ) : field.type === "select" ? (
                     <select
                       className={commonInput}
                       disabled={disabled}
                       value={String(value)}
-                      onChange={(e) => setValue(field.key, e.target.value)}
+                      onChange={(e) => {
+                        setValue(field.key, e.target.value);
+                        markTouched(field.key);
+                      }}
+                      onBlur={() => markTouched(field.key)}
                     >
                       <option value="">{field.placeholder ?? "Select..."}</option>
                       {(field.options ?? []).map((opt) => (
@@ -134,7 +169,11 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
                         className="h-4 w-4"
                         checked={Boolean(value)}
                         disabled={disabled}
-                        onChange={(e) => setValue(field.key, e.target.checked)}
+                        onChange={(e) => {
+                          setValue(field.key, e.target.checked);
+                          markTouched(field.key);
+                        }}
+                        onBlur={() => markTouched(field.key)}
                       />
                       {field.description && <span className="text-sm text-gray-600">{field.description}</span>}
                     </div>
@@ -148,7 +187,11 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
                             value={opt.value}
                             checked={String(value) === opt.value}
                             disabled={disabled}
-                            onChange={() => setValue(field.key, opt.value)}
+                            onChange={() => {
+                              setValue(field.key, opt.value);
+                              markTouched(field.key);
+                            }}
+                            onBlur={() => markTouched(field.key)}
                           />
                           {opt.label}
                         </label>
@@ -172,13 +215,19 @@ export function GenericEntityDialog<TValues extends Record<string, unknown>>({
                       disabled={disabled}
                       value={String(value)}
                       onChange={(e) =>
-                        setValue(
-                          field.key,
-                          field.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value
-                        )
+                        (() => {
+                          setValue(
+                            field.key,
+                            field.type === "number" ? (e.target.value === "" ? "" : Number(e.target.value)) : e.target.value
+                          );
+                          markTouched(field.key);
+                        })()
                       }
+                      onBlur={() => markTouched(field.key)}
                     />
                   )}
+
+                  {showErr(field.key) && <div className="mt-1 text-xs text-red-700">{(errors as any)[field.key]}</div>}
 
                   {field.description && field.type !== "checkbox" && (
                     <div className="text-xs text-gray-400 mt-1">{field.description}</div>

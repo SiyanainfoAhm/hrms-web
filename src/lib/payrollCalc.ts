@@ -115,3 +115,40 @@ export function computePayrollFromGross(
     takeHome: Math.max(0, takeHome),
   };
 }
+
+/**
+ * When monthly CTC is fixed (CTC includes employer PF/ESIC), derive the gross that fits:
+ *   CTC = Gross + EmployerPF(Gross) + EmployerESIC(Gross)
+ *
+ * Then compute the same statutory + take-home figures from the derived gross.
+ */
+export function computePayrollFromCtc(
+  ctcMonthly: number,
+  pfEligible: boolean,
+  esicEligible: boolean,
+  ptMonthly: number,
+  salaryBreakup?: { basic?: number; hra?: number; medical?: number; trans?: number; lta?: number; personal?: number },
+  cfg?: PrivatePayrollConfig,
+) {
+  const target = Math.max(0, Math.round(Number(ctcMonthly) || 0));
+  if (target <= 0) {
+    const empty = computePayrollFromGross(0, pfEligible, esicEligible, ptMonthly, salaryBreakup, cfg);
+    return { ...empty, gross: 0, ctcTarget: target };
+  }
+
+  // Fixed-point iteration: gross_{n+1} = target - employerContrib(gross_n)
+  let gross = target;
+  for (let i = 0; i < 25; i++) {
+    const snap = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, salaryBreakup, cfg);
+    const next = Math.max(0, target - snap.pfEmpr - snap.esicEmpr);
+    if (Math.abs(next - gross) <= 1) {
+      gross = Math.round(next);
+      break;
+    }
+    gross = Math.round(next);
+  }
+
+  const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, salaryBreakup, cfg);
+  // Keep displayed CTC anchored to the target; calc.ctc may differ by rounding.
+  return { ...calc, gross, ctc: target, ctcTarget: target };
+}

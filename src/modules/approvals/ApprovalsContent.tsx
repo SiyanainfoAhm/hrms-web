@@ -9,6 +9,7 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { fmtDmy } from "@/lib/dateFormat";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { validateIsoDateRequired, validatePositiveNumber, validateRequired } from "@/lib/validationMaster";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -109,6 +110,12 @@ export function ApprovalsContent() {
   const [reimbActionId, setReimbActionId] = useState<string | null>(null);
   const [reimbRejectDialog, setReimbRejectDialog] = useState<null | { id: string; reason: string }>(null);
   const [reimbDialogOpen, setReimbDialogOpen] = useState(false);
+  const [leaveTouched, setLeaveTouched] = useState<Record<string, boolean>>({});
+  const [leaveSubmitted, setLeaveSubmitted] = useState(false);
+  const [leaveTypeTouched, setLeaveTypeTouched] = useState<Record<string, boolean>>({});
+  const [leaveTypeSubmitted, setLeaveTypeSubmitted] = useState(false);
+  const [reimbTouched, setReimbTouched] = useState<Record<string, boolean>>({});
+  const [reimbSubmitted, setReimbSubmitted] = useState(false);
 
   const listPageSize = useResponsivePageSize();
   const [leaveListPage, setLeaveListPage] = useState(1);
@@ -135,6 +142,51 @@ export function ApprovalsContent() {
   const isHalfLeave = String(selectedLeaveType?.code ?? "").toUpperCase() === "HL";
   const totalDays = isHalfLeave ? baseDays * 0.5 : baseDays;
   const reimbPayrollHint = useMemo(() => payrollHintFromClaimDate(reimbClaimDate), [reimbClaimDate]);
+
+  function markTouched(setter: (fn: any) => void, key: string) {
+    setter((t: Record<string, boolean>) => (t[key] ? t : { ...t, [key]: true }));
+  }
+
+  const leaveErrors = useMemo(() => {
+    const errs: Record<string, string | null> = {};
+    if (canApprove) errs.employee = validateRequired(selectedEmployeeId, "Employee");
+    errs.type = validateRequired(leaveTypeId, "Type");
+    errs.startDate = validateIsoDateRequired(startDate, "Start date");
+    errs.endDate = validateIsoDateRequired(endDate, "End date");
+    if (!errs.startDate && !errs.endDate && startDate && endDate && endDate < startDate) {
+      errs.endDate = "End date must be on/after start date";
+    }
+    if (!errs.startDate && !errs.endDate && totalDays <= 0) {
+      errs.endDate = "Select valid dates";
+    }
+    return errs;
+  }, [canApprove, selectedEmployeeId, leaveTypeId, startDate, endDate, totalDays]);
+
+  const leaveHasErrors = useMemo(() => Object.values(leaveErrors).some(Boolean), [leaveErrors]);
+
+  const leaveTypeErrors = useMemo(() => {
+    const errs: Record<string, string | null> = {};
+    errs.name = validateRequired(newTypeName, "Name");
+    if (newAccrualMethod === "monthly") errs.monthly = validatePositiveNumber(newMonthlyRate, "Monthly accrual rate");
+    if (newAccrualMethod !== "none") errs.annual = validatePositiveNumber(newAnnualQuota, "Annual quota");
+    return errs;
+  }, [newTypeName, newAccrualMethod, newMonthlyRate, newAnnualQuota]);
+
+  const leaveTypeHasErrors = useMemo(() => Object.values(leaveTypeErrors).some(Boolean), [leaveTypeErrors]);
+
+  const reimbErrors = useMemo(() => {
+    const errs: Record<string, string | null> = {};
+    errs.category = validateRequired(reimbCat, "Category");
+    errs.amount = validatePositiveNumber(reimbAmount, "Amount");
+    errs.claimDate = validateIsoDateRequired(reimbClaimDate, "Expense / claim date");
+    errs.description = validateRequired(reimbDesc, "Description");
+    if (!reimbFile) errs.attachment = "Attachment is required (PDF or image, max 8 MB)";
+    else if (reimbFile.size <= 0) errs.attachment = "Choose a valid attachment file";
+    else if (reimbFile.size > REIMB_MAX_BYTES) errs.attachment = "Attachment must be 8 MB or smaller";
+    return errs;
+  }, [reimbCat, reimbAmount, reimbClaimDate, reimbDesc, reimbFile]);
+
+  const reimbHasErrors = useMemo(() => Object.values(reimbErrors).some(Boolean), [reimbErrors]);
 
   useEffect(() => {
     if (tab !== "leave") return;
@@ -324,8 +376,21 @@ export function ApprovalsContent() {
 
   async function submitLeave(e: FormEvent) {
     e.preventDefault();
+    setLeaveSubmitted(true);
     setSubmitting(true);
     setError(null);
+    if (leaveHasErrors) {
+      setSubmitting(false);
+      const msg =
+        leaveErrors.employee ||
+        leaveErrors.type ||
+        leaveErrors.startDate ||
+        leaveErrors.endDate ||
+        "Fix validation errors";
+      setError(msg);
+      showToast("error", msg);
+      return;
+    }
     try {
       const res = await fetch("/api/leave/requests", {
         method: "POST",
@@ -362,11 +427,12 @@ export function ApprovalsContent() {
 
   async function createLeaveTypeWithPolicy(e: FormEvent) {
     e.preventDefault();
+    setLeaveTypeSubmitted(true);
     setCreatingType(true);
     setError(null);
     try {
       const name = newTypeName.trim();
-      if (!name) throw new Error("Leave type name is required");
+      if (leaveTypeHasErrors) throw new Error(leaveTypeErrors.name || leaveTypeErrors.monthly || leaveTypeErrors.annual || "Fix validation errors");
 
       const typeRes = await fetch("/api/leave/types", {
         method: "POST",
@@ -546,19 +612,16 @@ export function ApprovalsContent() {
 
   async function submitReimbursement(e: FormEvent) {
     e.preventDefault();
+    setReimbSubmitted(true);
     setReimbSubmitting(true);
     setError(null);
     try {
       const cat = reimbCat.trim();
       const amt = parseFloat(reimbAmount);
       const desc = reimbDesc.trim();
-      if (!cat) throw new Error("Category is required");
-      if (!Number.isFinite(amt) || amt <= 0) throw new Error("Enter a valid amount greater than zero");
-      if (!reimbClaimDate) throw new Error("Expense / claim date is required");
-      if (!desc) throw new Error("Description is required");
-      if (!reimbFile) throw new Error("Attachment is required (PDF or image, max 8 MB)");
-      if (reimbFile.size <= 0) throw new Error("Choose a valid attachment file");
-      if (reimbFile.size > REIMB_MAX_BYTES) throw new Error("Attachment must be 8 MB or smaller");
+      if (reimbHasErrors) throw new Error(reimbErrors.category || reimbErrors.amount || reimbErrors.claimDate || reimbErrors.description || reimbErrors.attachment || "Fix validation errors");
+      // parsed values are safe after validation
+      void amt;
 
       const fd = new FormData();
       fd.append("file", reimbFile);
@@ -973,17 +1036,24 @@ export function ApprovalsContent() {
                   </p>
                 </div>
 
-                <form onSubmit={submitLeave} className="p-5">
+                <form noValidate onSubmit={submitLeave} className="p-5">
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3">
                       {canApprove && (
                         <div>
                           <label className="mb-1 block text-sm font-medium text-slate-700">Employee</label>
                           <select
-                            required={canApprove}
                             value={selectedEmployeeId}
-                            onChange={(e) => setSelectedEmployeeId(e.target.value)}
-                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                            onChange={(e) => {
+                              setSelectedEmployeeId(e.target.value);
+                              markTouched(setLeaveTouched, "employee");
+                            }}
+                            onBlur={() => markTouched(setLeaveTouched, "employee")}
+                            className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                              leaveErrors.employee && (leaveSubmitted || leaveTouched.employee)
+                                ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                                : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                            }`}
                           >
                             <option value="">Select employee</option>
                             {currentEmployees.map((e) => (
@@ -992,14 +1062,25 @@ export function ApprovalsContent() {
                               </option>
                             ))}
                           </select>
+                          {leaveErrors.employee && (leaveSubmitted || leaveTouched.employee) && (
+                            <div className="mt-1 text-xs text-red-700">{leaveErrors.employee}</div>
+                          )}
                         </div>
                       )}
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">Type</label>
                         <select
                           value={leaveTypeId}
-                          onChange={(e) => setLeaveTypeId(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          onChange={(e) => {
+                            setLeaveTypeId(e.target.value);
+                            markTouched(setLeaveTouched, "type");
+                          }}
+                          onBlur={() => markTouched(setLeaveTouched, "type")}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            leaveErrors.type && (leaveSubmitted || leaveTouched.type)
+                              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
                         >
                           {types.map((t) => (
                             <option key={t.id} value={t.id}>
@@ -1007,6 +1088,9 @@ export function ApprovalsContent() {
                             </option>
                           ))}
                         </select>
+                        {leaveErrors.type && (leaveSubmitted || leaveTouched.type) && (
+                          <div className="mt-1 text-xs text-red-700">{leaveErrors.type}</div>
+                        )}
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">Reason (optional)</label>
@@ -1021,11 +1105,32 @@ export function ApprovalsContent() {
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">Start date</label>
-                        <DatePickerField value={startDate} onChange={setStartDate} required className="w-full" />
+                        <DatePickerField
+                          value={startDate}
+                          onChange={(v) => {
+                            setStartDate(v);
+                            markTouched(setLeaveTouched, "startDate");
+                          }}
+                          className="w-full"
+                        />
+                        {leaveErrors.startDate && (leaveSubmitted || leaveTouched.startDate) && (
+                          <div className="mt-1 text-xs text-red-700">{leaveErrors.startDate}</div>
+                        )}
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">End date</label>
-                        <DatePickerField value={endDate} onChange={setEndDate} min={startDate || undefined} required className="w-full" />
+                        <DatePickerField
+                          value={endDate}
+                          onChange={(v) => {
+                            setEndDate(v);
+                            markTouched(setLeaveTouched, "endDate");
+                          }}
+                          min={startDate || undefined}
+                          className="w-full"
+                        />
+                        {leaveErrors.endDate && (leaveSubmitted || leaveTouched.endDate) && (
+                          <div className="mt-1 text-xs text-red-700">{leaveErrors.endDate}</div>
+                        )}
                       </div>
                     </div>
                     {totalDays > 0 && (
@@ -1081,18 +1186,28 @@ export function ApprovalsContent() {
                   <p className="mt-1 text-sm text-slate-500">Create a leave type and set company-wise accrual rules.</p>
                 </div>
 
-                <form onSubmit={createLeaveTypeWithPolicy} className="p-5 space-y-4">
+                <form noValidate onSubmit={createLeaveTypeWithPolicy} className="p-5 space-y-4">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
                     <div>
                       <label className="mb-1 block text-sm font-medium text-slate-700">Name</label>
                       <input
                         type="text"
                         value={newTypeName}
-                        onChange={(e) => setNewTypeName(e.target.value)}
-                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                        onChange={(e) => {
+                          setNewTypeName(e.target.value);
+                          markTouched(setLeaveTypeTouched, "name");
+                        }}
+                        onBlur={() => markTouched(setLeaveTypeTouched, "name")}
+                        className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                          leaveTypeErrors.name && (leaveTypeSubmitted || leaveTypeTouched.name)
+                            ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                            : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                        }`}
                         placeholder="Paid Leave"
-                        required
                       />
+                      {leaveTypeErrors.name && (leaveTypeSubmitted || leaveTypeTouched.name) && (
+                        <div className="mt-1 text-xs text-red-700">{leaveTypeErrors.name}</div>
+                      )}
                     </div>
                     <div className="flex items-end gap-2">
                       <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
@@ -1148,9 +1263,20 @@ export function ApprovalsContent() {
                           min="0"
                           step="0.5"
                           value={newMonthlyRate}
-                          onChange={(e) => setNewMonthlyRate(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          onChange={(e) => {
+                            setNewMonthlyRate(e.target.value);
+                            markTouched(setLeaveTypeTouched, "monthly");
+                          }}
+                          onBlur={() => markTouched(setLeaveTypeTouched, "monthly")}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            leaveTypeErrors.monthly && (leaveTypeSubmitted || leaveTypeTouched.monthly)
+                              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
                         />
+                        {leaveTypeErrors.monthly && (leaveTypeSubmitted || leaveTypeTouched.monthly) && (
+                          <div className="mt-1 text-xs text-red-700">{leaveTypeErrors.monthly}</div>
+                        )}
                       </div>
                     )}
 
@@ -1162,9 +1288,20 @@ export function ApprovalsContent() {
                           min="0"
                           step="0.5"
                           value={newAnnualQuota}
-                          onChange={(e) => setNewAnnualQuota(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          onChange={(e) => {
+                            setNewAnnualQuota(e.target.value);
+                            markTouched(setLeaveTypeTouched, "annual");
+                          }}
+                          onBlur={() => markTouched(setLeaveTypeTouched, "annual")}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            leaveTypeErrors.annual && (leaveTypeSubmitted || leaveTypeTouched.annual)
+                              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
                         />
+                        {leaveTypeErrors.annual && (leaveTypeSubmitted || leaveTypeTouched.annual) && (
+                          <div className="mt-1 text-xs text-red-700">{leaveTypeErrors.annual}</div>
+                        )}
                       </div>
                     )}
                   </div>
@@ -1552,32 +1689,62 @@ export function ApprovalsContent() {
                           Category <span className="text-red-500">*</span>
                         </label>
                         <input
-                          required
                           value={reimbCat}
-                          onChange={(e) => setReimbCat(e.target.value)}
+                          onChange={(e) => {
+                            setReimbCat(e.target.value);
+                            markTouched(setReimbTouched, "category");
+                          }}
+                          onBlur={() => markTouched(setReimbTouched, "category")}
                           placeholder="e.g. Travel, Medical, Meals"
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            reimbErrors.category && (reimbSubmitted || reimbTouched.category)
+                              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
                         />
+                        {reimbErrors.category && (reimbSubmitted || reimbTouched.category) && (
+                          <div className="mt-1 text-xs text-red-700">{reimbErrors.category}</div>
+                        )}
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">
                           Amount (INR) <span className="text-red-500">*</span>
                         </label>
                         <input
-                          required
                           type="number"
                           min={0}
                           step="0.01"
                           value={reimbAmount}
-                          onChange={(e) => setReimbAmount(e.target.value)}
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          onChange={(e) => {
+                            setReimbAmount(e.target.value);
+                            markTouched(setReimbTouched, "amount");
+                          }}
+                          onBlur={() => markTouched(setReimbTouched, "amount")}
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            reimbErrors.amount && (reimbSubmitted || reimbTouched.amount)
+                              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
                         />
+                        {reimbErrors.amount && (reimbSubmitted || reimbTouched.amount) && (
+                          <div className="mt-1 text-xs text-red-700">{reimbErrors.amount}</div>
+                        )}
                       </div>
                       <div>
                         <label className="mb-1 block text-sm font-medium text-slate-700">
                           Expense / claim date <span className="text-red-500">*</span>
                         </label>
-                        <DatePickerField value={reimbClaimDate} onChange={setReimbClaimDate} required className="w-full" />
+                        <DatePickerField
+                          value={reimbClaimDate}
+                          onChange={(v) => {
+                            setReimbClaimDate(v);
+                            markTouched(setReimbTouched, "claimDate");
+                          }}
+                          className="w-full"
+                        />
+                        {reimbErrors.claimDate && (reimbSubmitted || reimbTouched.claimDate) && (
+                          <div className="mt-1 text-xs text-red-700">{reimbErrors.claimDate}</div>
+                        )}
                         {reimbPayrollHint && (
                           <p className="mt-1.5 text-xs text-slate-600">
                             Included in the <span className="font-medium text-slate-800">{reimbPayrollHint}</span> payroll
@@ -1590,13 +1757,23 @@ export function ApprovalsContent() {
                           Description <span className="text-red-500">*</span>
                         </label>
                         <textarea
-                          required
                           value={reimbDesc}
-                          onChange={(e) => setReimbDesc(e.target.value)}
+                          onChange={(e) => {
+                            setReimbDesc(e.target.value);
+                            markTouched(setReimbTouched, "description");
+                          }}
+                          onBlur={() => markTouched(setReimbTouched, "description")}
                           rows={3}
                           placeholder="Briefly describe the expense"
-                          className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                          className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                            reimbErrors.description && (reimbSubmitted || reimbTouched.description)
+                              ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                              : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                          }`}
                         />
+                        {reimbErrors.description && (reimbSubmitted || reimbTouched.description) && (
+                          <div className="mt-1 text-xs text-red-700">{reimbErrors.description}</div>
+                        )}
                       </div>
                       <div className="sm:col-span-2">
                         <label className="mb-1 block text-sm font-medium text-slate-700">
@@ -1605,11 +1782,19 @@ export function ApprovalsContent() {
                         </label>
                         <input
                           type="file"
-                          required
                           accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
-                          onChange={(e) => setReimbFile(e.target.files?.[0] ?? null)}
-                          className="w-full text-sm text-slate-600 file:mr-3 file:rounded file:border file:border-slate-300 file:bg-slate-50 file:px-3 file:py-1.5"
+                          onChange={(e) => {
+                            setReimbFile(e.target.files?.[0] ?? null);
+                            markTouched(setReimbTouched, "attachment");
+                          }}
+                          onBlur={() => markTouched(setReimbTouched, "attachment")}
+                          className={`w-full text-sm text-slate-600 file:mr-3 file:rounded file:border file:bg-slate-50 file:px-3 file:py-1.5 ${
+                            reimbErrors.attachment && (reimbSubmitted || reimbTouched.attachment) ? "file:border-red-300" : "file:border-slate-300"
+                          }`}
                         />
+                        {reimbErrors.attachment && (reimbSubmitted || reimbTouched.attachment) && (
+                          <div className="mt-1 text-xs text-red-700">{reimbErrors.attachment}</div>
+                        )}
                       </div>
                     </div>
                   </div>

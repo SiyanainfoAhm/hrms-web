@@ -18,7 +18,7 @@ import {
   PAYROLL_EXCEL_HEADER,
   payrollExcelAmountColumnIndices,
 } from "@/lib/payrollExcelExport";
-import { computePayrollFromGross } from "@/lib/payrollCalc";
+import { computePayrollFromCtc, computePayrollFromGross } from "@/lib/payrollCalc";
 import { normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
 import { computeLeaveBalanceRows } from "@/lib/leaveBalancesCompute";
 import * as XLSX from "xlsx-js-style";
@@ -74,7 +74,8 @@ function privateStatutoryMonthlyFromMaster(
   user?: Record<string, any> | null,
 ): { pfEmp: number; pfEmpr: number; esicEmp: number; esicEmpr: number; ctc: number } {
   const grossMonthly = Number(m.gross_salary) || 0;
-  if (grossMonthly <= 0) return { pfEmp: 0, pfEmpr: 0, esicEmp: 0, esicEmpr: 0, ctc: 0 };
+  const ctcMonthly = Number(m.ctc) || 0;
+  if (grossMonthly <= 0 && ctcMonthly <= 0) return { pfEmp: 0, pfEmpr: 0, esicEmp: 0, esicEmpr: 0, ctc: 0 };
   const mb = Number(m.basic) || 0;
   const mh = Number(m.hra) || 0;
   const mm = Number(m.medical) || 0;
@@ -84,20 +85,18 @@ function privateStatutoryMonthlyFromMaster(
   const componentsSum = mb + mh + mm + mt + ml + mp;
   const salaryBreakup =
     componentsSum > 0 ? { basic: mb, hra: mh, medical: mm, trans: mt, lta: ml, personal: mp } : undefined;
-  const calc = computePayrollFromGross(
-    grossMonthly,
-    privatePfEligibleMerged(m, user),
-    privateEsicEligibleMerged(m, user),
-    profTaxMonthlyRounded,
-    salaryBreakup,
-    privateCfg,
-  );
+  const pfOk = privatePfEligibleMerged(m, user);
+  const esicOk = privateEsicEligibleMerged(m, user);
+  const calc =
+    ctcMonthly > 0
+      ? computePayrollFromCtc(ctcMonthly, pfOk, esicOk, profTaxMonthlyRounded, salaryBreakup, privateCfg)
+      : computePayrollFromGross(grossMonthly, pfOk, esicOk, profTaxMonthlyRounded, salaryBreakup, privateCfg);
   return {
     pfEmp: calc.pfEmp,
     pfEmpr: calc.pfEmpr,
     esicEmp: calc.esicEmp,
     esicEmpr: calc.esicEmpr,
-    ctc: calc.ctc,
+    ctc: ctcMonthly > 0 ? Math.round(ctcMonthly) : calc.ctc,
   };
 }
 

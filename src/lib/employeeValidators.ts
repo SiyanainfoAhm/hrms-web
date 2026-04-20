@@ -4,6 +4,8 @@ export function normalizeDigits(s: string): string {
   return s.replace(/\D/g, "");
 }
 
+export { validateRequired } from "./validationMaster";
+
 export function validateEmailField(v: string): string | null {
   const value = v.trim().toLowerCase();
   if (!value) return "Email is required";
