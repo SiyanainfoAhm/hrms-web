@@ -4,6 +4,7 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
+import { attendanceEmployeeIdForUser } from "@/lib/attendanceEmployee";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -53,17 +54,7 @@ export async function GET(request: NextRequest) {
 
   let filterEmployeeId: string | null = null;
   if (userIdFilter) {
-    const { data: filterEmp, error: feErr } = await supabase
-      .from("HRMS_employees")
-      .select("id")
-      .eq("company_id", me.company_id)
-      .eq("user_id", userIdFilter)
-      .maybeSingle();
-    if (feErr) return NextResponse.json({ error: feErr.message }, { status: 400 });
-    if (!filterEmp?.id) {
-      return NextResponse.json({ startDate, endDate, workDate, rows: [] });
-    }
-    filterEmployeeId = filterEmp.id as string;
+    filterEmployeeId = await attendanceEmployeeIdForUser(supabase, me.company_id, userIdFilter);
   }
 
   let logQuery = supabase
@@ -92,20 +83,38 @@ export async function GET(request: NextRequest) {
     .in("id", empIds);
   if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
 
-  const userIds = [...new Set((emps ?? []).map((e: any) => e.user_id).filter(Boolean))];
-  const { data: users, error: usersErr } = await supabase
-    .from("HRMS_users")
-    .select("id, name, email, role")
-    .in("id", userIds);
-  if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 400 });
+  const matchedEmpIds = new Set((emps ?? []).map((e: any) => e.id));
+  const orphanEmployeeIds = empIds.filter((id) => !matchedEmpIds.has(id));
 
-  const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
+  const userIdsFromEmps = [...new Set((emps ?? []).map((e: any) => e.user_id).filter(Boolean))];
+  const { data: usersFromEmps, error: usersFromEmpsErr } = await supabase
+    .from("HRMS_users")
+    .select("id, name, email, role, employee_code")
+    .in("id", userIdsFromEmps);
+  if (usersFromEmpsErr) return NextResponse.json({ error: usersFromEmpsErr.message }, { status: 400 });
+
+  const { data: usersDirect, error: usersDirectErr } =
+    orphanEmployeeIds.length > 0
+      ? await supabase
+          .from("HRMS_users")
+          .select("id, name, email, role, employee_code")
+          .eq("company_id", me.company_id)
+          .in("id", orphanEmployeeIds)
+      : { data: [], error: null };
+  if (usersDirectErr) return NextResponse.json({ error: usersDirectErr.message }, { status: 400 });
+
+  const userById = new Map([
+    ...(usersFromEmps ?? []).map((u: any) => [u.id, u] as const),
+    ...(usersDirect ?? []).map((u: any) => [u.id, u] as const),
+  ]);
   const empById = new Map((emps ?? []).map((e: any) => [e.id, e]));
 
   const rows = (logs ?? [])
     .map((log: any) => {
       const emp = empById.get(log.employee_id);
-      const u = emp?.user_id ? userById.get(emp.user_id) : null;
+      const u = emp?.user_id
+        ? userById.get(emp.user_id)
+        : userById.get(log.employee_id) ?? null;
       if (u?.role === "super_admin") return null;
       const grossMin =
         log.check_in_at && log.check_out_at
@@ -148,8 +157,8 @@ export async function GET(request: NextRequest) {
       return {
         logId: log.id,
         employeeId: log.employee_id,
-        employeeCode: emp?.employee_code ?? null,
-        userId: emp?.user_id ?? null,
+        employeeCode: emp?.employee_code ?? (u as { employee_code?: string | null } | null)?.employee_code ?? null,
+        userId: emp?.user_id ?? (u?.id as string | undefined) ?? null,
         employeeName: u?.name ?? null,
         employeeEmail: u?.email ?? "",
         workDate: log.work_date,

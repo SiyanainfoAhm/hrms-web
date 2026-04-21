@@ -103,6 +103,16 @@ export async function fetchCompanyDocuments(): Promise<{ documents: { id: string
   return hrmsJson("/api/company/documents");
 }
 
+/** Creates a fresh pending invite (48h) and optionally emails the employee. Revokes older pending invites for the same email. */
+export async function createEmployeeInvite(body: {
+  email: string;
+  userId?: string | null;
+  requestedDocumentIds?: string[];
+  sendEmail?: boolean;
+}): Promise<{ invite: { id: string; token: string; expires_at?: string | null }; emailSent?: boolean; emailError?: string }> {
+  return hrmsJson("/api/invites", { method: "POST", json: body });
+}
+
 export async function fetchCompanyMe(): Promise<{ company: { professional_tax_monthly?: number | null } | null }> {
   return hrmsJson("/api/company/me");
 }

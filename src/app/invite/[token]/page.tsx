@@ -7,6 +7,7 @@ import { ToastProvider, useToast } from "@/components/common/ToastProvider";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { PasswordField } from "@/components/auth/PasswordField";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { normalizeIndianIfsc, validateIndianBankAccountNumber, validateIndianIfsc } from "@/lib/bankValidators";
 
 type Doc = {
   id: string;
@@ -63,6 +64,7 @@ function InvitePageInner() {
   const [aadhaar, setAadhaar] = useState("");
   const [pan, setPan] = useState("");
   const [bankName, setBankName] = useState("");
+  const [bankAccountHolderName, setBankAccountHolderName] = useState("");
   const [bankAccountNumber, setBankAccountNumber] = useState("");
   const [bankIfsc, setBankIfsc] = useState("");
 
@@ -169,8 +171,9 @@ function InvitePageInner() {
         setAadhaar(String(u.aadhaar ?? "").trim());
         setPan(String(u.pan ?? "").trim());
         setBankName(String(u.bankName ?? "").trim());
-        setBankAccountNumber(String(u.bankAccountNumber ?? "").trim());
-        setBankIfsc(String(u.bankIfsc ?? "").trim());
+        setBankAccountHolderName(String(u.bankAccountHolderName ?? "").trim());
+        setBankAccountNumber(String(u.bankAccountNumber ?? "").replace(/\D/g, ""));
+        setBankIfsc(normalizeIndianIfsc(String(u.bankIfsc ?? "")));
       }
     } catch (e: any) {
       setError(e?.message || "Failed to load invite");
@@ -308,9 +311,15 @@ function InvitePageInner() {
       setPostalError(pcErr);
       if (pcErr) requiredMissing.push("Postal code");
       if (!bankName.trim()) requiredMissing.push("Bank name");
+      if (!bankAccountHolderName.trim()) requiredMissing.push("Account holder name");
       if (!bankAccountNumber.trim()) requiredMissing.push("Bank account number");
       if (!bankIfsc.trim()) requiredMissing.push("IFSC");
       if (requiredMissing.length) throw new Error(`Please fill all required fields: ${requiredMissing.join(", ")}`);
+      const acctErr = validateIndianBankAccountNumber(bankAccountNumber);
+      if (acctErr) throw new Error(acctErr);
+      const ifscErr = validateIndianIfsc(bankIfsc);
+      if (ifscErr) throw new Error(ifscErr);
+      const ifscNorm = normalizeIndianIfsc(bankIfsc);
       if (mandatoryMissing.length) {
         throw new Error(`Please complete mandatory documents first: ${mandatoryMissing.map((m) => m.name).join(", ")}`);
       }
@@ -340,8 +349,9 @@ function InvitePageInner() {
             aadhaar,
             pan,
             bankName,
-            bankAccountNumber,
-            bankIfsc,
+            bankAccountHolderName,
+            bankAccountNumber: bankAccountNumber.replace(/\D/g, ""),
+            bankIfsc: ifscNorm,
           },
         }),
       });
@@ -712,6 +722,17 @@ function InvitePageInner() {
           </div>
 
           <div>
+            <label className="mb-1 block text-sm font-medium text-slate-700">Account holder name</label>
+            <input
+              type="text"
+              required
+              value={bankAccountHolderName}
+              onChange={(e) => setBankAccountHolderName(e.target.value)}
+              placeholder="As per bank records"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+            />
+          </div>
+          <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
             <input
               type="text"
@@ -725,11 +746,13 @@ function InvitePageInner() {
             <label className="mb-1 block text-sm font-medium text-slate-700">Bank account number</label>
             <input
               type="text"
+              inputMode="numeric"
               required
               value={bankAccountNumber}
-              onChange={(e) => setBankAccountNumber(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              onChange={(e) => setBankAccountNumber(e.target.value.replace(/\D/g, ""))}
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
+            <p className="mt-1 text-xs text-slate-500">9–34 digits, numbers only.</p>
           </div>
           <div>
             <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
@@ -737,8 +760,9 @@ function InvitePageInner() {
               type="text"
               required
               value={bankIfsc}
-              onChange={(e) => setBankIfsc(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              onChange={(e) => setBankIfsc(e.target.value.toUpperCase().replace(/\s/g, "").slice(0, 11))}
+              maxLength={11}
+              className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 font-mono text-sm uppercase focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
             />
           </div>
         </div>

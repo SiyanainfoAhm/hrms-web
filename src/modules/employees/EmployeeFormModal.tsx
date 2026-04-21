@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import type { RoleId } from "../../config/roleConfig";
 import {
   normalizeDigits,
@@ -62,6 +62,10 @@ export function EmployeeFormModal({
   const [gender, setGender] = useState<"" | "male" | "female" | "other">("");
   const [designation, setDesignation] = useState("");
   const [designationId, setDesignationId] = useState("");
+  const [designationAddPrompt, setDesignationAddPrompt] = useState<string | null>(null);
+  const [addingDesignation, setAddingDesignation] = useState(false);
+  const [designationOpen, setDesignationOpen] = useState(false);
+  const designationWrapRef = useRef<HTMLDivElement | null>(null);
   const [departmentId, setDepartmentId] = useState("");
   const [divisionId, setDivisionId] = useState("");
   const [shiftId, setShiftId] = useState("");
@@ -108,6 +112,26 @@ export function EmployeeFormModal({
     return departments.filter((d) => !d.division_id || d.division_id === divisionId);
   }, [departments, divisionId]);
 
+  const filteredDesignations = useMemo(() => {
+    const q = designation.trim().toLowerCase();
+    const list = (designations ?? []).filter((d: any) => d?.is_active !== false);
+    if (!q) return list.slice(0, 20);
+    return list
+      .filter((d: any) => String(d?.title ?? "").toLowerCase().includes(q))
+      .slice(0, 20);
+  }, [designations, designation]);
+
+  useEffect(() => {
+    if (!designationOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = designationWrapRef.current;
+      if (!el) return;
+      if (e.target instanceof Node && !el.contains(e.target)) setDesignationOpen(false);
+    };
+    window.addEventListener("mousedown", onDown);
+    return () => window.removeEventListener("mousedown", onDown);
+  }, [designationOpen]);
+
   function reset() {
     setFormError(null);
     setTouched({});
@@ -120,6 +144,8 @@ export function EmployeeFormModal({
     setGender("");
     setDesignation("");
     setDesignationId("");
+    setDesignationAddPrompt(null);
+    setDesignationOpen(false);
     setDepartmentId("");
     setDivisionId("");
     setShiftId("");
@@ -293,6 +319,35 @@ export function EmployeeFormModal({
     setDesignationId(id);
     const t = designations.find((d) => d.id === id)?.title ?? "";
     setDesignation(t);
+    setDesignationAddPrompt(null);
+  }
+
+  async function addDesignationFromPrompt() {
+    const title = (designationAddPrompt ?? "").trim();
+    if (!title) return;
+    setAddingDesignation(true);
+    try {
+      const res = await fetch("/api/settings/designations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error || "Failed to add designation");
+      const created = data?.designation as { id?: string; title?: string } | undefined;
+      const nextId = String(created?.id || "");
+      const nextTitle = String(created?.title || title);
+      if (nextId) {
+        setDesignations((prev) => [{ id: nextId, title: nextTitle }, ...prev]);
+        setDesignationId(nextId);
+      }
+      setDesignation(nextTitle);
+      setDesignationAddPrompt(null);
+    } catch (e: any) {
+      setFormError(e?.message || "Failed to add designation");
+    } finally {
+      setAddingDesignation(false);
+    }
   }
 
   async function submit(e: FormEvent) {
@@ -449,7 +504,7 @@ export function EmployeeFormModal({
       pan: validatePanNormalized(panNorm),
       divisionId: divisionId ? null : "Division is required",
       departmentId: departmentId ? null : "Department is required",
-      designationId: designationId ? null : "Designation is required",
+      designationId: designation.trim() ? null : "Designation is required",
       shiftId: shiftId ? null : "Shift is required",
       governmentPayLevel: payLevelErr,
       grossBasic: grossBasicErr,
@@ -463,7 +518,7 @@ export function EmployeeFormModal({
     pan,
     divisionId,
     departmentId,
-    designationId,
+    designation,
     shiftId,
     showGovernmentPayroll,
     governmentPayLevel,
@@ -665,23 +720,71 @@ export function EmployeeFormModal({
                   </label>
                   <label className="text-sm sm:col-span-2">
                     <span className="text-gray-600">Designation</span>
-                    <select
-                      className={showErr("designationId") ? fieldErr : field}
-                      value={designationId}
-                      onChange={(e) => {
-                        pickDesignation(e.target.value);
-                        markTouched("designationId");
-                      }}
-                      onBlur={() => markTouched("designationId")}
-                      aria-invalid={showErr("designationId")}
-                    >
-                      <option value="">Select</option>
-                      {designations.map((d) => (
-                        <option key={d.id} value={d.id}>
-                          {d.title}
-                        </option>
-                      ))}
-                    </select>
+                    <div className="relative" ref={designationWrapRef}>
+                      <input
+                        type="text"
+                        className={showErr("designationId") ? fieldErr : field}
+                        value={designation}
+                        onFocus={() => setDesignationOpen(true)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDesignation(v);
+                          setDesignationAddPrompt(null);
+                          const match = designations.find(
+                            (d) => String(d.title ?? "").toLowerCase() === v.trim().toLowerCase(),
+                          );
+                          setDesignationId(match ? match.id : "");
+                          setDesignationOpen(true);
+                          markTouched("designationId");
+                        }}
+                        onBlur={() => {
+                          markTouched("designationId");
+                          const v = designation.trim();
+                          if (!v) return;
+                          const match = designations.find((d) => String(d.title ?? "").toLowerCase() === v.toLowerCase());
+                          if (!match) setDesignationAddPrompt(v);
+                          else setDesignationAddPrompt(null);
+                        }}
+                        aria-invalid={showErr("designationId")}
+                        placeholder="Search or type new"
+                      />
+                      {designationOpen && filteredDesignations.length ? (
+                        <div className="absolute z-50 mt-1 w-full rounded-lg border border-slate-200 bg-white shadow-lg">
+                          <div className="max-h-60 overflow-auto py-1">
+                            {filteredDesignations.map((d) => (
+                              <button
+                                key={d.id}
+                                type="button"
+                                className="block w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-slate-50"
+                                onMouseDown={(ev) => ev.preventDefault()}
+                                onClick={() => {
+                                  pickDesignation(d.id);
+                                  setDesignationOpen(false);
+                                  markTouched("designationId");
+                                }}
+                              >
+                                {String(d.title ?? "")}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    {designationAddPrompt ? (
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <div className="text-xs text-slate-600">
+                          Add &quot;{designationAddPrompt}&quot; to designations?
+                        </div>
+                        <button
+                          type="button"
+                          className="rounded-md bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-60"
+                          onClick={addDesignationFromPrompt}
+                          disabled={addingDesignation}
+                        >
+                          {addingDesignation ? "Adding..." : "Add"}
+                        </button>
+                      </div>
+                    ) : null}
                     {showErr("designationId") && <div className="mt-1 text-xs text-red-700">{errors.designationId}</div>}
                   </label>
                   <label className="text-sm sm:col-span-2">

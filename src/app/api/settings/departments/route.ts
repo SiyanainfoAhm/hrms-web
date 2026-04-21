@@ -48,12 +48,53 @@ export async function POST(request: NextRequest) {
   const divisionId = typeof body?.divisionId === "string" ? body.divisionId : undefined;
   if (!name) return NextResponse.json({ error: "Name is required" }, { status: 400 });
 
+  // Pre-check to ensure our error message is accurate (even if DB still has old unique constraint).
+  {
+    let q = supabase
+      .from("HRMS_departments")
+      .select("id, division_id")
+      .eq("company_id", companyId)
+      .ilike("name", name);
+    if (divisionId) q = q.eq("division_id", divisionId);
+    else q = q.is("division_id", null);
+    const { data: existing } = await q.maybeSingle();
+    if (existing?.id) {
+      return NextResponse.json({ error: "Department name already exists in this division." }, { status: 400 });
+    }
+  }
+
   const { data, error } = await supabase
     .from("HRMS_departments")
     .insert([{ company_id: companyId, name, description: description || null, division_id: divisionId || null }])
     .select("*")
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error) {
+    const msg = String((error as any)?.message ?? "");
+    const isDup =
+      (error as any)?.code === "23505" ||
+      msg.toLowerCase().includes("duplicate key value") ||
+      msg.toLowerCase().includes("unique constraint");
+    if (isDup) {
+      // If it isn't a dup inside this division, it likely exists in another division (old DB constraint).
+      const { data: other } = await supabase
+        .from("HRMS_departments")
+        .select("id, division_id")
+        .eq("company_id", companyId)
+        .ilike("name", name)
+        .maybeSingle();
+      if (other?.id) {
+        return NextResponse.json(
+          {
+            error:
+              "Department name already exists in another division. Apply the migration `2026-04-21_departments_unique_by_division.sql` to allow same names across divisions.",
+          },
+          { status: 400 },
+        );
+      }
+      return NextResponse.json({ error: "Department name already exists." }, { status: 400 });
+    }
+    return NextResponse.json({ error: msg || "Failed to add department" }, { status: 400 });
+  }
   return NextResponse.json({ department: data });
 }
 
@@ -76,6 +117,38 @@ export async function PUT(request: NextRequest) {
   };
   for (const k of Object.keys(payload)) if (payload[k] === undefined) delete payload[k];
 
+  const nextName = typeof payload.name === "string" ? payload.name : null;
+  const nextDivisionId =
+    payload.division_id === undefined ? undefined : (payload.division_id as string | null);
+
+  // Pre-check uniqueness inside the target division (exclude current row).
+  if (nextName != null || nextDivisionId !== undefined) {
+    const { data: current } = await supabase
+      .from("HRMS_departments")
+      .select("name, division_id")
+      .eq("id", id)
+      .eq("company_id", companyId)
+      .maybeSingle();
+
+    const finalName = (nextName ?? current?.name ?? "").trim();
+    const finalDivision = nextDivisionId !== undefined ? nextDivisionId : (current?.division_id ?? null);
+
+    if (finalName) {
+      let q = supabase
+        .from("HRMS_departments")
+        .select("id")
+        .eq("company_id", companyId)
+        .neq("id", id)
+        .ilike("name", finalName);
+      if (finalDivision) q = q.eq("division_id", finalDivision);
+      else q = q.is("division_id", null);
+      const { data: dupe } = await q.maybeSingle();
+      if (dupe?.id) {
+        return NextResponse.json({ error: "Department name already exists in this division." }, { status: 400 });
+      }
+    }
+  }
+
   const { data, error } = await supabase
     .from("HRMS_departments")
     .update(payload)
@@ -83,7 +156,23 @@ export async function PUT(request: NextRequest) {
     .eq("company_id", companyId)
     .select("*")
     .single();
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  if (error) {
+    const msg = String((error as any)?.message ?? "");
+    const isDup =
+      (error as any)?.code === "23505" ||
+      msg.toLowerCase().includes("duplicate key value") ||
+      msg.toLowerCase().includes("unique constraint");
+    if (isDup) {
+      return NextResponse.json(
+        {
+          error:
+            "Duplicate department name. If this name is in a different division, apply the migration `2026-04-21_departments_unique_by_division.sql`.",
+        },
+        { status: 400 },
+      );
+    }
+    return NextResponse.json({ error: msg || "Failed to update department" }, { status: 400 });
+  }
   return NextResponse.json({ department: data });
 }
 

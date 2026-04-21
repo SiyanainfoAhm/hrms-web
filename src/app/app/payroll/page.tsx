@@ -28,6 +28,7 @@ type MasterGridRow = {
   employeeName: string | null;
   employeeEmail: string;
   bankName: string;
+  bankAccountHolderName: string;
   bankAccountNumber: string;
   bankIfsc: string;
   /** `private`: monthly gross salary. `government`: gross basic (pay level). */
@@ -355,6 +356,66 @@ function computeRowStatutory(
   };
 }
 
+function computePreviewPrivateStatutory(row: {
+  payDays: number;
+  grossMonthly?: number;
+  grossPay: number;
+  ctc: number;
+  tds: number;
+  incentive: number;
+  prBonus: number;
+  reimbursement: number;
+  pfEligible?: boolean;
+  esicEligible?: boolean;
+  profTaxMonthly?: number;
+} , payDenom: number, companyPt: number) {
+  const payPd = Math.max(0, Number(row.payDays) || 0);
+  const denom = Math.max(1, Math.floor(Number(payDenom) || 30));
+  const ratio = payPd / denom;
+  const profMonth = Math.round(
+    row.profTaxMonthly != null && Number(row.profTaxMonthly) >= 0 ? Number(row.profTaxMonthly) : companyPt,
+  );
+  const pfEligible = row.pfEligible !== false;
+  const esicEligible = row.esicEligible === true;
+
+  const fallbackMonthly =
+    row.grossMonthly != null
+      ? Math.max(0, Math.round(Number(row.grossMonthly) || 0))
+      : payPd > 0
+        ? Math.round((Math.max(0, Number(row.grossPay) || 0) * denom) / Math.max(1, payPd))
+        : Math.max(0, Math.round(Number(row.grossPay) || 0));
+
+  const monthlyCalc =
+    row.ctc > 0
+      ? computePayrollFromCtc(row.ctc, pfEligible, esicEligible, profMonth)
+      : computePayrollFromGross(fallbackMonthly, pfEligible, esicEligible, profMonth);
+
+  const grossMonthly = Math.max(0, Math.round((monthlyCalc as any).gross ?? fallbackMonthly));
+  const grossPay = Math.max(0, Math.round(grossMonthly * ratio));
+  const pfEmployee = Math.round(monthlyCalc.pfEmp * ratio);
+  const pfEmployer = Math.round(monthlyCalc.pfEmpr * ratio);
+  const esicEmployee = Math.round(monthlyCalc.esicEmp * ratio);
+  const esicEmployer = Math.round(monthlyCalc.esicEmpr * ratio);
+  const profTax = payPd > 0 ? profMonth : 0;
+  const deductions = pfEmployee + esicEmployee + profTax;
+  const netPay = grossPay - deductions;
+  const takeHome = netPay - (row.tds ?? 0) + (row.incentive ?? 0) + (row.prBonus ?? 0) + (row.reimbursement ?? 0);
+
+  return {
+    grossMonthly,
+    grossPay,
+    pfEmployee,
+    pfEmployer,
+    esicEmployee,
+    esicEmployer,
+    profTax,
+    deductions,
+    netPay,
+    takeHome,
+    ctcBase: Math.round(monthlyCalc.ctc),
+  };
+}
+
 function emptyGovFields(): Pick<
   MasterGridRow,
   | "daPercent"
@@ -449,6 +510,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
       employeeName: apiRow.employeeName,
       employeeEmail: apiRow.employeeEmail,
       bankName: String(apiRow.bankName ?? ""),
+      bankAccountHolderName: String(apiRow.bankAccountHolderName ?? ""),
       bankAccountNumber: String(apiRow.bankAccountNumber ?? ""),
       bankIfsc: String(apiRow.bankIfsc ?? ""),
       payrollMode: "government",
@@ -526,6 +588,7 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
     employeeName: apiRow.employeeName,
     employeeEmail: apiRow.employeeEmail,
     bankName: String(apiRow.bankName ?? ""),
+    bankAccountHolderName: String(apiRow.bankAccountHolderName ?? ""),
     bankAccountNumber: String(apiRow.bankAccountNumber ?? ""),
     bankIfsc: String(apiRow.bankIfsc ?? ""),
     payrollMode: "private",
@@ -604,6 +667,7 @@ function PayrollPageContent() {
   const [editSaving, setEditSaving] = useState(false);
   const [editMasterTab, setEditMasterTab] = useState<"structure" | "bank">("structure");
   const [editBankName, setEditBankName] = useState("");
+  const [editBankAccountHolderName, setEditBankAccountHolderName] = useState("");
   const [editBankAccountNumber, setEditBankAccountNumber] = useState("");
   const [editBankIfsc, setEditBankIfsc] = useState("");
   const [editPayrollMode, setEditPayrollMode] = useState<"private" | "government">("private");
@@ -1028,8 +1092,9 @@ function PayrollPageContent() {
         const next = { ...row, [field]: value } as typeof row;
         if (field === "ctc" || field === "pt" || field === "tds" || field === "advanceBonus" || field === "pfEligible" || field === "esicEligible") {
           // Keep private payroll master row consistent with company policy: CTC → derived gross → take-home.
-          const stat = computeRowStatutory(next);
-          Object.assign(next, stat);
+          // `editableRows` (run preview) doesn't have the same shape as `MasterGridRow`.
+          // Recompute statutory + derived fields using monthly calc, then pro-rate by pay-days.
+          Object.assign(next, computePreviewPrivateStatutory(next, payDenom, companyPt));
           return next;
         }
         const recalcTakeHome = () => {
@@ -1483,6 +1548,7 @@ function PayrollPageContent() {
           : defaultSalaryBreakup(gross);
     setEditMasterTab("structure");
     setEditBankName(String(apiRow?.bankName ?? ""));
+    setEditBankAccountHolderName(String(apiRow?.bankAccountHolderName ?? ""));
     setEditBankAccountNumber(String(apiRow?.bankAccountNumber ?? ""));
     setEditBankIfsc(String(apiRow?.bankIfsc ?? ""));
     setEditMasterOpen({
@@ -1641,6 +1707,7 @@ function PayrollPageContent() {
           employeeUserId: editMasterOpen.employeeUserId,
           updateBankOnly: true,
           bankName: editBankName,
+          bankAccountHolderName: editBankAccountHolderName,
           bankAccountNumber: editBankAccountNumber,
           bankIfsc: editBankIfsc,
         }),
@@ -1970,6 +2037,9 @@ function PayrollPageContent() {
                             </td>
                             <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
                               <span className="text-sm text-slate-700">{row.bankName || "—"}</span>
+                              {row.bankAccountHolderName ? (
+                                <div className="text-[11px] text-slate-600">{row.bankAccountHolderName}</div>
+                              ) : null}
                               {row.bankAccountNumber ? (
                                 <div className="text-[11px] font-mono text-slate-500">{row.bankAccountNumber}</div>
                               ) : null}
@@ -2351,6 +2421,9 @@ function PayrollPageContent() {
                             </td>
                             <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
                               <span className="text-sm text-slate-700">{row.bankName || "—"}</span>
+                              {row.bankAccountHolderName ? (
+                                <div className="text-[11px] text-slate-600">{row.bankAccountHolderName}</div>
+                              ) : null}
                               {row.bankAccountNumber ? (
                                 <div className="text-[11px] font-mono text-slate-500">{row.bankAccountNumber}</div>
                               ) : null}
@@ -2573,6 +2646,17 @@ function PayrollPageContent() {
                     Update salary credit details for this employee. These values are used on payslips and payroll export. Saving here does not create a new payroll master row.
                   </p>
                   <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Account holder name</label>
+                    <input
+                      type="text"
+                      value={editBankAccountHolderName}
+                      onChange={(e) => setEditBankAccountHolderName(e.target.value)}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      autoComplete="off"
+                      placeholder="Name as per bank records"
+                    />
+                  </div>
+                  <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
                     <input
                       type="text"
@@ -2586,20 +2670,25 @@ function PayrollPageContent() {
                     <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
                     <input
                       type="text"
+                      inputMode="numeric"
                       value={editBankAccountNumber}
-                      onChange={(e) => setEditBankAccountNumber(e.target.value)}
+                      onChange={(e) => setEditBankAccountNumber(e.target.value.replace(/\D/g, ""))}
                       className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
                       autoComplete="off"
                     />
+                    <p className="mt-1 text-xs text-slate-500">9–34 digits, numbers only.</p>
                   </div>
                   <div>
                     <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
                     <input
                       type="text"
                       value={editBankIfsc}
-                      onChange={(e) => setEditBankIfsc(e.target.value.toUpperCase())}
+                      onChange={(e) =>
+                        setEditBankIfsc(e.target.value.toUpperCase().replace(/\s/g, "").slice(0, 11))
+                      }
                       className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase"
                       autoComplete="off"
+                      maxLength={11}
                     />
                   </div>
                 </div>

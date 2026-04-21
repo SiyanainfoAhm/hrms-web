@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import {
+  createEmployeeInvite,
   deleteEmployeeDocumentSubmission,
   fetchEmployeeDocuments,
   submitEmployeeDocument,
   updateEmployeeDocumentSubmission,
 } from "./employeeDirectoryService";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { Eye, Mail, PlusCircle } from "lucide-react";
 
 type Doc = { id: string; name: string; kind: string; is_mandatory: boolean };
 type Sub = {
@@ -27,8 +29,10 @@ export function EmployeeDocumentsDialog(props: {
   userId: string | null;
   onClose: () => void;
   onToast: (kind: "success" | "error", msg: string) => void;
+  /** Opens company-wide document settings so HR can add new document types for invites. */
+  onOpenCompanyDocs?: () => void;
 }) {
-  const { open, userId, onClose, onToast } = props;
+  const { open, userId, onClose, onToast, onOpenCompanyDocs } = props;
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [employee, setEmployee] = useState<{ id: string; name: string | null; email: string } | null>(null);
@@ -37,6 +41,10 @@ export function EmployeeDocumentsDialog(props: {
   const [busyDocId, setBusyDocId] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<Sub | null>(null);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const [inviteBusy, setInviteBusy] = useState(false);
+  /** Document IDs to include on the next invite (employee uploads via /invite/:token). */
+  const [requestedDocIds, setRequestedDocIds] = useState<Set<string>>(new Set());
+  const [lastInviteToken, setLastInviteToken] = useState<string | null>(null);
 
   const bucket = process.env.NEXT_PUBLIC_SUPABASE_STORAGE_BUCKET || "photomedia";
 
@@ -71,10 +79,71 @@ export function EmployeeDocumentsDialog(props: {
     setEmployee(data.employee);
     setDocs(data.documents ?? []);
     setSubs(data.submissions ?? []);
+    setRequestedDocIds(new Set((data.documents ?? []).map((d) => d.id)));
+  }
+
+  function inviteUrlFromToken(token: string) {
+    try {
+      return `${window.location.origin}/invite/${token}`;
+    } catch {
+      return `/invite/${token}`;
+    }
+  }
+
+  async function issueInvite(sendEmail: boolean): Promise<string | null> {
+    if (!userId || !employee?.email?.trim()) {
+      onToast("error", "Employee email is required to send an invite.");
+      return null;
+    }
+    const ids = Array.from(requestedDocIds);
+    if (ids.length === 0) {
+      onToast("error", "Select at least one document to request.");
+      return null;
+    }
+    setInviteBusy(true);
+    try {
+      const res = await createEmployeeInvite({
+        email: employee.email.trim().toLowerCase(),
+        userId,
+        requestedDocumentIds: ids,
+        sendEmail,
+      });
+      const token = (res as { invite?: { token?: string } })?.invite?.token ?? null;
+      if (token) setLastInviteToken(token);
+      if (sendEmail) {
+        if (res.emailSent) {
+          onToast("success", "Invite email sent.");
+          onClose();
+        } else {
+          onToast("error", res.emailError || "Invite created but email could not be sent.");
+        }
+      } else {
+        onToast("success", "Invite link ready.");
+      }
+      return token;
+    } catch (e) {
+      onToast("error", e instanceof Error ? e.message : "Failed to create invite");
+      return null;
+    } finally {
+      setInviteBusy(false);
+    }
+  }
+
+  async function copyInviteLink() {
+    let token = lastInviteToken;
+    if (!token) token = await issueInvite(false);
+    if (!token) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrlFromToken(token));
+      onToast("success", "Invite link copied.");
+    } catch {
+      onToast("error", "Failed to copy.");
+    }
   }
 
   useEffect(() => {
     if (!open || !userId) return;
+    setLastInviteToken(null);
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -111,12 +180,77 @@ export function EmployeeDocumentsDialog(props: {
               {employee ? `${employee.name || "Employee"} · ${employee.email}` : "—"}
             </p>
           </div>
-          <button type="button" className="text-gray-500 hover:text-gray-800 text-sm font-medium" onClick={onClose}>
-            Close
-          </button>
+          <div className="flex flex-wrap items-center justify-end gap-2 shrink-0">
+            <button
+              type="button"
+              disabled={inviteBusy || loading || !userId}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--primary)] text-white text-sm font-semibold hover:brightness-95 disabled:opacity-50"
+              title="Email the employee a link to upload documents (48h)"
+              onClick={() => void issueInvite(true)}
+            >
+              <Mail className="w-4 h-4" />
+              {inviteBusy ? "Sending…" : "Send invite email"}
+            </button>
+            <button
+              type="button"
+              disabled={inviteBusy || loading || !userId}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+              onClick={() => void copyInviteLink()}
+            >
+              Copy invite link
+            </button>
+            {lastInviteToken && (
+              <a
+                href={inviteUrlFromToken(lastInviteToken)}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50"
+              >
+                <Eye className="w-4 h-4" />
+                Open invite
+              </a>
+            )}
+            {onOpenCompanyDocs && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-gray-200 bg-white text-gray-700 text-sm font-semibold hover:bg-gray-50"
+                onClick={() => onOpenCompanyDocs()}
+              >
+                <PlusCircle className="w-4 h-4" />
+                Add document
+              </button>
+            )}
+            <button type="button" className="text-gray-500 hover:text-gray-800 text-sm font-medium" onClick={onClose}>
+              Close
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          {docs.length > 0 && (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-3 py-2 text-sm text-gray-700">
+              <div className="font-medium text-gray-900 mb-2">Include on invite (employee uploads these on the invite page)</div>
+              <div className="flex flex-wrap gap-3">
+                {docs.map((d) => (
+                  <label key={d.id} className="inline-flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={requestedDocIds.has(d.id)}
+                      onChange={(e) => {
+                        setRequestedDocIds((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(d.id);
+                          else next.delete(d.id);
+                          return next;
+                        });
+                      }}
+                    />
+                    <span>{d.name}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {err && <div className="rounded-lg bg-red-50 text-red-800 text-sm px-3 py-2 border border-red-100">{err}</div>}
           {loading ? (
             <div className="text-sm text-gray-500">Loading…</div>

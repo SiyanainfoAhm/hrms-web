@@ -4,6 +4,7 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
+import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 
 /** Calendar date (YYYY-MM-DD) in Asia/Kolkata — matches typical Indian office "today" for attendance. */
 function workDateIST(): string {
@@ -56,24 +57,8 @@ export async function GET() {
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const { data: me, error: meErr } = await supabase
-    .from("HRMS_users")
-    .select("company_id")
-    .eq("id", session.id)
-    .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-  if (!me?.company_id) {
-    return NextResponse.json({ hasEmployee: false, workDate: workDateIST(), log: null });
-  }
-
-  const { data: emp, error: empErr } = await supabase
-    .from("HRMS_employees")
-    .select("id")
-    .eq("company_id", me.company_id)
-    .eq("user_id", session.id)
-    .maybeSingle();
-  if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
-  if (!emp?.id) {
+  const gate = await canUserMarkAttendance(supabase, session.id);
+  if (!gate.ok) {
     return NextResponse.json({ hasEmployee: false, workDate: workDateIST(), log: null });
   }
 
@@ -83,8 +68,8 @@ export async function GET() {
     .select(
       "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status, in_office"
     )
-    .eq("company_id", me.company_id)
-    .eq("employee_id", emp.id)
+    .eq("company_id", gate.companyId)
+    .eq("employee_id", gate.attendanceEmployeeId)
     .eq("work_date", wd)
     .maybeSingle();
   if (logErr) return NextResponse.json({ error: logErr.message }, { status: 400 });
@@ -116,39 +101,27 @@ export async function POST(request: NextRequest) {
   const teaBreakMinutes = clampMinutes(Number(body?.teaBreakMinutes) || 0);
   const allowRepunchOut = body?.allowRepunchOut === true;
 
-  const { data: me, error: meErr } = await supabase
-    .from("HRMS_users")
-    .select("company_id")
-    .eq("id", session.id)
-    .maybeSingle();
-  if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
-  if (!me?.company_id) {
-    return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
+  const gate = await canUserMarkAttendance(supabase, session.id);
+  if (!gate.ok) {
+    return NextResponse.json(
+      {
+        error:
+          "Attendance is available only for active (current) employees linked to your company. Ask HR if your status should be current.",
+      },
+      { status: 400 },
+    );
   }
+  const { companyId: meCompanyId, attendanceEmployeeId } = gate;
 
   const { data: company, error: compErr } = await supabase
     .from("HRMS_companies")
     .select("latitude, longitude, office_radius_m")
-    .eq("id", me.company_id)
+    .eq("id", meCompanyId)
     .maybeSingle();
   if (compErr) return NextResponse.json({ error: compErr.message }, { status: 400 });
   const officeLat = company?.latitude != null ? Number(company.latitude) : null;
   const officeLng = company?.longitude != null ? Number(company.longitude) : null;
   const officeRadiusM = company?.office_radius_m != null ? Math.max(10, Number(company.office_radius_m)) : 150;
-
-  const { data: emp, error: empErr } = await supabase
-    .from("HRMS_employees")
-    .select("id")
-    .eq("company_id", me.company_id)
-    .eq("user_id", session.id)
-    .maybeSingle();
-  if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
-  if (!emp?.id) {
-    return NextResponse.json(
-      { error: "No employee profile found. Ask HR to complete your employee record before marking attendance." },
-      { status: 400 }
-    );
-  }
 
   const wd = workDateIST();
   const nowIso = new Date().toISOString();
@@ -158,8 +131,8 @@ export async function POST(request: NextRequest) {
     .select(
       "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, notes, check_in_in_office, in_office, office_note"
     )
-    .eq("company_id", me.company_id)
-    .eq("employee_id", emp.id)
+    .eq("company_id", meCompanyId)
+    .eq("employee_id", attendanceEmployeeId)
     .eq("work_date", wd)
     .maybeSingle();
   if (exErr) return NextResponse.json({ error: exErr.message }, { status: 400 });
@@ -272,8 +245,8 @@ export async function POST(request: NextRequest) {
       .from("HRMS_attendance_logs")
       .insert([
         {
-          company_id: me.company_id,
-          employee_id: emp.id,
+          company_id: meCompanyId,
+          employee_id: attendanceEmployeeId,
           work_date: wd,
           check_in_at: nowIso,
           check_out_at: null,

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import bcrypt from "bcryptjs";
+import { normalizeIndianIfsc, validateIndianBankAccountNumber, validateIndianIfsc } from "@/lib/bankValidators";
 
 function isExpired(invite: any): boolean {
   if (!invite?.expires_at) return false;
@@ -70,7 +71,7 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
   if (invite.user_id) {
     const { data: userRow } = await supabase
       .from("HRMS_users")
-      .select("name, email, phone, auth_provider, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, permanent_address_line1, permanent_address_line2, permanent_city, permanent_state, permanent_country, permanent_postal_code, bank_account_number, bank_ifsc, aadhaar, pan")
+      .select("name, email, phone, auth_provider, date_of_birth, date_of_joining, designation, current_address_line1, current_address_line2, current_city, current_state, current_country, current_postal_code, permanent_address_line1, permanent_address_line2, permanent_city, permanent_state, permanent_country, permanent_postal_code, bank_name, bank_account_holder_name, bank_account_number, bank_ifsc, aadhaar, pan")
       .eq("id", invite.user_id)
       .maybeSingle();
     if (userRow) {
@@ -94,6 +95,8 @@ export async function GET(_: NextRequest, { params }: { params: Promise<{ token:
         permanentState: userRow.permanent_state ?? "",
         permanentCountry: userRow.permanent_country ?? "",
         permanentPostalCode: userRow.permanent_postal_code ?? "",
+        bankName: userRow.bank_name ?? "",
+        bankAccountHolderName: (userRow as { bank_account_holder_name?: string | null }).bank_account_holder_name ?? "",
         bankAccountNumber: userRow.bank_account_number ?? "",
         bankIfsc: userRow.bank_ifsc ?? "",
         aadhaar: userRow.aadhaar ?? "",
@@ -262,6 +265,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { key: "currentState", label: "State" },
       { key: "currentCountry", label: "Country" },
       { key: "currentPostalCode", label: "Postal code" },
+      { key: "bankName", label: "Bank name" },
+      { key: "bankAccountHolderName", label: "Account holder name" },
       { key: "bankAccountNumber", label: "Bank account number" },
       { key: "bankIfsc", label: "IFSC" },
     ];
@@ -272,21 +277,43 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: `Missing required fields: ${missingProfile.join(", ")}` }, { status: 400 });
     }
 
-    // Ensure all mandatory documents are completed (submitted or signed).
+    const acctErr = validateIndianBankAccountNumber(String((profile as any).bankAccountNumber ?? ""));
+    if (acctErr) return NextResponse.json({ error: acctErr }, { status: 400 });
+    const ifscErr = validateIndianIfsc(String((profile as any).bankIfsc ?? ""));
+    if (ifscErr) return NextResponse.json({ error: ifscErr }, { status: 400 });
+    const ifscNorm = normalizeIndianIfsc(String((profile as any).bankIfsc ?? ""));
+
+    // Mandatory docs for this invite only: same scope as GET (requested_document_ids when set).
+    // Otherwise legacy invites require all company mandatory documents.
+    const requestedForInvite = Array.isArray(invite.requested_document_ids)
+      ? (invite.requested_document_ids as unknown[]).filter((x): x is string => typeof x === "string")
+      : [];
+
     const { data: docs, error: docErr } = await supabase
       .from("HRMS_company_documents")
       .select("id, is_mandatory")
       .eq("company_id", invite.company_id);
     if (docErr) return NextResponse.json({ error: docErr.message }, { status: 400 });
 
-    const mandatoryIds = (docs ?? []).filter((d: any) => d.is_mandatory).map((d: any) => d.id as string);
+    let docList = docs ?? [];
+    if (requestedForInvite.length) {
+      const allow = new Set(requestedForInvite);
+      docList = docList.filter((d: any) => allow.has(d.id));
+    }
+    const mandatoryIds = docList.filter((d: any) => d.is_mandatory).map((d: any) => d.id as string);
+
     if (mandatoryIds.length) {
-      const { data: subs, error: subErr } = await supabase
-        .from("HRMS_employee_document_submissions")
-        .select("document_id, status")
-        .eq("invite_id", invite.id);
+      // Match GET: submissions are keyed by user_id (stable across re-invites); invite_id alone can miss rows.
+      let subQuery = supabase.from("HRMS_employee_document_submissions").select("document_id, status");
+      if (invite.user_id) subQuery = subQuery.eq("user_id", invite.user_id);
+      else subQuery = subQuery.eq("invite_id", invite.id);
+      const { data: subs, error: subErr } = await subQuery;
       if (subErr) return NextResponse.json({ error: subErr.message }, { status: 400 });
-      const done = new Set((subs ?? []).filter((s: any) => s.status === "submitted" || s.status === "signed" || s.status === "approved").map((s: any) => s.document_id));
+      const done = new Set(
+        (subs ?? [])
+          .filter((s: any) => s.status === "submitted" || s.status === "signed" || s.status === "approved")
+          .map((s: any) => s.document_id),
+      );
       const missing = mandatoryIds.filter((id) => !done.has(id));
       if (missing.length) return NextResponse.json({ error: "Please complete all mandatory documents first." }, { status: 400 });
     }
@@ -299,6 +326,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         : undefined;
 
     {
+      const acctDigits = String((profile as any).bankAccountNumber ?? "").replace(/\s+/g, "");
       const updatePayload: any = {
           name: typeof profile?.name === "string" ? profile.name.trim() || null : undefined,
           phone: typeof profile?.phone === "string" ? profile.phone.trim() || null : undefined,
@@ -315,8 +343,13 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           permanent_state: typeof profile?.permanentState === "string" ? profile.permanentState.trim() || null : undefined,
           permanent_country: typeof profile?.permanentCountry === "string" ? profile.permanentCountry.trim() || null : undefined,
           permanent_postal_code: typeof profile?.permanentPostalCode === "string" ? profile.permanentPostalCode.trim() || null : undefined,
-          bank_account_number: typeof profile?.bankAccountNumber === "string" ? profile.bankAccountNumber.trim() || null : undefined,
-          bank_ifsc: typeof profile?.bankIfsc === "string" ? profile.bankIfsc.trim() || null : undefined,
+          bank_name: typeof (profile as any)?.bankName === "string" ? String((profile as any).bankName).trim() || null : undefined,
+          bank_account_holder_name:
+            typeof (profile as any)?.bankAccountHolderName === "string"
+              ? String((profile as any).bankAccountHolderName).trim() || null
+              : undefined,
+          bank_account_number: acctDigits || null,
+          bank_ifsc: ifscNorm || null,
           aadhaar: typeof profile?.aadhaar === "string" ? profile.aadhaar.trim() || null : undefined,
           pan: typeof profile?.pan === "string" ? profile.pan.trim() || null : undefined,
           updated_at: new Date().toISOString(),
@@ -332,6 +365,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .update(updatePayload)
         .eq("id", invite.user_id);
       if (updErr) return NextResponse.json({ error: updErr.message }, { status: 400 });
+
     }
 
     const { error: invErr } = await supabase

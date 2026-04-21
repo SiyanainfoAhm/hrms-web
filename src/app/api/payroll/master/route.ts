@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { normalizeIndianIfsc, validateIndianBankAccountNumber, validateIndianIfsc } from "@/lib/bankValidators";
 import {
   computeGovernmentMonthlyPayroll,
   deriveTransportSlabFromLevel,
@@ -89,7 +90,7 @@ export async function GET(request: NextRequest) {
   const userIds = [...new Set((masters ?? []).map((m: any) => m.employee_user_id))];
   const { data: users } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, role, government_pay_level, bank_name, bank_account_number, bank_ifsc")
+    .select("id, name, email, role, government_pay_level, bank_name, bank_account_holder_name, bank_account_number, bank_ifsc")
     .in("id", userIds);
   const userMap = new Map((users ?? []).map((u: any) => [u.id, u]));
 
@@ -106,6 +107,7 @@ export async function GET(request: NextRequest) {
         employeeEmail: u?.email ?? "",
         governmentPayLevel: (u as { government_pay_level?: number | null })?.government_pay_level ?? null,
         bankName: (u as { bank_name?: string | null })?.bank_name ?? "",
+        bankAccountHolderName: (u as { bank_account_holder_name?: string | null })?.bank_account_holder_name ?? "",
         bankAccountNumber: (u as { bank_account_number?: string | null })?.bank_account_number ?? "",
         bankIfsc: (u as { bank_ifsc?: string | null })?.bank_ifsc ?? "",
         master: {
@@ -214,13 +216,21 @@ export async function PATCH(request: NextRequest) {
     }
 
     const bankName = typeof body?.bankName === "string" ? body.bankName.trim() : "";
-    const bankAccountNumber = typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.trim() : "";
-    const bankIfsc = typeof body?.bankIfsc === "string" ? body.bankIfsc.trim().toUpperCase() : "";
+    const bankAccountHolderName = typeof body?.bankAccountHolderName === "string" ? body.bankAccountHolderName.trim() : "";
+    const bankAccountNumber = typeof body?.bankAccountNumber === "string" ? body.bankAccountNumber.replace(/\s+/g, "").trim() : "";
+    const bankIfsc = typeof body?.bankIfsc === "string" ? normalizeIndianIfsc(body.bankIfsc) : "";
+
+    if (!bankAccountHolderName) return NextResponse.json({ error: "Account holder name is required" }, { status: 400 });
+    const acctErr = bankAccountNumber ? validateIndianBankAccountNumber(bankAccountNumber) : "Bank account number is required";
+    if (acctErr) return NextResponse.json({ error: acctErr }, { status: 400 });
+    const ifscErr = validateIndianIfsc(bankIfsc);
+    if (ifscErr) return NextResponse.json({ error: ifscErr }, { status: 400 });
 
     const { error: bankErr } = await supabase
       .from("HRMS_users")
       .update({
         bank_name: bankName || null,
+        bank_account_holder_name: bankAccountHolderName || null,
         bank_account_number: bankAccountNumber || null,
         bank_ifsc: bankIfsc || null,
         updated_at: new Date().toISOString(),

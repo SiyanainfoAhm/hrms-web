@@ -15,7 +15,7 @@ import type { Actor } from "../../lib/permissions";
 import type { RoleId } from "../../config/roleConfig";
 import type { TableColumn, RowAction } from "../../types/crud";
 import { getDemoUserFromStorage } from "../../lib/demoAuth";
-import { Eye, Pencil, UserCheck, UserX, Undo2, Trash2, FileText } from "lucide-react";
+import { Eye, Info, Pencil, UserCheck, UserX, Undo2, Trash2 } from "lucide-react";
 import {
   deleteEmployee,
   fetchCompanyMe,
@@ -255,7 +255,7 @@ export function EmployeeDirectoryPage() {
       {
         key: "view",
         label: "Details",
-        icon: <Eye className="w-4 h-4" />,
+        icon: <Info className="w-4 h-4" />,
         visible: { anyPermission: ["employees.directory"] },
         classNameForRow: (r) => {
           if (activeTab !== "preboarding") return undefined;
@@ -280,7 +280,7 @@ export function EmployeeDirectoryPage() {
       {
         key: "documents",
         label: "Documents",
-        icon: <FileText className="w-4 h-4" />,
+        icon: <Eye className="w-4 h-4" />,
         visible: { anyPermission: ["employees.write"] },
         onClick: (r) => {
           setEmpDocsUserId(r.id);
@@ -579,6 +579,7 @@ export function EmployeeDirectoryPage() {
           setEmpDocsUserId(null);
         }}
         onToast={(kind, msg) => setFlash({ kind, text: msg })}
+        onOpenCompanyDocs={canManageCompanyDocs ? () => setDocsOpen(true) : undefined}
       />
 
       <PreboardingDetailsDialog
