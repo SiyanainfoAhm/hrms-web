@@ -10,7 +10,7 @@ import {
   isWithinEsicGrossCeiling,
   isPfStatutorilyMandatory,
 } from "@/lib/payrollCalc";
-import { normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
+import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import {
   payrollMasterPayloadForClient,
   resolveConvertPayrollMasterInput,
@@ -611,10 +611,11 @@ export async function POST(request: NextRequest) {
   let finalGovernmentPayLevel: number | null = null;
 
   if (payrollMode === "government") {
+    const ptGov = computeProfessionalTaxMonthly(grossBasic, privateCfg, ptMonthly);
     const dedDefaults = masterRowToDeductionDefaults({
       income_tax_default: incomeTaxVal,
       tds: incomeTaxVal,
-      pt_default: ptMonthly,
+      pt_default: ptGov,
     });
     const govPreview = computeGovernmentMonthlyPayroll({
       grossBasic,
@@ -644,9 +645,10 @@ export async function POST(request: NextRequest) {
     const esicDefault = isWithinEsicGrossCeiling(finalGrossSalary, privateCfg);
     finalPfEligible = typeof pfEligibleRaw === "boolean" ? pfEligibleRaw : pfDefault;
     finalEsicEligible = typeof esicEligibleRaw === "boolean" ? esicEligibleRaw : esicDefault;
+    const ptUsed = computeProfessionalTaxMonthly(finalGrossSalary, privateCfg, ptMonthly);
     const calc = hasCtc
-      ? computePayrollFromCtc(ctcPrivate, finalPfEligible, finalEsicEligible, ptMonthly, undefined, privateCfg)
-      : computePayrollFromGross(finalGrossSalary, finalPfEligible, finalEsicEligible, ptMonthly, undefined, privateCfg);
+      ? computePayrollFromCtc(ctcPrivate, finalPfEligible, finalEsicEligible, ptUsed, undefined, privateCfg)
+      : computePayrollFromGross(finalGrossSalary, finalPfEligible, finalEsicEligible, ptUsed, undefined, privateCfg);
     calculatedCtc = hasCtc ? Math.round(ctcPrivate) : calc.ctc;
     if (hasCtc && (calc as any).gross != null) finalGrossSalary = Math.round(Number((calc as any).gross) || finalGrossSalary);
     finalGovernmentPayLevel = null;
@@ -979,10 +981,11 @@ export async function PUT(request: NextRequest) {
   if (payrollMode === "government") {
     const gross = grossBasicPut != null && Number.isFinite(grossBasicPut) && grossBasicPut > 0 ? grossBasicPut : null;
     if (gross != null && governmentPayLevel != null && Number.isFinite(governmentPayLevel) && governmentPayLevel >= 1) {
+      const ptGov = computeProfessionalTaxMonthly(gross, privateCfgPut, ptMonthlyPut);
       const dedPut = masterRowToDeductionDefaults({
         income_tax_default: incomeTaxPut ?? 0,
         tds: incomeTaxPut ?? 0,
-        pt_default: ptMonthlyPut,
+        pt_default: ptGov,
       });
       calculatedCtc = computeGovernmentMonthlyPayroll({
         grossBasic: gross,
@@ -1007,7 +1010,8 @@ export async function PUT(request: NextRequest) {
       const esicDefault = isWithinEsicGrossCeiling(gross, privateCfgPut);
       const pfEligible = typeof pfEligibleRawPut === "boolean" ? pfEligibleRawPut : pfDefault;
       const esicEligible = typeof esicEligibleRawPut === "boolean" ? esicEligibleRawPut : esicDefault;
-      const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthlyPut, undefined, privateCfgPut);
+      const ptUsed = computeProfessionalTaxMonthly(gross, privateCfgPut, ptMonthlyPut);
+      const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, undefined, privateCfgPut);
       calculatedCtc = calc.ctc;
       finalGrossSalary = gross;
       finalPfEligible = pfEligible;
@@ -1216,6 +1220,18 @@ export async function PATCH(request: NextRequest) {
       .eq("id", me.company_id)
       .single();
     const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
+    // Company-level private payroll config (optional; defaults if missing). Used for PT slabs too.
+    let privateCfgCompany = normalizePrivatePayrollConfig(null);
+    try {
+      const { data: cfgRow } = await supabase
+        .from("HRMS_company_payroll_config")
+        .select("private_config")
+        .eq("company_id", me.company_id)
+        .maybeSingle();
+      privateCfgCompany = normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
+    } catch {
+      // ignore
+    }
 
     const { data: u, error: uErr } = await supabase
       .from("HRMS_users")
@@ -1243,10 +1259,11 @@ export async function PATCH(request: NextRequest) {
       }
 
       const tdsBase = u.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
+      const ptGov = computeProfessionalTaxMonthly(grossBasicJoin, privateCfgCompany, ptMonthly);
       const resolved = resolveConvertPayrollMasterInput(null, {
         grossBasic: grossBasicJoin,
         payLevel,
-        ptMonthly,
+        ptMonthly: ptGov,
         tdsMonthly: tdsBase,
       });
       const p = resolved.preview;
@@ -1282,18 +1299,9 @@ export async function PATCH(request: NextRequest) {
     const tdsMonthly = u.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
     const pfEligible = Boolean((u as any).pf_eligible);
     const esicEligible = Boolean((u as any).esic_eligible);
-    let privateCfg = normalizePrivatePayrollConfig(null);
-    try {
-      const { data: cfgRow } = await supabase
-        .from("HRMS_company_payroll_config")
-        .select("private_config")
-        .eq("company_id", me.company_id)
-        .maybeSingle();
-      privateCfg = normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
-    } catch {
-      // ignore
-    }
-    const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, undefined, privateCfg);
+    const privateCfg = privateCfgCompany;
+    const ptUsed = computeProfessionalTaxMonthly(gross, privateCfg, ptMonthly);
+    const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, undefined, privateCfg);
     const takeHome = Math.max(0, Math.round(calc.takeHome - tdsMonthly));
     return NextResponse.json({
       payrollMode: "private",
@@ -1305,7 +1313,7 @@ export async function PATCH(request: NextRequest) {
         pfEmployer: Math.round(calc.pfEmpr),
         esicEmployee: Math.round(calc.esicEmp),
         esicEmployer: Math.round(calc.esicEmpr),
-        profTax: Math.round(ptMonthly),
+        profTax: Math.round(ptUsed),
         tds: Math.round(tdsMonthly),
         takeHome,
       },
@@ -1323,6 +1331,18 @@ export async function PATCH(request: NextRequest) {
       .eq("id", me.company_id)
       .single();
     const ptMonthly = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
+    // Company-level private payroll config (optional; defaults if missing). Used for PT slabs too.
+    let privateCfgCompany = normalizePrivatePayrollConfig(null);
+    try {
+      const { data: cfgRow } = await supabase
+        .from("HRMS_company_payroll_config")
+        .select("private_config")
+        .eq("company_id", me.company_id)
+        .maybeSingle();
+      privateCfgCompany = normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
+    } catch {
+      // ignore
+    }
 
     const requestedMode = body?.payrollMode === "government" ? "government" : "private";
 
@@ -1385,10 +1405,11 @@ export async function PATCH(request: NextRequest) {
           );
         }
         const payrollMasterRaw = (body as Record<string, unknown>).payrollMaster;
+        const ptGov = computeProfessionalTaxMonthly(grossBasicJoin, privateCfgCompany, ptMonthly);
         const resolved = resolveConvertPayrollMasterInput(payrollMasterRaw ?? null, {
           grossBasic: grossBasicJoin,
           payLevel,
-          ptMonthly,
+          ptMonthly: ptGov,
           tdsMonthly: tdsBase,
         });
         const preview = resolved.preview;
@@ -1447,19 +1468,9 @@ export async function PATCH(request: NextRequest) {
         const esicEligible = Boolean((u as any).esic_eligible);
 
         // Use company-level private payroll config (same as preview) so persisted values match UI.
-        let privateCfg = normalizePrivatePayrollConfig(null);
-        try {
-          const { data: cfgRow } = await supabase
-            .from("HRMS_company_payroll_config")
-            .select("private_config")
-            .eq("company_id", me.company_id)
-            .maybeSingle();
-          privateCfg = normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
-        } catch {
-          // ignore
-        }
-
-        const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, undefined, privateCfg);
+        const privateCfg = privateCfgCompany;
+        const ptUsed = computeProfessionalTaxMonthly(gross, privateCfg, ptMonthly);
+        const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, undefined, privateCfg);
         const takeHome = Math.max(0, Math.round(calc.takeHome - tdsBase));
         const { error: insErr } = await supabase.from("HRMS_payroll_master").insert([
           {
@@ -1474,7 +1485,7 @@ export async function PATCH(request: NextRequest) {
             pf_employer: Math.round(calc.pfEmpr),
             esic_employee: Math.round(calc.esicEmp),
             esic_employer: Math.round(calc.esicEmpr),
-            pt: Math.round(ptMonthly),
+            pt: Math.round(ptUsed),
             tds: Math.round(tdsBase),
             advance_bonus: 0,
             take_home: takeHome,

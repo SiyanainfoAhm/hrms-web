@@ -27,6 +27,7 @@ import type { EmployeeListRow, EmploymentStatusTab } from "./types";
 import { EmployeeFormModal } from "./EmployeeFormModal";
 import { EmployeeDocumentsDialog } from "./EmployeeDocumentsDialog";
 import { PreboardingDetailsDialog } from "./PreboardingDetailsDialog";
+import { normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 
 const PAGE_SIZE = 25;
 
@@ -60,6 +61,7 @@ export function EmployeeDirectoryPage() {
   const [search, setSearch] = useState("");
   const [tick, setTick] = useState(0);
   const [companyPt, setCompanyPt] = useState(200);
+  const [privatePayrollCfg, setPrivatePayrollCfg] = useState(() => normalizePrivatePayrollConfig(null));
 
   const [formOpen, setFormOpen] = useState(false);
   const [formMode, setFormMode] = useState<"add" | "edit">("add");
@@ -146,10 +148,21 @@ export function EmployeeDirectoryPage() {
     let cancelled = false;
     (async () => {
       try {
-        const { company } = await fetchCompanyMe();
+        const [{ company }, cfgRes] = await Promise.all([
+          fetchCompanyMe(),
+          fetch("/api/payroll/config").catch(() => null as any),
+        ]);
         if (cancelled || !company) return;
         const pt = company.professional_tax_monthly ?? 200;
         setCompanyPt(Number(pt));
+        try {
+          if (cfgRes && "ok" in cfgRes) {
+            const cfgData = await (cfgRes as any).json();
+            if (!cancelled && (cfgRes as any).ok) setPrivatePayrollCfg(normalizePrivatePayrollConfig(cfgData?.config));
+          }
+        } catch {
+          if (!cancelled) setPrivatePayrollCfg(normalizePrivatePayrollConfig(null));
+        }
       } catch {
         /* keep default */
       }
@@ -653,7 +666,11 @@ export function EmployeeDirectoryPage() {
                     <option value="Consultant">Consultant</option>
                   </select>
                 </label>
-                <p className="text-xs text-gray-500">Company PT (monthly) used in preview: ₹{companyPt}</p>
+                <p className="text-xs text-gray-500">
+                  {(privatePayrollCfg.ptMode ?? "slab") === "slab"
+                    ? `PT uses slabs (configured in Settings → Payroll). Fixed PT fallback: ₹${companyPt}.`
+                    : `Company PT (monthly) used in preview: ₹${companyPt}`}
+                </p>
                 <div className="flex justify-end gap-2 pt-2">
                   <button type="button" className="px-4 py-2 rounded-lg border border-gray-200" onClick={() => setConvertOpen(false)}>
                     Cancel

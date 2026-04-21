@@ -10,6 +10,7 @@ import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import { computePayrollFromCtc, computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
+import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import {
   computeGovernmentMonthlyPayroll,
   deriveTransportSlabFromLevel,
@@ -472,7 +473,7 @@ function emptyGovFields(): Pick<
   };
 }
 
-function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | null {
+function buildMasterGridRow(apiRow: any, companyPtFixed: number, privateCfg: ReturnType<typeof normalizePrivatePayrollConfig>): MasterGridRow | null {
   const m = apiRow.master;
   if (!m) return null;
   const payrollMode = m.payrollMode === "government" ? "government" : "private";
@@ -483,7 +484,8 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
 
   if (payrollMode === "government") {
     const grossBasic = Number(m.grossBasic ?? m.grossSalary) || 0;
-    const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : companyPt;
+    const ptDefault = computeProfessionalTaxMonthly(grossBasic, privateCfg, companyPtFixed);
+    const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : ptDefault;
     const tds = Number(m.tds) || 0;
     const incomeTaxDefault = Number(m.incomeTaxDefault ?? m.tds) || 0;
     const advanceBonus = Number(m.advanceBonus) || 0;
@@ -566,7 +568,8 @@ function buildMasterGridRow(apiRow: any, companyPt: number): MasterGridRow | nul
 
   const gross = Number(m.grossSalary) || 0;
   const ctcFromDb = Math.round(Number((m as any).ctc) || 0);
-  const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : companyPt;
+  const ptDefault = computeProfessionalTaxMonthly(gross, privateCfg, companyPtFixed);
+  const pt = m.pt != null && Number(m.pt) >= 0 ? Number(m.pt) : ptDefault;
   const tds = Number(m.tds) || 0;
   const advanceBonus = Number(m.advanceBonus) || 0;
   let basic = Number(m.basic) || 0;
@@ -631,6 +634,7 @@ function PayrollPageContent() {
   const [masters, setMasters] = useState<any[]>([]);
   const [mastersLoading, setMastersLoading] = useState(false);
   const [companyPt, setCompanyPt] = useState(200);
+  const [privatePayrollCfg, setPrivatePayrollCfg] = useState(() => normalizePrivatePayrollConfig(null));
   const [companyAllowsGovPayroll, setCompanyAllowsGovPayroll] = useState(false);
   const [masterGrid, setMasterGrid] = useState<MasterGridRow[]>([]);
   const [masterRowSaving, setMasterRowSaving] = useState<string | null>(null);
@@ -1236,11 +1240,13 @@ function PayrollPageContent() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch("/api/company/me");
+        const [res, cfgRes] = await Promise.all([fetch("/api/company/me"), fetch("/api/payroll/config")]);
         const data = await res.json();
+        const cfgData = await cfgRes.json().catch(() => ({}));
         if (cancelled) return;
         const pt = data?.company?.professional_tax_monthly;
         setCompanyPt(pt != null && Number(pt) >= 0 ? Number(pt) : 200);
+        setPrivatePayrollCfg(normalizePrivatePayrollConfig(cfgData?.config));
         const c = data?.company ?? null;
         const type = String(c?.company_type ?? c?.type ?? c?.payroll_type ?? c?.payrollMode ?? "").toLowerCase();
         const allow =
@@ -1254,6 +1260,7 @@ function PayrollPageContent() {
       } catch {
         if (!cancelled) {
           setCompanyPt(200);
+          setPrivatePayrollCfg(normalizePrivatePayrollConfig(null));
           setCompanyAllowsGovPayroll(false);
         }
       }
@@ -1277,10 +1284,10 @@ function PayrollPageContent() {
     }
     setMasterGrid(
       masters
-        .map((row) => buildMasterGridRow(row, companyPt))
+        .map((row) => buildMasterGridRow(row, companyPt, privatePayrollCfg))
         .filter((r): r is MasterGridRow => r != null)
     );
-  }, [masters, companyPt]);
+  }, [masters, companyPt, privatePayrollCfg]);
 
   const daysInSelectedMonth = new Date(
     parseInt(runYear, 10),
@@ -1526,7 +1533,7 @@ function PayrollPageContent() {
   function undoMasterGridRow(employeeUserId: string) {
     const snap = masters.find((m) => m.employeeUserId === employeeUserId);
     if (!snap) return;
-    const rebuilt = buildMasterGridRow(snap, companyPt);
+    const rebuilt = buildMasterGridRow(snap, companyPt, privatePayrollCfg);
     if (!rebuilt) return;
     setMasterGrid((prev) => prev.map((r) => (r.employeeUserId === employeeUserId ? rebuilt : r)));
   }

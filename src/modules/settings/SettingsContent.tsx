@@ -1411,6 +1411,153 @@ export function SettingsContent() {
                   </div>
 
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h3 className="text-sm font-semibold text-slate-900">Professional tax (PT) slabs</h3>
+                        <p className="mt-1 text-xs text-slate-500">
+                          Optional. If enabled, PT is picked from slabs based on monthly gross. Otherwise PT default is used.
+                        </p>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                        <input
+                          type="checkbox"
+                          checked={(payrollCfg.ptMode ?? "fixed") === "slab"}
+                          onChange={(e) => setPayrollCfg((p) => ({ ...p, ptMode: e.target.checked ? "slab" : "fixed" }))}
+                        />
+                        Use slabs
+                      </label>
+                    </div>
+
+                    {(payrollCfg.ptMode ?? "fixed") === "slab" ? (
+                      <div className="mt-3 space-y-3">
+                        <div className="overflow-x-auto">
+                          <table className="min-w-[520px] w-full text-left text-sm">
+                            <thead className="text-slate-600">
+                              <tr>
+                                <th className="px-2 py-1">Min gross (₹)</th>
+                                <th className="px-2 py-1">Max gross (₹)</th>
+                                <th className="px-2 py-1">PT (₹)</th>
+                                <th className="px-2 py-1 text-right"> </th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {(payrollCfg.ptSlabs ?? []).map((s: any, idx: number) => (
+                                <tr key={idx} className="border-t border-slate-200">
+                                  <td className="px-2 py-2">
+                                    <input
+                                      className="w-full rounded border border-slate-300 px-2 py-1"
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      value={s.minInclusive ?? 0}
+                                      onChange={(e) => {
+                                        const v = Math.max(0, Number(e.target.value) || 0);
+                                        setPayrollCfg((p) => {
+                                          const next = [...(p.ptSlabs ?? [])];
+                                          next[idx] = { ...next[idx], minInclusive: Math.round(v) };
+                                          return { ...p, ptSlabs: next };
+                                        });
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <input
+                                      className="w-full rounded border border-slate-300 px-2 py-1"
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      placeholder="∞"
+                                      value={s.maxExclusive ?? ""}
+                                      onChange={(e) => {
+                                        const raw = e.target.value;
+                                        const v = raw === "" ? null : Math.max(0, Number(raw) || 0);
+                                        setPayrollCfg((p) => {
+                                          const next = [...(p.ptSlabs ?? [])];
+                                          next[idx] = { ...next[idx], maxExclusive: v == null ? null : Math.round(v) };
+                                          return { ...p, ptSlabs: next };
+                                        });
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="px-2 py-2">
+                                    <input
+                                      className="w-full rounded border border-slate-300 px-2 py-1"
+                                      type="number"
+                                      min="0"
+                                      step="1"
+                                      value={s.amount ?? 0}
+                                      onChange={(e) => {
+                                        const v = Math.max(0, Number(e.target.value) || 0);
+                                        setPayrollCfg((p) => {
+                                          const next = [...(p.ptSlabs ?? [])];
+                                          next[idx] = { ...next[idx], amount: Math.round(v) };
+                                          return { ...p, ptSlabs: next };
+                                        });
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="px-2 py-2 text-right">
+                                    <button
+                                      type="button"
+                                      className="btn btn-outline !py-1 !text-xs"
+                                      onClick={() =>
+                                        setPayrollCfg((p) => ({
+                                          ...p,
+                                          ptSlabs: (p.ptSlabs ?? []).filter((_: any, i: number) => i !== idx),
+                                        }))
+                                      }
+                                    >
+                                      Remove
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={() =>
+                              setPayrollCfg((p) => ({
+                                ...p,
+                                ptSlabs: [
+                                  ...(p.ptSlabs ?? []),
+                                  { minInclusive: 0, maxExclusive: null, amount: p.ptMonthlyDefault ?? 0 },
+                                ],
+                              }))
+                            }
+                          >
+                            Add slab
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-outline"
+                            onClick={() =>
+                              setPayrollCfg((p) => ({
+                                ...p,
+                                ptSlabs: [
+                                  { minInclusive: 0, maxExclusive: 6000, amount: 0 },
+                                  { minInclusive: 6000, maxExclusive: 9000, amount: 80 },
+                                  { minInclusive: 9000, maxExclusive: 12000, amount: 150 },
+                                  { minInclusive: 12000, maxExclusive: null, amount: 200 },
+                                ],
+                              }))
+                            }
+                          >
+                            Load sample slabs
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          Rule: match first slab where gross ≥ min and (max is empty or gross &lt; max).
+                        </p>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
                     <h3 className="text-sm font-semibold text-slate-900">Default salary breakup (%)</h3>
                     <p className="mt-1 text-xs text-slate-500">Used when the employee doesn’t override component amounts.</p>
                     <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">

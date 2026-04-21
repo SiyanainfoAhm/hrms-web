@@ -12,6 +12,7 @@ import {
   validatePanNormalized
 } from "../../lib/employeeValidators";
 import { computePayrollFromGross } from "@/lib/payrollCalc";
+import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import {
   fetchCompanyDocuments,
   fetchCompanyMe,
@@ -537,11 +538,13 @@ export function EmployeeFormModal({
     const gross = Number(grossSalary);
     if (!Number.isFinite(gross) || gross <= 0) return null;
     const tds = Math.max(0, Number(incomeTaxMonthly) || 0);
-    const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptMonthly, undefined, privatePayrollConfig ?? undefined);
+    const cfg = normalizePrivatePayrollConfig(privatePayrollConfig);
+    const ptUsed = computeProfessionalTaxMonthly(gross, cfg, ptMonthly);
+    const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, undefined, cfg);
     const takeHome = Math.max(0, Math.round(calc.takeHome - tds));
     return {
       gross: Math.round(gross),
-      ptMonthly: Math.round(ptMonthly),
+      ptMonthly: Math.round(ptUsed),
       tds,
       pfEmployee: Math.round(calc.pfEmp),
       esicEmployee: Math.round(calc.esicEmp),
