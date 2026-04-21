@@ -398,8 +398,9 @@ function computePreviewPrivateStatutory(row: {
   const esicEmployer = Math.round(monthlyCalc.esicEmpr * ratio);
   const profTax = payPd > 0 ? profMonth : 0;
   const deductions = pfEmployee + esicEmployee + profTax;
-  const netPay = grossPay - deductions;
-  const takeHome = netPay - (row.tds ?? 0) + (row.incentive ?? 0) + (row.prBonus ?? 0) + (row.reimbursement ?? 0);
+  const tds = Math.max(0, Number(row.tds) || 0);
+  const netPay = Math.max(0, grossPay - deductions - tds);
+  const takeHome = netPay + (row.incentive ?? 0) + (row.prBonus ?? 0) + (row.reimbursement ?? 0);
 
   return {
     grossMonthly,
@@ -1097,8 +1098,12 @@ function PayrollPageContent() {
           Object.assign(next, computePreviewPrivateStatutory(next, payDenom, companyPt));
           return next;
         }
+        const recalcNetPayFromGross = () => {
+          const tds = Math.max(0, Number(next.tds) || 0);
+          next.netPay = Math.max(0, next.grossPay - next.deductions - tds);
+        };
         const recalcTakeHome = () => {
-          next.takeHome = next.netPay - (next.tds ?? 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
+          next.takeHome = (Number(next.netPay) || 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
         };
         const recalcCtc = () => {
           const base = next.ctcBase ?? row.ctcBase ?? row.ctc;
@@ -1130,7 +1135,7 @@ function PayrollPageContent() {
           const profTaxApplied = payPd > 0 ? profMonth : 0;
           next.profTax = profTaxApplied;
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
-          next.netPay = next.grossPay - next.deductions;
+          recalcNetPayFromGross();
           recalcTakeHome();
           recalcCtc();
           return next;
@@ -1175,19 +1180,20 @@ function PayrollPageContent() {
             next.esicEmployer = Math.round(row.esicEmployer * ratio);
           }
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
-          next.netPay = next.grossPay - next.deductions;
+          recalcNetPayFromGross();
           recalcTakeHome();
           recalcCtc();
         } else if (field === "pfEmployee" || field === "esicEmployee" || field === "profTax") {
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
-          next.netPay = next.grossPay - next.deductions;
+          recalcNetPayFromGross();
           recalcTakeHome();
           recalcCtc();
         } else if (field === "deductions") {
-          next.netPay = next.grossPay - value;
+          next.netPay = Math.max(0, next.grossPay - value - (Number(next.tds) || 0));
           recalcTakeHome();
           recalcCtc();
         } else if (["incentive", "prBonus", "reimbursement", "tds"].includes(field)) {
+          if (field === "tds") recalcNetPayFromGross();
           recalcTakeHome();
           recalcCtc();
         } else if (field === "netPay") {
@@ -3250,7 +3256,7 @@ function PayrollPageContent() {
                         <thead className="bg-slate-50 text-slate-600">
                           <tr>
                             <th className="w-[100px] px-1.5 py-1">Employee</th>
-                            <th className="w-[52px] px-1 py-1">Days</th>
+                            <th className="w-[72px] px-1 py-1">Days</th>
                             <th className="w-[60px] px-1 py-1">Gross</th>
                             <th className="w-[60px] px-1 py-1">Net</th>
                             <th className="w-[48px] px-1 py-1">{previewHasGovernment ? "CPF" : "PF"}</th>
@@ -3262,7 +3268,6 @@ function PayrollPageContent() {
                             <th className="w-[48px] px-1 py-1">Inc</th>
                             <th className="w-[52px] px-1 py-1">Reimb</th>
                             <th className="w-[44px] px-1 py-1">TDS</th>
-                            <th className="w-[52px] px-1 py-1">Ded</th>
                             <th className="w-[60px] px-1 py-1">Take</th>
                             <th className="w-[60px] px-1 py-1">CTC</th>
                           </tr>
@@ -3294,12 +3299,13 @@ function PayrollPageContent() {
                                       <input
                                         type="number"
                                         min={0}
+                                        step={0.5}
                                         max={preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31}
                                         value={r.payDays}
                                         onChange={(e) =>
-                                          updateEditableRow(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)
+                                          updateEditableRow(r.employeeUserId, "payDays", parseFloat(e.target.value) || 0)
                                         }
-                                        className="w-full max-w-[44px] rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
+                                        className="w-full max-w-[64px] rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                                       />
                                       {r.unpaidLeaveDays > 0 && (
                                         <span className="ml-0.5 text-[10px] text-amber-700">(-{r.unpaidLeaveDays})</span>
@@ -3468,21 +3474,6 @@ function PayrollPageContent() {
                                       value={r.tds ?? 0}
                                       onChange={(e) =>
                                         updateEditableRow(r.employeeUserId, "tds", parseInt(e.target.value, 10) || 0)
-                                      }
-                                      className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
-                                    />
-                                  )}
-                                </td>
-                                <td className="px-1 py-1">
-                                  {readOnly ? (
-                                    <span>{r.deductions.toLocaleString("en-IN")}</span>
-                                  ) : (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      value={r.deductions}
-                                      onChange={(e) =>
-                                        updateEditableRow(r.employeeUserId, "deductions", parseInt(e.target.value, 10) || 0)
                                       }
                                       className="w-full min-w-0 rounded border border-sky-200 px-1 py-0.5 text-xs focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                                     />

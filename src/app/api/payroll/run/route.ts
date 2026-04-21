@@ -736,6 +736,8 @@ async function computeFreshPayrollPreviewFromMasters(
 ): Promise<{ rows: any[] }> {
   const { periodStart, periodEnd, daysInMonth, effectiveRunDay } = ctx;
   const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  const todayYmd = new Date().toISOString().slice(0, 10);
+  const isFuturePeriod = periodStart > todayYmd;
 
   const { data: company } = await supabase
     .from("HRMS_companies")
@@ -766,27 +768,37 @@ async function computeFreshPayrollPreviewFromMasters(
     presentDatesByUser,
     leaveDaysByUser,
     shortHoursUnpaidDaysByUser,
-  } =
-    await computeAttendanceDrivenPayDays({
-      companyId,
-      userIds,
-      periodStartYmd: periodStart,
-      periodEndExclusive,
-    });
+  } = isFuturePeriod
+    ? {
+        presentDaysByUser: new Map<string, number>(),
+        paidLeaveDaysByUser: new Map<string, number>(),
+        unpaidLeaveDaysByUser: new Map<string, number>(),
+        presentDatesByUser: new Map<string, Set<string>>(),
+        leaveDaysByUser: new Map<string, Set<string>>(),
+        shortHoursUnpaidDaysByUser: new Map<string, number>(),
+      }
+    : await computeAttendanceDrivenPayDays({
+        companyId,
+        userIds,
+        periodStartYmd: periodStart,
+        periodEndExclusive,
+      });
 
-  const reimbByUser = await fetchApprovedReimbursementTotalsByUser(companyId, year, month);
+  const reimbByUser = isFuturePeriod ? new Map<string, number>() : await fetchApprovedReimbursementTotalsByUser(companyId, year, month);
 
   const periodEndYmdInclusive = toYmdUtc(new Date(periodEndExclusive.getTime() - 24 * 60 * 60 * 1000));
-  const companyHolidayDates = await loadCompanyHolidayDateSet(companyId, periodStart, periodEndYmdInclusive);
+  const companyHolidayDates = isFuturePeriod ? new Set<string>() : await loadCompanyHolidayDateSet(companyId, periodStart, periodEndYmdInclusive);
   const joinDateByUserId = new Map<string, string | null>(
     (users ?? []).map((u: any) => [u.id as string, u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null]),
   );
-  const plRemainingByUser = await loadPaidLeaveRemainingByUser({
-    companyId,
-    userIds,
-    joinDateByUserId,
-    asOfYmd: periodEndYmdInclusive,
-  });
+  const plRemainingByUser = isFuturePeriod
+    ? new Map<string, number>()
+    : await loadPaidLeaveRemainingByUser({
+        companyId,
+        userIds,
+        joinDateByUserId,
+        asOfYmd: periodEndYmdInclusive,
+      });
 
   const rows: any[] = [];
   for (const m of masters) {
@@ -811,21 +823,25 @@ async function computeFreshPayrollPreviewFromMasters(
     let unpaidLeaveDays = (unpaidLeaveDaysByUser.get(m.employee_user_id) || 0) + (shortHoursUnpaidDaysByUser.get(m.employee_user_id) || 0);
     let paidLeaveDays = paidLeaveDaysByUser.get(m.employee_user_id) || 0;
     const presentDays = presentDaysByUser.get(m.employee_user_id) || 0;
-    const holidayPayDays = countEligibleWeekdayHolidaysNotOverlapping(
-      companyHolidayDates,
-      eligStartYmd,
-      eligEndYmd,
-      presentDatesByUser.get(m.employee_user_id),
-      leaveDaysByUser.get(m.employee_user_id),
-    );
+    const holidayPayDays = isFuturePeriod
+      ? 0
+      : countEligibleWeekdayHolidaysNotOverlapping(
+          companyHolidayDates,
+          eligStartYmd,
+          eligEndYmd,
+          presentDatesByUser.get(m.employee_user_id),
+          leaveDaysByUser.get(m.employee_user_id),
+        );
 
-    // Smart PL top-up: convert unpaid days into paid days using remaining Earned Leave (EL) balance.
-    // Supports half-day increments.
-    const plRemaining = plRemainingByUser.get(m.employee_user_id) || 0;
-    const plCover = Math.min(plRemaining, unpaidLeaveDays);
-    if (plCover > 0) {
-      unpaidLeaveDays -= plCover;
-      paidLeaveDays += plCover;
+    if (!isFuturePeriod) {
+      // Smart PL top-up: convert unpaid days into paid days using remaining Earned Leave (EL) balance.
+      // Supports half-day increments.
+      const plRemaining = plRemainingByUser.get(m.employee_user_id) || 0;
+      const plCover = Math.min(plRemaining, unpaidLeaveDays);
+      if (plCover > 0) {
+        unpaidLeaveDays -= plCover;
+        paidLeaveDays += plCover;
+      }
     }
 
     if (m.payroll_mode === "government") {
@@ -862,16 +878,18 @@ async function computeFreshPayrollPreviewFromMasters(
         ),
         deductionDefaults: masterRowToDeductionDefaults(m as Record<string, unknown>),
       });
-      const paidDaysGov = Math.max(
-        0,
-        resolvePayDaysFromAttendance({
-          presentDays,
-          paidLeaveDays,
-          unpaidLeaveDays,
-          eligibleDays: eligibleCalendarDays,
-          holidayPayDays,
-        }),
-      );
+      const paidDaysGov = isFuturePeriod
+        ? 0
+        : Math.max(
+            0,
+            resolvePayDaysFromAttendance({
+              presentDays,
+              paidLeaveDays,
+              unpaidLeaveDays,
+              eligibleDays: eligibleCalendarDays,
+              holidayPayDays,
+            }),
+          );
       const reimbursement = Math.round(reimbByUser.get(m.employee_user_id) || 0);
       const advMonthG = Math.round(Number(m.advance_bonus) || 0);
       const takeHome = comp.netSalary + advMonthG + reimbursement;
@@ -918,13 +936,15 @@ async function computeFreshPayrollPreviewFromMasters(
       continue;
     }
 
-    const rawPayDaysFromAttendance = resolvePayDaysFromAttendance({
-      presentDays,
-      paidLeaveDays,
-      unpaidLeaveDays,
-      eligibleDays: eligibleCalendarDays,
-      holidayPayDays,
-    });
+    const rawPayDaysFromAttendance = isFuturePeriod
+      ? 0
+      : resolvePayDaysFromAttendance({
+          presentDays,
+          paidLeaveDays,
+          unpaidLeaveDays,
+          eligibleDays: eligibleCalendarDays,
+          holidayPayDays,
+        });
     // Always include employee even when payDays is 0 (admin can edit payDays in UI).
     const payDays = Math.max(0, rawPayDaysFromAttendance);
     const rawPayDays = payDays;
