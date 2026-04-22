@@ -45,16 +45,16 @@ export type GovernmentPayslipPrintProps = {
 };
 
 function fmtDmy(iso: string) {
-  if (!iso) return "—";
+  if (!iso) return "";
   const d = new Date(iso.includes("T") ? iso : `${iso}T12:00:00`);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
 }
 
 function fmtSalaryDate(iso: string) {
-  if (!iso) return "—";
+  if (!iso) return "";
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "—";
+  if (Number.isNaN(d.getTime())) return "";
   return d.toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
 }
 
@@ -95,7 +95,7 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                 {company?.address ? (
                   <div className="text-xs uppercase leading-snug text-slate-700">{company.address}</div>
                 ) : null}
-                <div className="mt-2 text-sm font-bold tracking-wide text-slate-900">{company?.name || "—"}</div>
+                <div className="mt-2 text-sm font-bold tracking-wide text-slate-900">{company?.name || ""}</div>
                 <div className="mt-2 text-base font-bold uppercase tracking-wide text-slate-900">{title}</div>
               </td>
             </tr>
@@ -103,36 +103,36 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
               <td className={`w-1/2 ${cellClass}`}>
                 <div className="space-y-1 text-sm leading-relaxed">
                   <div>
-                    <span className="text-slate-600">Employee ID:</span> {user?.employeeCode || "—"}
+                    <span className="text-slate-600">Employee ID:</span> {user?.employeeCode || ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Employee Name:</span> {user?.name || "—"}
+                    <span className="text-slate-600">Employee Name:</span> {user?.name || ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Designation:</span> {user?.designation || "—"}
+                    <span className="text-slate-600">Designation:</span> {user?.designation || ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Department:</span> {user?.departmentName || "—"}
+                    <span className="text-slate-600">Department:</span> {user?.departmentName || ""}
                   </div>
                   <div>
                     <span className="text-slate-600">Date of Joining:</span>{" "}
-                    {user?.dateOfJoining ? fmtDmy(String(user.dateOfJoining)) : "—"}
+                    {user?.dateOfJoining ? fmtDmy(String(user.dateOfJoining)) : ""}
                   </div>
                 </div>
               </td>
               <td className={`w-1/2 ${cellClass}`}>
                 <div className="space-y-1 text-sm leading-relaxed">
                   <div>
-                    <span className="text-slate-600">UAN:</span> {user?.uanNumber || "—"}
+                    <span className="text-slate-600">UAN:</span> {user?.uanNumber || ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">CPF No:</span> {user?.pfNumber || "—"}
+                    <span className="text-slate-600">CPF No:</span> {user?.pfNumber || ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Bank:</span> {slip.bankName || "—"}
+                    <span className="text-slate-600">Bank:</span> {slip.bankName || ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Account No:</span> {slip.bankAccountNumber || "—"}
+                    <span className="text-slate-600">Account No:</span> {slip.bankAccountNumber || ""}
                   </div>
                 </div>
               </td>
@@ -154,7 +154,7 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                     <span className="text-slate-600">Salary date:</span> {fmtSalaryDate(slip.generatedAt)}
                   </div>
                   <div>
-                    <span className="text-slate-600">Total working days:</span> {dim > 0 ? dim : "—"}
+                    <span className="text-slate-600">Total working days:</span> {dim > 0 ? dim : ""}
                   </div>
                   <div>
                     <span className="text-slate-600">Paid days:</span> {paidDays}
@@ -168,19 +168,19 @@ export const GovernmentPayslipPrint = forwardRef<HTMLDivElement, GovernmentPaysl
                 <div className="space-y-1 text-sm text-slate-700">
                   <div>
                     <span className="text-slate-600">Leave balance:</span>{" "}
-                    {leavePayslip?.leaveBalanceTotal ?? "—"}
+                    {leavePayslip?.leaveBalanceTotal ?? ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Casual leave:</span> {leavePayslip?.casualLeave ?? "—"}
+                    <span className="text-slate-600">Casual leave:</span> {leavePayslip?.casualLeave ?? ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">Earned leave:</span> {leavePayslip?.earnedLeave ?? "—"}
+                    <span className="text-slate-600">Earned leave:</span> {leavePayslip?.earnedLeave ?? ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">HPL:</span> {leavePayslip?.hpl ?? "—"}
+                    <span className="text-slate-600">HPL:</span> {leavePayslip?.hpl ?? ""}
                   </div>
                   <div>
-                    <span className="text-slate-600">HL:</span> {leavePayslip?.hl ?? "—"}
+                    <span className="text-slate-600">HL:</span> {leavePayslip?.hl ?? ""}
                   </div>
                 </div>
               </td>

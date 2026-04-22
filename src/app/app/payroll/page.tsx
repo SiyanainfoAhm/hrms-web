@@ -3761,17 +3761,17 @@ function PayrollPageContent() {
                       <tr>
                         <td className={`w-1/2 ${cellClass}`}>
                           <div className="space-y-1.5 text-sm leading-relaxed">
-                            <div><span className="text-slate-600">Employee Name:</span> {user?.name || "—"}</div>
-                            <div><span className="text-slate-600">Designation:</span> {user?.designation || "—"}</div>
-                            <div><span className="text-slate-600">Department:</span> {(user as { departmentName?: string })?.departmentName || "—"}</div>
+                            <div><span className="text-slate-600">Employee Name:</span> {user?.name || ""}</div>
+                            <div><span className="text-slate-600">Designation:</span> {user?.designation || ""}</div>
+                            <div><span className="text-slate-600">Department:</span> {(user as { departmentName?: string })?.departmentName || ""}</div>
                             <div><span className="text-slate-600">Salary Date:</span> {salaryDate}</div>
                           </div>
                         </td>
                         <td className={`w-1/2 ${cellClass}`}>
                           <div className="space-y-1.5 text-sm leading-relaxed">
                             <div><span className="text-slate-600">Joining Date:</span> {dojFormatted}</div>
-                            <div><span className="text-slate-600">Aadhaar:</span> {user?.aadhaar || "—"}</div>
-                            <div><span className="text-slate-600">PAN:</span> {user?.pan || "—"}</div>
+                            <div><span className="text-slate-600">Aadhaar:</span> {user?.aadhaar || ""}</div>
+                            <div><span className="text-slate-600">PAN:</span> {user?.pan || ""}</div>
                           </div>
                         </td>
                       </tr>
@@ -3784,9 +3784,9 @@ function PayrollPageContent() {
                         </td>
                         <td className={cellClass}>
                           <div className="space-y-1.5 text-sm leading-relaxed">
-                            <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || "—"}</div>
-                            <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || "—"}</div>
-                            <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || "—"}</div>
+                            <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || ""}</div>
+                            <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || ""}</div>
+                            <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || ""}</div>
                           </div>
                         </td>
                       </tr>
