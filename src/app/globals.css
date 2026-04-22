@@ -64,6 +64,25 @@ input[type="password"]::-ms-clear {
   display: none;
 }
 
+/* Print only salary slip area when generating/printing PDFs. */
+@media print {
+  body * {
+    visibility: hidden !important;
+  }
+  .payslip-print-area,
+  .payslip-print-area * {
+    visibility: visible !important;
+  }
+  .payslip-print-area {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: none !important;
+    overflow: visible !important;
+  }
+}
+
 /* Theme-consistent focus/highlight across the app */
 input:focus-visible,
 select:focus-visible,

@@ -195,37 +195,77 @@ export function ProfileContent() {
 
     setPdfDownloading(true);
     try {
-      const html2canvas = (await import("html2canvas")).default;
+      const { toPng } = await import("html-to-image");
       const { jsPDF } = await import("jspdf");
 
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
+      // Capture a clone without scrollbars/overflow wrappers (PDF should be the slip only).
+      const tmpHost = document.createElement("div");
+      tmpHost.style.position = "fixed";
+      tmpHost.style.left = "-10000px";
+      tmpHost.style.top = "0";
+      tmpHost.style.width = "0";
+      tmpHost.style.height = "0";
+      tmpHost.style.overflow = "hidden";
+      document.body.appendChild(tmpHost);
+
+      const clone = el.cloneNode(true) as HTMLElement;
+      // Ensure the captured node lays out fully (no scrollbars, no max width caps that create inner scrolling).
+      clone.style.overflow = "visible";
+      clone.style.maxWidth = "190mm";
+      clone.style.width = "190mm";
+      clone.style.backgroundColor = "#ffffff";
+      clone.querySelectorAll<HTMLElement>("[style*='overflow'], .overflow-x-auto, .overflow-auto").forEach((n) => {
+        n.style.overflow = "visible";
+        (n.style as any).overflowX = "visible";
+        (n.style as any).overflowY = "visible";
+      });
+      clone.querySelectorAll<HTMLElement>("[class*='print:']").forEach((n) => {
+        // Ensure print utility variants don't affect capture.
+        n.classList.remove("print:hidden");
+      });
+      tmpHost.appendChild(clone);
+
+      const imgData = await toPng(clone, {
+        cacheBust: true,
+        pixelRatio: 2,
         backgroundColor: "#ffffff",
       });
+      tmpHost.remove();
 
-      const imgData = canvas.toDataURL("image/png");
+      const img = new window.Image();
+      img.decoding = "async";
+      img.src = imgData;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Failed to load captured slip image"));
+      });
+
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = pdf.internal.pageSize.getHeight();
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight) * 0.95;
+      const imgWidth = img.naturalWidth || img.width;
+      const imgHeight = img.naturalHeight || img.height;
+      // Fit primarily to page width (small side padding). If height would overflow, scale down to fit height.
+      const margin = 2;
+      const maxW = pdfWidth - margin * 2;
+      const maxH = pdfHeight - margin * 2;
+      let ratio = maxW / imgWidth;
+      if (imgHeight * ratio > maxH) ratio = maxH / imgHeight;
       const imgX = (pdfWidth - imgWidth * ratio) / 2;
-      const imgY = 5;
+      const imgY = margin;
 
       pdf.addImage(imgData, "PNG", imgX, imgY, imgWidth * ratio, imgHeight * ratio);
 
       const namePart = (userName || "Employee").replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-") || "Employee";
-      const monthStr = (month || String(new Date().getMonth() + 1)).padStart(2, "0");
+      const monthNum = parseInt(month || String(new Date().getMonth() + 1), 10);
+      const monthLabel = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Math.max(1, Math.min(12, monthNum)) - 1];
       const yearStr = year || String(new Date().getFullYear());
-      const fileName = `Salary-Slip-${namePart}-${monthStr}-${yearStr}.pdf`;
+      const fileName = `Salary-Slip-${namePart}-${monthLabel}-${yearStr}.pdf`;
 
       pdf.save(fileName);
     } catch (err) {
       console.error("PDF download failed:", err);
-      window.print();
+      setError("PDF generation failed. Please try again.");
     } finally {
       setPdfDownloading(false);
     }

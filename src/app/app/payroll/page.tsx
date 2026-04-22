@@ -953,27 +953,68 @@ function PayrollPageContent() {
     if (!el) return;
     setPdfDownloading(true);
     try {
-      const html2canvas = (await import("html2canvas")).default;
+      const { toPng } = await import("html-to-image");
       const { jsPDF } = await import("jspdf");
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
+
+      // Capture a clone without scrollbars/overflow wrappers (PDF should be the slip only).
+      const tmpHost = document.createElement("div");
+      tmpHost.style.position = "fixed";
+      tmpHost.style.left = "-10000px";
+      tmpHost.style.top = "0";
+      tmpHost.style.width = "0";
+      tmpHost.style.height = "0";
+      tmpHost.style.overflow = "hidden";
+      document.body.appendChild(tmpHost);
+
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.style.overflow = "visible";
+      clone.style.maxWidth = "190mm";
+      clone.style.width = "190mm";
+      clone.style.backgroundColor = "#ffffff";
+      clone.querySelectorAll<HTMLElement>("[style*='overflow'], .overflow-x-auto, .overflow-auto").forEach((n) => {
+        n.style.overflow = "visible";
+        (n.style as any).overflowX = "visible";
+        (n.style as any).overflowY = "visible";
+      });
+      clone.querySelectorAll<HTMLElement>("[class*='print:']").forEach((n) => {
+        n.classList.remove("print:hidden");
+      });
+      tmpHost.appendChild(clone);
+
+      const imgData = await toPng(clone, {
+        cacheBust: true,
+        pixelRatio: 2,
         backgroundColor: "#ffffff",
       });
-      const imgData = canvas.toDataURL("image/png");
+      tmpHost.remove();
+
+      const img = new window.Image();
+      img.decoding = "async";
+      img.src = imgData;
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve();
+        img.onerror = () => reject(new Error("Failed to load captured slip image"));
+      });
+
       const pdf = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const imgWidth = canvas.width;
-      const imgHeight = canvas.height;
-      const ratio = Math.min(pdfWidth / imgWidth, (pdf.internal.pageSize.getHeight() / imgHeight)) * 0.95;
-      pdf.addImage(imgData, "PNG", (pdfWidth - imgWidth * ratio) / 2, 5, imgWidth * ratio, imgHeight * ratio);
+      const imgWidth = img.naturalWidth || img.width;
+      const imgHeight = img.naturalHeight || img.height;
+      const pdfHeight = pdf.internal.pageSize.getHeight();
+      const margin = 2;
+      const maxW = pdfWidth - margin * 2;
+      const maxH = pdfHeight - margin * 2;
+      let ratio = maxW / imgWidth;
+      if (imgHeight * ratio > maxH) ratio = maxH / imgHeight;
+      pdf.addImage(imgData, "PNG", (pdfWidth - imgWidth * ratio) / 2, margin, imgWidth * ratio, imgHeight * ratio);
       const namePart = (slipsData?.user?.name || "Employee").replace(/[^a-zA-Z0-9]/g, "-").replace(/-+/g, "-") || "Employee";
-      const fileName = `Salary-Slip-${namePart}-${slipMonth}-${slipYear}.pdf`;
+      const monthNum = parseInt(slipMonth, 10);
+      const monthLabel = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][Math.max(1, Math.min(12, monthNum)) - 1];
+      const fileName = `Salary-Slip-${namePart}-${monthLabel}-${slipYear}.pdf`;
       pdf.save(fileName);
     } catch (err) {
       console.error("PDF download failed:", err);
-      window.print();
+      showToast("error", "PDF generation failed. Please try again.");
     } finally {
       setPdfDownloading(false);
     }
