@@ -58,6 +58,12 @@ body {
   color: var(--text);
 }
 
+/* Edge / legacy IE: hide built-in password “eye” / clear so only app controls apply */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
+
 /* Theme-consistent focus/highlight across the app */
 input:focus-visible,
 select:focus-visible,

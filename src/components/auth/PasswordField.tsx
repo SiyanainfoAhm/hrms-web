@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useState } from "react";
+import { cn } from "@/lib/cn";
 
 function EyeIcon({ className }: { className?: string }) {
   return (
@@ -34,6 +35,11 @@ export type PasswordFieldProps = {
   placeholder?: string;
   /** Extra classes on the outer wrapper */
   className?: string;
+  /** Visually hide the label (kept for screen readers). */
+  hideLabel?: boolean;
+  /** Extra classes on the `<input>` (merged with defaults). */
+  inputClassName?: string;
+  disabled?: boolean;
 };
 
 export function PasswordField({
@@ -46,6 +52,9 @@ export function PasswordField({
   id: idProp,
   placeholder,
   className = "",
+  hideLabel = false,
+  inputClassName,
+  disabled = false,
 }: PasswordFieldProps) {
   const reactId = useId();
   const id = idProp ?? `password-${reactId}`;
@@ -53,7 +62,10 @@ export function PasswordField({
 
   return (
     <div className={className}>
-      <label htmlFor={id} className="mb-1 block text-sm font-medium text-slate-700">
+      <label
+        htmlFor={id}
+        className={hideLabel ? "sr-only" : "mb-1 block text-sm font-medium text-slate-700"}
+      >
         {label}
       </label>
       <div className="relative">
@@ -66,12 +78,18 @@ export function PasswordField({
           placeholder={placeholder}
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="password-field-input w-full rounded-lg border border-slate-300 py-2 pl-3 pr-10 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+          disabled={disabled}
+          className={cn(
+            "password-field-input w-full rounded-lg py-2 pl-3 pr-10 text-sm focus:outline-none disabled:cursor-not-allowed disabled:bg-slate-50 disabled:opacity-60",
+            inputClassName ??
+              "border border-slate-300 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500",
+          )}
         />
         <button
           type="button"
-          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800 disabled:pointer-events-none disabled:opacity-40"
           onClick={() => setVisible((v) => !v)}
+          disabled={disabled}
           aria-pressed={visible}
           aria-label={visible ? "Hide password" : "Show password"}
         >

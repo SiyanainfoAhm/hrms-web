@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { authConfig, type AuthConfig } from "../../config/authConfig";
 import { cn } from "../../lib/cn";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { PasswordField } from "@/components/auth/PasswordField";
+
+const AUTH_PASSWORD_INPUT_CLASS =
+  "border border-gray-300 rounded-lg py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
 
 export function SignupTemplate({
   config = authConfig,
@@ -39,52 +44,11 @@ export function SignupTemplate({
       )}
 
       {methods.emailPassword && (
-        <form
-          className="space-y-3"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!onEmailPasswordSignup) return;
-            const fd = new FormData(e.currentTarget);
-            const name = String(fd.get("name") ?? "");
-            const email = String(fd.get("email") ?? "");
-            const password = String(fd.get("password") ?? "");
-            void onEmailPasswordSignup({ name, email, password });
-          }}
-        >
-          <input
-            name="name"
-            type="text"
-            placeholder="Name (optional)"
-            className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
-            disabled={loading}
-          />
-          <input
-            name="email"
-            type="email"
-            required
-            placeholder="Email"
-            className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
-            disabled={loading}
-          />
-          <input
-            name="password"
-            type="password"
-            required
-            placeholder="Password"
-            className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
-            disabled={loading}
-          />
-
-          {error && <div className="text-sm text-red-600">{error}</div>}
-
-          <button
-            type="submit"
-            disabled={loading || !onEmailPasswordSignup}
-            className={cn("w-full py-3 rounded-lg font-semibold transition", "bg-[var(--primary)] text-white hover:brightness-95 disabled:opacity-60")}
-          >
-            {loading ? "Creating account..." : "Create account"}
-          </button>
-        </form>
+        <SignupEmailPasswordForm
+          loading={loading}
+          error={error}
+          onEmailPasswordSignup={onEmailPasswordSignup}
+        />
       )}
 
       {methods.google && <GoogleAuthButton mode="signup" onSuccessRedirect="/app/dashboard" />}
@@ -105,3 +69,65 @@ export function SignupTemplate({
   );
 }
 
+function SignupEmailPasswordForm({
+  loading,
+  error,
+  onEmailPasswordSignup,
+}: {
+  loading: boolean;
+  error?: string;
+  onEmailPasswordSignup?: (payload: { name?: string; email: string; password: string }) => void | Promise<void>;
+}) {
+  const [password, setPassword] = useState("");
+
+  return (
+    <form
+      className="space-y-3"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!onEmailPasswordSignup) return;
+        const fd = new FormData(e.currentTarget);
+        const name = String(fd.get("name") ?? "");
+        const email = String(fd.get("email") ?? "");
+        void onEmailPasswordSignup({ name, email, password });
+      }}
+    >
+      <input
+        name="name"
+        type="text"
+        placeholder="Name (optional)"
+        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        disabled={loading}
+      />
+      <input
+        name="email"
+        type="email"
+        required
+        placeholder="Email"
+        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        disabled={loading}
+      />
+      <PasswordField
+        label="Password"
+        hideLabel
+        value={password}
+        onChange={setPassword}
+        required
+        placeholder="Password"
+        autoComplete="new-password"
+        inputClassName={AUTH_PASSWORD_INPUT_CLASS}
+        disabled={loading}
+      />
+
+      {error && <div className="text-sm text-red-600">{error}</div>}
+
+      <button
+        type="submit"
+        disabled={loading || !onEmailPasswordSignup}
+        className={cn("w-full py-3 rounded-lg font-semibold transition", "bg-[var(--primary)] text-white hover:brightness-95 disabled:opacity-60")}
+      >
+        {loading ? "Creating account..." : "Create account"}
+      </button>
+    </form>
+  );
+}

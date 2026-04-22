@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useState } from "react";
 import { authConfig, type AuthConfig } from "../../config/authConfig";
 import { cn } from "../../lib/cn";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
+import { PasswordField } from "@/components/auth/PasswordField";
+
+const AUTH_PASSWORD_INPUT_CLASS =
+  "border border-gray-300 rounded-lg py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
 
 export function LoginTemplate({
   config = authConfig,
@@ -81,6 +86,8 @@ function EmailPasswordForm({
   showForgot: boolean;
   onNavigateForgot?: () => void;
 }) {
+  const [password, setPassword] = useState("");
+
   return (
     <form
       className="space-y-3"
@@ -89,7 +96,6 @@ function EmailPasswordForm({
         if (!onSubmit) return;
         const fd = new FormData(e.currentTarget);
         const email = String(fd.get("email") ?? "");
-        const password = String(fd.get("password") ?? "");
         void onSubmit({ email, password });
       }}
     >
@@ -101,12 +107,15 @@ function EmailPasswordForm({
         className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
       />
-      <input
-        name="password"
-        type="password"
+      <PasswordField
+        label="Password"
+        hideLabel
+        value={password}
+        onChange={setPassword}
         required
         placeholder="Password"
-        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        autoComplete="current-password"
+        inputClassName={AUTH_PASSWORD_INPUT_CLASS}
         disabled={loading}
       />
 
