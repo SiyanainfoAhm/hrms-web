@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 
 function isApproverRole(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -86,12 +87,15 @@ export async function POST(request: NextRequest) {
   const claimDate = typeof body?.claimDate === "string" ? body.claimDate.trim() : "";
   const description = typeof body?.description === "string" ? body.description.trim() : "";
   const attachmentUrl = typeof body?.attachmentUrl === "string" ? body.attachmentUrl.trim() : "";
+  const employeeUserId = typeof body?.employeeUserId === "string" ? body.employeeUserId.trim() : "";
 
   if (!category) return NextResponse.json({ error: "Category is required" }, { status: 400 });
   if (!Number.isFinite(amount) || amount <= 0) return NextResponse.json({ error: "Valid amount is required" }, { status: 400 });
   if (!claimDate) return NextResponse.json({ error: "Claim date is required" }, { status: 400 });
   if (!description) return NextResponse.json({ error: "Description is required" }, { status: 400 });
   if (!attachmentUrl) return NextResponse.json({ error: "Attachment is required" }, { status: 400 });
+
+  const targetUserId = isApproverRole(session.role) && employeeUserId ? employeeUserId : session.id;
 
   const dateMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(claimDate);
   if (!dateMatch) return NextResponse.json({ error: "Claim date must be YYYY-MM-DD" }, { status: 400 });
@@ -108,19 +112,13 @@ export async function POST(request: NextRequest) {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
-  const { data: empRow, error: empErr } = await supabase
-    .from("HRMS_employees")
-    .select("id, department_id")
-    .eq("company_id", me.company_id)
-    .eq("user_id", session.id)
-    .maybeSingle();
-  if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
-  if (!empRow?.id) {
-    return NextResponse.json(
-      { error: "No employee profile found. Ask HR to complete your employee record before claiming reimbursement." },
-      { status: 400 }
-    );
-  }
+  const mirror = await ensureEmployeeMirrorForUser(supabase, me.company_id, targetUserId);
+  if (!mirror.ok) return NextResponse.json({ error: mirror.error }, { status: 400 });
+  const empRow = mirror.row;
+
+  const now = new Date().toISOString();
+  /** Same idea as leave: when Admin / Super Admin / HR files for another employee, skip the pending queue. */
+  const autoApprove = isApproverRole(session.role) && targetUserId !== session.id;
 
   const { data: inserted, error: insErr } = await supabase
     .from("HRMS_reimbursements")
@@ -128,7 +126,7 @@ export async function POST(request: NextRequest) {
       {
         company_id: me.company_id,
         employee_id: empRow.id,
-        employee_user_id: session.id,
+        employee_user_id: targetUserId,
         department_id: empRow.department_id ?? null,
         category,
         amount: Math.round(amount * 100) / 100,
@@ -136,14 +134,19 @@ export async function POST(request: NextRequest) {
         claim_date: claimDate,
         description,
         attachment_url: attachmentUrl,
-        status: "pending",
+        status: autoApprove ? "approved" : "pending",
+        approver_user_id: autoApprove ? session.id : null,
+        approved_at: autoApprove ? now : null,
+        rejected_at: null,
+        rejection_reason: null,
         payroll_year: payrollYear,
         payroll_month: payrollMonth,
+        ...(autoApprove ? { updated_at: now } : {}),
       },
     ])
     .select("id")
     .single();
 
   if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
-  return NextResponse.json({ ok: true, id: inserted.id });
+  return NextResponse.json({ ok: true, id: inserted.id, status: autoApprove ? "approved" : "pending" });
 }

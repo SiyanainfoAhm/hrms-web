@@ -23,6 +23,7 @@ import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/compo
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
+import { normalizePayDaysHalfStepAndClamp } from "@/lib/payrollExcelExport";
 
 type MasterGridRow = {
   employeeUserId: string;
@@ -995,7 +996,7 @@ function PayrollPageContent() {
           const gr0 = row.govRecalc;
 
           const applyGovCompute = (gr: GovRecalcPayload, payDaysVal: number) => {
-            const capped = Math.max(0, Math.min(govPayDaysMax, payDaysVal));
+            const capped = normalizePayDaysHalfStepAndClamp(payDaysVal, govPayDaysMax);
             const unpaidDays = Math.max(0, dim - capped);
             const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
             const optionalEarnings = govOptionalFromComputedMonthly(gm);
@@ -1145,7 +1146,7 @@ function PayrollPageContent() {
           return next;
         }
         if (field === "payDays") {
-          const newPayDays = Math.max(0, Math.min(payDaysMax, value));
+          const newPayDays = normalizePayDaysHalfStepAndClamp(value, payDaysMax);
           const grossMonthly =
             row.grossMonthly ?? Math.round((row.grossPay * payDenom) / (row.payDays || row.rawPayDays || 1));
           next.payDays = newPayDays;

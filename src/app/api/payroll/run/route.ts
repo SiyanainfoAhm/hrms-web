@@ -15,6 +15,7 @@ import {
 } from "@/lib/governmentPayroll";
 import {
   buildPayrollExcelRow,
+  normalizePayDaysHalfStepAndClamp,
   PAYROLL_EXCEL_HEADER,
   payrollExcelAmountColumnIndices,
 } from "@/lib/payrollExcelExport";
@@ -25,6 +26,24 @@ import * as XLSX from "xlsx-js-style";
 
 function ymd(v: string): string {
   return String(v ?? "").slice(0, 10);
+}
+
+/**
+ * `HRMS_payroll_master.pt` is often populated with the company-wide default (e.g. 200) when the master row
+ * was created. In **slab** mode, PT must follow the employee’s current monthly gross (same as payroll calc).
+ * Use stored `m.pt` only when the company config is **fixed** PT mode.
+ */
+function resolvePrivatePayrollMasterProfTax(
+  m: { gross_salary?: unknown; pt?: unknown },
+  privateCfg: PrivatePayrollConfig,
+  ptFixedCompany: number,
+): number {
+  const grossMonthly = Number(m.gross_salary) || 0;
+  const fromConfig = computeProfessionalTaxMonthly(grossMonthly, privateCfg, ptFixedCompany);
+  const mode = (privateCfg.ptMode ?? "slab") as "fixed" | "slab";
+  if (mode !== "fixed") return fromConfig;
+  const masterPt = m.pt != null ? Number(m.pt) : NaN;
+  return Number.isFinite(masterPt) && masterPt >= 0 ? masterPt : fromConfig;
 }
 
 async function fetchCompanyPrivatePayrollConfig(companyId: string): Promise<PrivatePayrollConfig> {
@@ -974,9 +993,7 @@ async function computeFreshPayrollPreviewFromMasters(
     const transPay = Math.round(transMonthly * ratio);
     const ltaPay = Math.round(ltaMonthly * ratio);
     const personalPay = Math.round(personalMonthly * ratio);
-    const masterPt = m.pt != null ? Number(m.pt) : NaN;
-    const defaultPt = computeProfessionalTaxMonthly(Number(m.gross_salary) || 0, privateCfg, ptFixed);
-    const profTax = Number.isFinite(masterPt) && masterPt >= 0 ? masterPt : defaultPt;
+    const profTax = resolvePrivatePayrollMasterProfTax(m, privateCfg, ptFixed);
     const profTaxMonthly = Math.round(profTax);
     const statM = privateStatutoryMonthlyFromMaster(m, profTaxMonthly, privateCfg, u);
     const pfEmp = statM.pfEmp * (payDays / Math.max(1, daysInMonth));
@@ -1606,9 +1623,7 @@ export async function POST(request: NextRequest) {
       const transPay = componentsSum > 0 ? Math.round(mt * ratio) : Math.round(grossPay * 0.05);
       const ltaPay = componentsSum > 0 ? Math.round(ml * ratio) : Math.round(grossPay * 0.1);
       const personalPay = componentsSum > 0 ? Math.round(mp * ratio) : Math.round(grossPay * 0.1);
-      const masterPtIns = m.pt != null ? Number(m.pt) : NaN;
-      const defaultPtIns = computeProfessionalTaxMonthly(Number(m.gross_salary) || 0, privateCfgCm, ptFixedCm);
-      const profTaxIns = Number.isFinite(masterPtIns) && masterPtIns >= 0 ? masterPtIns : defaultPtIns;
+      const profTaxIns = resolvePrivatePayrollMasterProfTax(m, privateCfgCm, ptFixedCm);
       const profTaxMonthlyRoundedCm = Math.round(profTaxIns);
       const statCm = privateStatutoryMonthlyFromMaster(m, profTaxMonthlyRoundedCm, privateCfgCm, u);
       const pfEmp = Math.round(statCm.pfEmp * (payDays / Math.max(1, daysInMonth)));
@@ -1847,7 +1862,7 @@ export async function POST(request: NextRequest) {
             { status: 400 },
           );
         }
-        const payDays = Math.max(0, Math.min(daysInMonth, Math.round(Number(row.payDays) || 0)));
+        const payDays = normalizePayDaysHalfStepAndClamp(row.payDays, daysInMonth);
         const unpaidDays = Math.max(0, daysInMonth - payDays);
         const optionalEarnings = optionalEarningsFromClientGovernmentMonthly(row.governmentMonthly);
         const deductionDefaults = deductionDefaultsForGovernmentRun(
@@ -1915,7 +1930,7 @@ export async function POST(request: NextRequest) {
         });
         continue;
       }
-      const payDays = Math.max(0, Math.round(Number(row.payDays) || 0));
+      const payDays = normalizePayDaysHalfStepAndClamp(row.payDays, daysInMonth);
       const grossPay = Math.max(0, Math.round(Number(row.grossPay) || 0));
       const deductions = Math.max(0, Math.round(Number(row.deductions) || 0));
       const baseNet = grossPay - deductions;
@@ -2153,9 +2168,7 @@ export async function POST(request: NextRequest) {
       const transPay = componentsSum > 0 ? Math.round(mt * ratio) : Math.round(grossPay * 0.05);
       const ltaPay = componentsSum > 0 ? Math.round(ml * ratio) : Math.round(grossPay * 0.1);
       const personalPay = componentsSum > 0 ? Math.round(mp * ratio) : Math.round(grossPay * 0.1);
-      const masterPtIns = m.pt != null ? Number(m.pt) : NaN;
-      const defaultPtIns = computeProfessionalTaxMonthly(Number(m.gross_salary) || 0, privateCfgRun, ptFixed);
-      const profTaxIns = Number.isFinite(masterPtIns) && masterPtIns >= 0 ? masterPtIns : defaultPtIns;
+      const profTaxIns = resolvePrivatePayrollMasterProfTax(m, privateCfgRun, ptFixed);
       const profTaxMonthlyRoundedRun = Math.round(profTaxIns);
       const statRun = privateStatutoryMonthlyFromMaster(m, profTaxMonthlyRoundedRun, privateCfgRun, u);
       const pfEmp = Math.round(statRun.pfEmp * (payDays / Math.max(1, daysInMonth)));

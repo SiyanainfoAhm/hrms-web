@@ -55,6 +55,21 @@ function n(v: unknown): number {
   return Number.isFinite(x) ? x : 0;
 }
 
+/** Nearest 0.5 (half-day). Non-finite → 0. */
+export function roundPayDaysToHalfStep(raw: unknown): number {
+  const x = Number(raw);
+  if (!Number.isFinite(x)) return 0;
+  return Math.round(x * 2) / 2;
+}
+
+/** Half-day steps, clamped to [0, max]. Used by payroll run overrides and UI. */
+export function normalizePayDaysHalfStepAndClamp(raw: unknown, max: number): number {
+  if (!Number.isFinite(max) || max < 0) return roundPayDaysToHalfStep(raw);
+  const half = roundPayDaysToHalfStep(raw);
+  if (half < 0) return 0;
+  return Math.min(max, half);
+}
+
 /**
  * One payroll Excel row. `net_pay` on payslips is stored as final take-home (after statutory deductions
  * and after TDS / incentive / bonus / reimbursement adjustments). `Net` is reconstructed for export to
@@ -78,7 +93,7 @@ export function buildPayrollExcelRow(
     AccountNumber: accountNum,
     BankName: bankName,
     IFSC: ifsc,
-    PayDays: Math.round(n(p.pay_days)),
+    PayDays: roundPayDaysToHalfStep(p.pay_days),
     Gross: Math.round(n(p.gross_pay)),
     Net: net,
     PF: Math.round(n(p.pf_employee)),

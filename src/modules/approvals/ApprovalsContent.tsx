@@ -35,6 +35,8 @@ function payrollPeriodLabel(claimDate: string | null | undefined, payrollYear: n
 }
 import { useToast } from "@/components/common/ToastProvider";
 
+const REIMB_MAX_BYTES = 8 * 1024 * 1024;
+
 export function ApprovalsContent() {
   const { role } = useHrmsSession();
   const { showToast } = useToast();
@@ -101,6 +103,8 @@ export function ApprovalsContent() {
 
   const [reimbClaims, setReimbClaims] = useState<any[]>([]);
   const [reimbLoading, setReimbLoading] = useState(false);
+  const [reimbEmployeeUserId, setReimbEmployeeUserId] = useState("");
+  const [reimbEmployees, setReimbEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
   const [reimbCat, setReimbCat] = useState("");
   const [reimbAmount, setReimbAmount] = useState("");
   const [reimbClaimDate, setReimbClaimDate] = useState("");
@@ -176,6 +180,7 @@ export function ApprovalsContent() {
 
   const reimbErrors = useMemo(() => {
     const errs: Record<string, string | null> = {};
+    if (canApprove) errs.employee = validateRequired(reimbEmployeeUserId, "Employee");
     errs.category = validateRequired(reimbCat, "Category");
     errs.amount = validatePositiveNumber(reimbAmount, "Amount");
     errs.claimDate = validateIsoDateRequired(reimbClaimDate, "Expense / claim date");
@@ -184,7 +189,7 @@ export function ApprovalsContent() {
     else if (reimbFile.size <= 0) errs.attachment = "Choose a valid attachment file";
     else if (reimbFile.size > REIMB_MAX_BYTES) errs.attachment = "Attachment must be 8 MB or smaller";
     return errs;
-  }, [reimbCat, reimbAmount, reimbClaimDate, reimbDesc, reimbFile]);
+  }, [canApprove, reimbEmployeeUserId, reimbCat, reimbAmount, reimbClaimDate, reimbDesc, reimbFile]);
 
   const reimbHasErrors = useMemo(() => Object.values(reimbErrors).some(Boolean), [reimbErrors]);
 
@@ -252,6 +257,34 @@ export function ApprovalsContent() {
       cancelled = true;
     };
   }, [tab, reimbListPage, listPageSize]);
+
+  useEffect(() => {
+    if (!reimbDialogOpen || !canApprove) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/employees");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load employees");
+        if (cancelled) return;
+        const current = (data.employees || []).filter((e: any) => e.employmentStatus === "current");
+        const mapped = current
+          .map((e: any) => ({
+            id: e.id ?? null,
+            name: e.name ?? null,
+            email: e.email,
+          }))
+          .filter((e: any) => e.id);
+        setReimbEmployees(mapped);
+        if (!reimbEmployeeUserId && mapped.length) setReimbEmployeeUserId(mapped[0].id);
+      } catch {
+        if (!cancelled) setReimbEmployees([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reimbDialogOpen, canApprove, reimbEmployeeUserId]);
 
   useEffect(() => {
     if (!leaveDialogOpen || !canApprove) return;
@@ -608,8 +641,6 @@ export function ApprovalsContent() {
     }
   }
 
-  const REIMB_MAX_BYTES = 8 * 1024 * 1024;
-
   async function submitReimbursement(e: FormEvent) {
     e.preventDefault();
     setReimbSubmitted(true);
@@ -619,12 +650,24 @@ export function ApprovalsContent() {
       const cat = reimbCat.trim();
       const amt = parseFloat(reimbAmount);
       const desc = reimbDesc.trim();
-      if (reimbHasErrors) throw new Error(reimbErrors.category || reimbErrors.amount || reimbErrors.claimDate || reimbErrors.description || reimbErrors.attachment || "Fix validation errors");
+      if (reimbHasErrors)
+        throw new Error(
+          reimbErrors.employee ||
+            reimbErrors.category ||
+            reimbErrors.amount ||
+            reimbErrors.claimDate ||
+            reimbErrors.description ||
+            reimbErrors.attachment ||
+            "Fix validation errors"
+        );
       // parsed values are safe after validation
       void amt;
 
+      const file = reimbFile;
+      if (!file) throw new Error("Attachment is required");
+
       const fd = new FormData();
-      fd.append("file", reimbFile);
+      fd.append("file", file);
       const up = await fetch("/api/reimbursements/upload", { method: "POST", body: fd });
       const upData = await up.json();
       if (!up.ok) throw new Error(upData?.error || "Upload failed");
@@ -640,6 +683,7 @@ export function ApprovalsContent() {
           claimDate: reimbClaimDate,
           description: desc,
           attachmentUrl,
+          ...(canApprove ? { employeeUserId: reimbEmployeeUserId } : {}),
         }),
       });
       const data = await res.json();
@@ -656,8 +700,12 @@ export function ApprovalsContent() {
       setReimbClaimDate("");
       setReimbDesc("");
       setReimbFile(null);
+      setReimbEmployeeUserId("");
       setReimbDialogOpen(false);
-      showToast("success", "Reimbursement claim submitted");
+      showToast(
+        "success",
+        data?.status === "approved" ? "Reimbursement added and approved" : "Reimbursement claim submitted"
+      );
     } catch (err: any) {
       setError(err?.message || "Failed to submit");
       showToast("error", err?.message || "Failed to submit");
@@ -1444,6 +1492,7 @@ export function ApprovalsContent() {
                 disabled={reimbLoading}
                 onClick={() => {
                   setError(null);
+                  setReimbEmployeeUserId("");
                   setReimbDialogOpen(true);
                 }}
               >
@@ -1684,6 +1733,36 @@ export function ApprovalsContent() {
                 <form noValidate onSubmit={submitReimbursement} className="p-5">
                   <div className="space-y-4">
                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                      {canApprove && (
+                        <div className="sm:col-span-2">
+                          <label className="mb-1 block text-sm font-medium text-slate-700">
+                            Employee <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            value={reimbEmployeeUserId}
+                            onChange={(e) => {
+                              setReimbEmployeeUserId(e.target.value);
+                              markTouched(setReimbTouched, "employee");
+                            }}
+                            onBlur={() => markTouched(setReimbTouched, "employee")}
+                            className={`w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-1 ${
+                              reimbErrors.employee && (reimbSubmitted || reimbTouched.employee)
+                                ? "border-red-300 focus:border-red-500 focus:ring-red-200"
+                                : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
+                            }`}
+                          >
+                            <option value="">Select employee</option>
+                            {reimbEmployees.map((e) => (
+                              <option key={e.id} value={e.id}>
+                                {e.name || e.email}
+                              </option>
+                            ))}
+                          </select>
+                          {reimbErrors.employee && (reimbSubmitted || reimbTouched.employee) && (
+                            <div className="mt-1 text-xs text-red-700">{reimbErrors.employee}</div>
+                          )}
+                        </div>
+                      )}
                       <div className="sm:col-span-2">
                         <label className="mb-1 block text-sm font-medium text-slate-700">
                           Category <span className="text-red-500">*</span>

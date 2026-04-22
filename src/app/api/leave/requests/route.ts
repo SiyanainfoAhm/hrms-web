@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import { computeEntitled, computeUsedDaysForYear, leaveYearStart, type LeavePolicy } from "@/lib/leavePolicy";
 
 function isApprover(role: string): boolean {
@@ -129,16 +130,9 @@ export async function POST(request: NextRequest) {
     targetJoinDate = me.date_of_joining ? String(me.date_of_joining) : null;
   }
 
-  // Resolve HRMS_employees.id (required by DB constraint).
-  const { data: empRow, error: empRowErr } = await supabase
-    .from("HRMS_employees")
-    .select("id")
-    .eq("company_id", me.company_id)
-    .eq("user_id", targetEmployeeUserId)
-    .maybeSingle();
-  if (empRowErr) return NextResponse.json({ error: empRowErr.message }, { status: 400 });
-  if (!empRow?.id) return NextResponse.json({ error: "Employee record not found for this user" }, { status: 400 });
-  targetEmployeeId = String(empRow.id);
+  const mirror = await ensureEmployeeMirrorForUser(supabase, me.company_id, targetEmployeeUserId);
+  if (!mirror.ok) return NextResponse.json({ error: mirror.error }, { status: 400 });
+  targetEmployeeId = mirror.row.id;
 
   // Ensure leave type belongs to the same company, and apply visibility rules
   const { data: lt, error: ltErr } = await supabase

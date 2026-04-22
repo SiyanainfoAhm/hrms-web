@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { normalizePayDaysHalfStepAndClamp } from "@/lib/payrollExcelExport";
 
 /** Monthly compute snapshot from `/api/payroll/run` preview (same shape as `computeGovernmentMonthlyPayroll` result). */
 export type GovernmentPreviewMonthly = {
@@ -219,9 +220,17 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
                       <input
                         type="number"
                         min={0}
+                        step={0.5}
                         max={effectiveRunDay ?? daysInMonth}
                         value={r.payDays}
-                        onChange={(e) => onUpdate(r.employeeUserId, "payDays", parseInt(e.target.value, 10) || 0)}
+                        onChange={(e) => {
+                          const cap = effectiveRunDay ?? daysInMonth;
+                          onUpdate(
+                            r.employeeUserId,
+                            "payDays",
+                            normalizePayDaysHalfStepAndClamp(parseFloat(e.target.value), cap),
+                          );
+                        }}
                         className={`${inpWide} w-[4.5rem] min-w-[4rem]`}
                       />
                     )}
