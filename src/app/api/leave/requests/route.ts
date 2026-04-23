@@ -4,7 +4,14 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
-import { computeEntitled, computeUsedDaysForYear, leaveYearStart, type LeavePolicy } from "@/lib/leavePolicy";
+import { istTodayYmd } from "@/lib/istCalendar";
+import {
+  asOfYmdForLeaveEntitlementBooking,
+  computeEntitled,
+  computeUsedDaysForYear,
+  leaveYearStart,
+  type LeavePolicy,
+} from "@/lib/leavePolicy";
 
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -220,7 +227,8 @@ export async function POST(request: NextRequest) {
         carryover_limit: pRaw.carryover_limit,
       };
 
-      const asOf = new Date(startDate + "T00:00:00Z");
+      const asOfYmd = asOfYmdForLeaveEntitlementBooking(startDate, istTodayYmd());
+      const asOf = new Date(asOfYmd + "T00:00:00Z");
       const joinDate = targetJoinDate ? new Date(targetJoinDate + "T00:00:00Z") : null;
       const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
       const yearEndExclusive = new Date(Date.UTC(yearStart.getUTCFullYear() + 1, yearStart.getUTCMonth(), yearStart.getUTCDate(), 0, 0, 0, 0));

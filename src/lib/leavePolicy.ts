@@ -52,6 +52,21 @@ export function monthsInclusive(from: Date, to: Date): number {
   return diff >= 0 ? diff + 1 : 0;
 }
 
+/**
+ * For leave booking / paid–unpaid split: accrual must not use a calendar date
+ * before "today", or backdated start dates under-count monthly accrual vs the
+ * live balance (which uses today). For future starts, accrual runs through the
+ * leave start month as before.
+ */
+export function asOfYmdForLeaveEntitlementBooking(startYmd: string, todayYmd: string): string {
+  const s = String(startYmd).slice(0, 10);
+  const t = String(todayYmd).slice(0, 10);
+  const iso = /^\d{4}-\d{2}-\d{2}$/;
+  if (!iso.test(s)) return iso.test(t) ? t : s;
+  if (!iso.test(t)) return s;
+  return s < t ? t : s;
+}
+
 export function overlapDaysInclusive(start: Date, end: Date, windowStart: Date, windowEndExclusive: Date): number {
   const s = Math.max(start.getTime(), windowStart.getTime());
   const e = Math.min(end.getTime(), windowEndExclusive.getTime() - 1);
