@@ -56,6 +56,9 @@ export function ApprovalsContent() {
       id: string;
       leaveTypeId: string;
       leaveTypeName: string;
+      employeeUserId?: string | null;
+      employeeName?: string | null;
+      employeeEmail?: string | null;
       startDate: string;
       endDate: string;
       totalDays: any;
@@ -959,6 +962,7 @@ export function ApprovalsContent() {
                   <table className="w-full text-left text-sm">
                     <thead className="text-slate-600">
                       <tr>
+                        {canApprove && <th className="px-3 py-2">Employee</th>}
                         <th className="px-3 py-2">Type</th>
                         <th className="px-3 py-2">Dates</th>
                         <th className="px-3 py-2">Days</th>
@@ -970,6 +974,11 @@ export function ApprovalsContent() {
                     <tbody>
                       {requests.map((r) => (
                         <tr key={r.id} className="border-t border-slate-200">
+                          {canApprove && (
+                            <td className="px-3 py-2 font-medium text-slate-900">
+                              {r.employeeName?.trim() || r.employeeEmail || "—"}
+                            </td>
+                          )}
                           <td className="px-3 py-2">{r.leaveTypeName || "-"}</td>
                           <td className="px-3 py-2">
                             {fmtDmy(r.startDate)} → {fmtDmy(r.endDate)}
@@ -1007,7 +1016,13 @@ export function ApprovalsContent() {
                 <div className="space-y-3 md:hidden">
                   {requests.map((r) => (
                     <div key={r.id} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                      <p className="font-semibold text-slate-900">{r.leaveTypeName || "—"}</p>
+                      {canApprove && (
+                        <p className="text-sm text-slate-600">
+                          <span className="font-medium text-slate-800">Employee:</span>{" "}
+                          {r.employeeName?.trim() || r.employeeEmail || "—"}
+                        </p>
+                      )}
+                      <p className={`font-semibold text-slate-900 ${canApprove ? "mt-1" : ""}`}>{r.leaveTypeName || "—"}</p>
                       <p className="mt-1 text-sm text-slate-700">
                         {fmtDmy(r.startDate)} → {fmtDmy(r.endDate)} · {r.totalDays} day(s)
                       </p>

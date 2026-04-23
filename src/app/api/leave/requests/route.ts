@@ -30,11 +30,19 @@ function isPlOrSlLeaveType(lt: { code?: string | null; payslip_slot?: string | n
   return code === "PL" || code === "SL" || slot === "PL" || slot === "SL";
 }
 
-function mapLeaveRow(r: any) {
+function mapLeaveRow(
+  r: any,
+  userById: Map<string, { name: string | null; email: string | null }>,
+) {
+  const uid = r.employee_user_id as string | undefined;
+  const u = uid ? userById.get(uid) : undefined;
   return {
     id: r.id as string,
     leaveTypeId: r.leave_type_id as string,
     leaveTypeName: r.HRMS_leave_types?.name ?? "",
+    employeeUserId: uid ?? null,
+    employeeName: u?.name ?? null,
+    employeeEmail: u?.email ?? null,
     startDate: String(r.start_date),
     endDate: String(r.end_date),
     totalDays: r.total_days,
@@ -45,6 +53,20 @@ function mapLeaveRow(r: any) {
     rejectedAt: r.rejected_at ? new Date(r.rejected_at).toISOString() : null,
     rejectionReason: r.rejection_reason as string | null,
   };
+}
+
+async function employeeLabelMapForLeaveRows(
+  rows: any[],
+): Promise<Map<string, { name: string | null; email: string | null }>> {
+  const uids = [...new Set((rows ?? []).map((r: any) => r.employee_user_id as string).filter(Boolean))];
+  const userById = new Map<string, { name: string | null; email: string | null }>();
+  if (!uids.length) return userById;
+  const { data: users, error: uErr } = await supabase.from("HRMS_users").select("id, name, email").in("id", uids);
+  if (uErr) throw new Error(uErr.message);
+  for (const u of users ?? []) {
+    userById.set(u.id as string, { name: (u as any).name ?? null, email: (u as any).email ?? null });
+  }
+  return userById;
 }
 
 export async function GET(request: NextRequest) {
@@ -81,8 +103,14 @@ export async function GET(request: NextRequest) {
     const to = from + pageSize - 1;
     const { data, error, count } = await query.range(from, to);
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    let userById: Map<string, { name: string | null; email: string | null }>;
+    try {
+      userById = await employeeLabelMapForLeaveRows(data ?? []);
+    } catch (e: any) {
+      return NextResponse.json({ error: e?.message || "Failed to load employees" }, { status: 400 });
+    }
     return NextResponse.json({
-      requests: (data ?? []).map(mapLeaveRow),
+      requests: (data ?? []).map((r) => mapLeaveRow(r, userById)),
       total: count ?? 0,
       page,
       pageSize,
@@ -92,8 +120,15 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query;
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  let userById: Map<string, { name: string | null; email: string | null }>;
+  try {
+    userById = await employeeLabelMapForLeaveRows(data ?? []);
+  } catch (e: any) {
+    return NextResponse.json({ error: e?.message || "Failed to load employees" }, { status: 400 });
+  }
+
   return NextResponse.json({
-    requests: (data ?? []).map(mapLeaveRow),
+    requests: (data ?? []).map((r) => mapLeaveRow(r, userById)),
   });
 }
 
