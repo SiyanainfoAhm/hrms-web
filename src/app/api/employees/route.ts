@@ -853,7 +853,10 @@ export async function PUT(request: NextRequest) {
   if (!target || target.company_id !== companyId) return NextResponse.json({ error: "Employee not found" }, { status: 404 });
   if (target.role === "super_admin") return NextResponse.json({ error: "Not allowed" }, { status: 403 });
 
-  const email = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  const canEditEmail = session.role === "super_admin" || session.role === "admin" || session.role === "hr";
+  // Managers can edit employee details but must not be able to change login email.
+  const emailRaw = typeof body?.email === "string" ? body.email.trim().toLowerCase() : "";
+  const email = canEditEmail ? emailRaw : "";
   const name = typeof body?.name === "string" ? body.name.trim() : "";
   const role = typeof body?.role === "string" ? body.role : "";
   const employeeCode = typeof body?.employeeCode === "string" ? body.employeeCode.trim() : "";

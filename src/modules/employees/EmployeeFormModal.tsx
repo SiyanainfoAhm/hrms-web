@@ -33,6 +33,7 @@ export function EmployeeFormModal({
   open,
   mode,
   userId,
+  actorRole,
   onClose,
   onSaved,
   onToast
@@ -40,6 +41,7 @@ export function EmployeeFormModal({
   open: boolean;
   mode: "add" | "edit";
   userId: string | null;
+  actorRole: RoleId;
   onClose: () => void;
   onSaved: (msg: string) => void;
   onToast: (kind: "success" | "error", msg: string) => void;
@@ -555,6 +557,8 @@ export function EmployeeFormModal({
 
   if (!open) return null;
 
+  const canEditEmail = actorRole === "super_admin" || actorRole === "admin" || actorRole === "hr";
+
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 p-0 sm:p-4">
       <div className="bg-white rounded-t-2xl sm:rounded-2xl shadow-xl w-full max-w-3xl max-h-[95vh] flex flex-col">
@@ -601,7 +605,7 @@ export function EmployeeFormModal({
                       }}
                       onBlur={() => markTouched("email")}
                       aria-invalid={showErr("email")}
-                      disabled={mode === "edit"}
+                      disabled={mode === "edit" && !canEditEmail}
                     />
                     {showErr("email") && <div className="mt-1 text-xs text-red-700">{errors.email}</div>}
                   </label>

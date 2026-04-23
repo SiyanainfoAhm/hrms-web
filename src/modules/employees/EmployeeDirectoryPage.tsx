@@ -575,6 +575,7 @@ export function EmployeeDirectoryPage() {
         open={formOpen}
         mode={formMode}
         userId={editId}
+        actorRole={actor.role ?? "employee"}
         onClose={() => {
           setFormOpen(false);
           setEditId(null);
