@@ -72,6 +72,8 @@ export function ApprovalsContent() {
   const [currentEmployees, setCurrentEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  /** Single-day PL/SL: user can request 0.5 instead of 1. */
+  const [plSlHalfDay, setPlSlHalfDay] = useState(false);
   const [reason, setReason] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
@@ -135,6 +137,18 @@ export function ApprovalsContent() {
     return Math.floor((e - s) / (24 * 60 * 60 * 1000)) + 1;
   }
 
+  function normalizePayslipSlotForHalf(raw: unknown): string {
+    const s = String(raw ?? "").trim().toUpperCase();
+    if (s === "EL") return "PL";
+    return s;
+  }
+
+  function isPaidLeaveOrSickType(t: any): boolean {
+    const code = String(t?.code ?? "").trim().toUpperCase();
+    const slot = normalizePayslipSlotForHalf(t?.payslip_slot);
+    return code === "PL" || code === "SL" || slot === "PL" || slot === "SL";
+  }
+
   function fmtDays(n: number): string {
     if (!Number.isFinite(n)) return "0";
     const rounded = Math.round(n * 2) / 2; // show in 0.5 steps
@@ -144,7 +158,12 @@ export function ApprovalsContent() {
   const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
   const baseDays = diffDaysInclusive(startDate, endDate);
   const isHalfLeave = String(selectedLeaveType?.code ?? "").toUpperCase() === "HL";
-  const totalDays = isHalfLeave ? baseDays * 0.5 : baseDays;
+  const isSingleCalendarDay =
+    Boolean(startDate && endDate && startDate === endDate && baseDays === 1);
+  const plSlHalfDayEligible =
+    Boolean(selectedLeaveType && isPaidLeaveOrSickType(selectedLeaveType) && isSingleCalendarDay && !isHalfLeave);
+  const totalDays =
+    isHalfLeave ? baseDays * 0.5 : plSlHalfDayEligible && plSlHalfDay ? 0.5 : baseDays;
   const reimbPayrollHint = useMemo(() => payrollHintFromClaimDate(reimbClaimDate), [reimbClaimDate]);
 
   function markTouched(setter: (fn: any) => void, key: string) {
@@ -350,6 +369,10 @@ export function ApprovalsContent() {
   }, [leaveDialogOpen, totalDays, leaveTypeId, startDate, selectedEmployeeId, canApprove, selectedLeaveType]);
 
   useEffect(() => {
+    if (!plSlHalfDayEligible && plSlHalfDay) setPlSlHalfDay(false);
+  }, [plSlHalfDayEligible, plSlHalfDay]);
+
+  useEffect(() => {
     setLeaveListPage(1);
     setReimbListPage(1);
   }, [tab]);
@@ -433,6 +456,7 @@ export function ApprovalsContent() {
         startDate,
         endDate,
         reason: reason.trim() || undefined,
+        ...(plSlHalfDayEligible && plSlHalfDay ? { isHalfDay: true } : {}),
         ...(canApprove ? { employeeUserId: selectedEmployeeId } : {}),
       }),
       });
@@ -447,6 +471,7 @@ export function ApprovalsContent() {
       setLeaveRequestsTotal(typeof reqData.total === "number" ? reqData.total : (reqData.requests?.length ?? 0));
       setStartDate("");
       setEndDate("");
+      setPlSlHalfDay(false);
       setReason("");
       setLeaveDialogOpen(false);
       showToast("success", canApprove ? "Leave added" : "Request submitted");
@@ -835,6 +860,7 @@ export function ApprovalsContent() {
                 onClick={() => {
                   setError(null);
                   setSelectedEmployeeId("");
+                  setPlSlHalfDay(false);
                   setLeaveDialogOpen(true);
                 }}
               >
@@ -1181,10 +1207,25 @@ export function ApprovalsContent() {
                         )}
                       </div>
                     </div>
+                    {plSlHalfDayEligible && (
+                      <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+                        <input
+                          type="checkbox"
+                          className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                          checked={plSlHalfDay}
+                          onChange={(e) => setPlSlHalfDay(e.target.checked)}
+                        />
+                        <span>
+                          Half day (0.5) — applies to this single date for paid / sick leave
+                        </span>
+                      </label>
+                    )}
+
                     {totalDays > 0 && (
                       <div className="rounded-lg bg-slate-50 px-4 py-2 text-sm text-slate-700">
                         <span className="font-medium">
-                          Total: {fmtDays(totalDays)} day{totalDays === 1 ? "" : "s"}
+                          Total: {fmtDays(totalDays)}{" "}
+                          {totalDays === 1 || totalDays === 0.5 ? "day" : "days"}
                         </span>
                         {balancePreview ? (
                           <>

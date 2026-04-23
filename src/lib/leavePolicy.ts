@@ -59,6 +59,42 @@ export function overlapDaysInclusive(start: Date, end: Date, windowStart: Date, 
   return Math.floor((e - s) / (24 * 60 * 60 * 1000)) + 1;
 }
 
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/** Inclusive calendar length of [startYmd, endYmd] (UTC date-only yyyy-mm-dd). */
+export function calendarSpanInclusiveYmd(startYmd: string, endYmd: string): number {
+  const sy = String(startYmd).slice(0, 10);
+  const ey = String(endYmd).slice(0, 10);
+  const s = new Date(sy + "T00:00:00Z").getTime();
+  const e = new Date(ey + "T00:00:00Z").getTime();
+  if (Number.isNaN(s) || Number.isNaN(e) || e < s) return 0;
+  return Math.floor((e - s) / MS_PER_DAY) + 1;
+}
+
+/**
+ * Leave quantity (days) falling inside [windowStart, windowEndExclusive), prorated from `total_days`
+ * across the leave's calendar span. Supports half-day rows (e.g. PL/SL `total_days = 0.5` on one day, HL).
+ */
+export function leaveUnitsInWindow(
+  startYmd: string,
+  endYmd: string,
+  totalDays: number | null | undefined,
+  windowStart: Date,
+  windowEndExclusive: Date,
+): { overlapCalendarDays: number; unitsInWindow: number } {
+  const sy = String(startYmd).slice(0, 10);
+  const ey = String(endYmd).slice(0, 10);
+  const start = new Date(sy + "T00:00:00Z");
+  const end = new Date(ey + "T00:00:00Z");
+  const overlapCalendarDays = overlapDaysInclusive(start, end, windowStart, windowEndExclusive);
+  if (overlapCalendarDays <= 0) return { overlapCalendarDays: 0, unitsInWindow: 0 };
+  const spanCal = calendarSpanInclusiveYmd(sy, ey);
+  const spanSafe = Math.max(1, spanCal);
+  const totalRaw = Number(totalDays);
+  const totalSafe = Number.isFinite(totalRaw) && totalRaw > 0 ? totalRaw : spanSafe;
+  return { overlapCalendarDays, unitsInWindow: totalSafe * (overlapCalendarDays / spanSafe) };
+}
+
 export function computeEntitled(policy: LeavePolicy, joinDate: Date | null, asOf: Date): number | null {
   const method = policy.accrual_method;
   if (method === "none") return null;
@@ -93,9 +129,9 @@ export function computeUsedDaysForYear(
   let used = 0;
   for (const r of leaves) {
     if (r.leave_type_id !== leaveTypeId) continue;
-    const s = toUtcMidnight(r.start_date);
-    const e = toUtcMidnight(r.end_date);
-    used += overlapDaysInclusive(s, e, yearStart, yearEndExclusive);
+    const sy = String(r.start_date).slice(0, 10);
+    const ey = String(r.end_date).slice(0, 10);
+    used += leaveUnitsInWindow(sy, ey, r.total_days, yearStart, yearEndExclusive).unitsInWindow;
   }
   return used;
 }

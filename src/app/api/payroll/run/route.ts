@@ -4,7 +4,7 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { overlapDaysInclusive } from "@/lib/leavePolicy";
+import { leaveUnitsInWindow, overlapDaysInclusive } from "@/lib/leavePolicy";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
 import {
   computeGovernmentMonthlyPayroll,
@@ -466,11 +466,19 @@ function computeLeavePaidUnpaidInWindow(
   windowEndExclusive: Date
 ): { overlapDays: number; paidDays: number; unpaidDays: number; leaveDays: Set<string> } {
   const leaveDays = new Set<string>();
-  const start = new Date(String(leave.start_date).slice(0, 10) + "T00:00:00Z");
-  const end = new Date(String(leave.end_date).slice(0, 10) + "T00:00:00Z");
+  const startYmd = String(leave.start_date).slice(0, 10);
+  const endYmd = String(leave.end_date).slice(0, 10);
+  const start = new Date(startYmd + "T00:00:00Z");
+  const end = new Date(endYmd + "T00:00:00Z");
   const windowStart = new Date(windowStartYmd + "T00:00:00Z");
-  const overlap = overlapDaysInclusive(start, end, windowStart, windowEndExclusive);
-  if (overlap <= 0) return { overlapDays: 0, paidDays: 0, unpaidDays: 0, leaveDays };
+  const { overlapCalendarDays, unitsInWindow } = leaveUnitsInWindow(
+    startYmd,
+    endYmd,
+    leave.total_days,
+    windowStart,
+    windowEndExclusive,
+  );
+  if (overlapCalendarDays <= 0) return { overlapDays: 0, paidDays: 0, unpaidDays: 0, leaveDays };
 
   const overlapStart = start.getTime() > windowStart.getTime() ? toYmdUtc(start) : windowStartYmd;
   const overlapEndInclusive = toYmdUtc(new Date(windowEndExclusive.getTime() - 24 * 60 * 60 * 1000));
@@ -485,11 +493,17 @@ function computeLeavePaidUnpaidInWindow(
   const ltRaw: any = (leave as any).HRMS_leave_types;
   const ltObj: any = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
   const isPaidType = ltObj?.is_paid !== false;
-  const total = Number(leave.total_days) || 1;
-  const unpaid = Number(leave.unpaid_days) ?? 0;
-  const unpaidInOverlap = isPaidType ? (total > 0 ? Math.round(overlap * (unpaid / total)) : 0) : overlap;
-  const paidInOverlap = Math.max(0, overlap - unpaidInOverlap);
-  return { overlapDays: overlap, paidDays: paidInOverlap, unpaidDays: unpaidInOverlap, leaveDays };
+  const totalRow = Number(leave.total_days);
+  const totalForSplit = Number.isFinite(totalRow) && totalRow > 0 ? totalRow : overlapCalendarDays;
+  const unpaidTotal = Number(leave.unpaid_days);
+  const unpaidSafe = Number.isFinite(unpaidTotal) && unpaidTotal >= 0 ? unpaidTotal : 0;
+  const unpaidInOverlap = isPaidType
+    ? totalForSplit > 0
+      ? unitsInWindow * (unpaidSafe / totalForSplit)
+      : 0
+    : unitsInWindow;
+  const paidInOverlap = isPaidType ? Math.max(0, unitsInWindow - unpaidInOverlap) : 0;
+  return { overlapDays: overlapCalendarDays, paidDays: paidInOverlap, unpaidDays: unpaidInOverlap, leaveDays };
 }
 
 async function computeAttendanceDrivenPayDays(args: {
