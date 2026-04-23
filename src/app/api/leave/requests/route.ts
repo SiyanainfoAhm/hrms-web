@@ -17,19 +17,6 @@ function diffDaysInclusive(start: string, end: string): number {
   return Math.floor((e - s) / (24 * 60 * 60 * 1000)) + 1;
 }
 
-function normalizePayslipSlot(raw: unknown): string {
-  const s = String(raw ?? "").trim().toUpperCase();
-  if (s === "EL") return "PL";
-  return s;
-}
-
-/** Paid leave / sick leave types that may be requested as a half day (single calendar day only). */
-function isPlOrSlLeaveType(lt: { code?: string | null; payslip_slot?: string | null }): boolean {
-  const code = String(lt?.code ?? "").trim().toUpperCase();
-  const slot = normalizePayslipSlot(lt?.payslip_slot);
-  return code === "PL" || code === "SL" || slot === "PL" || slot === "SL";
-}
-
 function mapLeaveRow(
   r: any,
   userById: Map<string, { name: string | null; email: string | null }>,
@@ -143,7 +130,7 @@ export async function POST(request: NextRequest) {
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
   const reason = typeof body?.reason === "string" ? body.reason.trim() : undefined;
   const employeeUserId = typeof body?.employeeUserId === "string" ? body.employeeUserId : null;
-  const isHalfDayPlSl = body?.isHalfDay === true;
+  const isHalfDay = body?.isHalfDay === true;
   if (!leaveTypeId || !startDate || !endDate) {
     return NextResponse.json({ error: "Leave type, start date and end date are required" }, { status: 400 });
   }
@@ -198,18 +185,12 @@ export async function POST(request: NextRequest) {
   // Half Leave (HL): each calendar day counts as 0.5
   if (codeUpper === "HL") {
     totalDays = totalDays * 0.5;
-  } else if (isHalfDayPlSl) {
+  } else if (isHalfDay) {
     if (startDate !== endDate) {
       return NextResponse.json({ error: "Half day is only allowed when start and end date are the same" }, { status: 400 });
     }
     if (totalDays !== 1) {
       return NextResponse.json({ error: "Half day applies to a single calendar day only" }, { status: 400 });
-    }
-    if (!isPlOrSlLeaveType(lt as { code?: string | null; payslip_slot?: string | null })) {
-      return NextResponse.json(
-        { error: "Half day is only available for paid leave (PL) or sick leave (SL)" },
-        { status: 400 },
-      );
     }
     totalDays = 0.5;
   }
