@@ -24,6 +24,25 @@ type Sub = {
   review_note: string | null;
 };
 
+function fileUrlsFromSubmissionFileUrl(raw: string | null | undefined): string[] {
+  const s = String(raw || "").trim();
+  if (!s) return [];
+  if (s.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(s);
+      return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string" && x.trim()).map((x) => String(x).trim()) : [];
+    } catch {
+      return [s];
+    }
+  }
+  return [s];
+}
+
+function needsTwoSides(docName: string): boolean {
+  const n = String(docName || "").toLowerCase();
+  return n.includes("aadhaar") || n.includes("aadhar") || n.includes("pan");
+}
+
 export function EmployeeDocumentsDialog(props: {
   open: boolean;
   userId: string | null;
@@ -345,14 +364,19 @@ export function EmployeeDocumentsDialog(props: {
                         </td>
                         <td className="py-2 pr-4 align-top">
                           {s?.file_url ? (
-                            <a
-                              href={s.file_url}
-                              target="_blank"
-                              rel="noreferrer"
-                              className="text-[var(--primary)] underline font-medium"
-                            >
-                              Open file
-                            </a>
+                            <div className="space-y-1">
+                              {fileUrlsFromSubmissionFileUrl(s.file_url).map((u, idx) => (
+                                <a
+                                  key={u + idx}
+                                  href={u}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="block text-[var(--primary)] underline font-medium"
+                                >
+                                  Open file{fileUrlsFromSubmissionFileUrl(s.file_url).length > 1 ? ` ${idx + 1}` : ""}
+                                </a>
+                              ))}
+                            </div>
                           ) : s?.signature_name ? (
                             <span className="text-gray-700">Signed as {s.signature_name}</span>
                           ) : (
@@ -363,17 +387,29 @@ export function EmployeeDocumentsDialog(props: {
                           {d.kind === "upload" ? (
                             <input
                               type="file"
+                              multiple={needsTwoSides(d.name)}
+                              accept="image/*,.pdf"
                               disabled={canBusy || !userId}
                               className="block w-[220px] text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 disabled:opacity-50"
                               onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file || !userId) return;
+                                const files = Array.from(e.target.files ?? []).filter(Boolean);
+                                if (!files.length || !userId) return;
                                 try {
                                   setBusyDocId(d.id);
-                                  const publicUrl = await uploadToStorage(d.name, "upload", file, file.name);
-                                  await submitEmployeeDocument({ userId, documentId: d.id, fileUrl: publicUrl });
+                                  const requireTwo = needsTwoSides(d.name);
+                                  const picked = requireTwo ? files.slice(0, 2) : files.slice(0, 1);
+                                  const urls: string[] = [];
+                                  for (const f of picked) {
+                                    const u = await uploadToStorage(d.name, "upload", f, f.name);
+                                    urls.push(u);
+                                  }
+                                  await submitEmployeeDocument({
+                                    userId,
+                                    documentId: d.id,
+                                    ...(urls.length > 1 ? { fileUrls: urls } : { fileUrl: urls[0] }),
+                                  });
                                   await refresh();
-                                  onToast("success", "Document uploaded.");
+                                  onToast("success", requireTwo ? "Documents uploaded." : "Document uploaded.");
                                 } catch (e2) {
                                   onToast("error", e2 instanceof Error ? e2.message : "Upload failed");
                                 } finally {

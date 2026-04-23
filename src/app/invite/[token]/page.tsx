@@ -434,17 +434,25 @@ function InvitePageInner() {
                         disabled={!!done}
                         existingUrl={s?.file_url ?? ""}
                         documentName={d.name}
-                        onUpload={async (file) => {
+                        onUpload={async (files) => {
                           if (!invite?.id) throw new Error("Invite not loaded");
-                          // Remove previous file from storage (if any), then upload and submit.
-                          const prevUrl = s?.file_url ?? "";
-                          const prevPath = extractStoragePathFromPublicUrl(prevUrl);
-                          if (prevPath) {
-                            await supabase.storage.from(bucket).remove([prevPath]);
-                          }
-                          const publicUrl = await uploadToStorage(d, file);
-                          await submitUpload(d.id, publicUrl);
-                          return publicUrl;
+                          const uploaded: string[] = [];
+                          for (const f of files) uploaded.push(await uploadToStorage(d, f));
+
+                          const res = await fetch(`/api/invites/${token}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              action: "submit_document",
+                              documentId: d.id,
+                              ...(uploaded.length > 1 ? { fileUrls: uploaded } : { fileUrl: uploaded[0] }),
+                            }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data?.error || "Failed to submit document");
+                          showToast("success", "Document submitted");
+                          await refresh();
+                          return uploaded;
                         }}
                       />
                     ) : (
@@ -848,28 +856,54 @@ function UploadBox({
   disabled: boolean;
   existingUrl: string;
   documentName: string;
-  onUpload: (file: File) => Promise<string>;
+  onUpload: (files: File[]) => Promise<string[]>;
 }) {
-  const [url, setUrl] = useState(existingUrl);
+  function safeParseUrls(raw: string): string[] {
+    const s = String(raw || "").trim();
+    if (!s) return [];
+    if (s.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(s);
+        return Array.isArray(parsed)
+          ? parsed.filter((x) => typeof x === "string" && x.trim()).map((x) => String(x).trim())
+          : [];
+      } catch {
+        return [s];
+      }
+    }
+    return [s];
+  }
+
+  function needsTwoSides(docName: string): boolean {
+    const n = String(docName || "").toLowerCase();
+    return n.includes("aadhaar") || n.includes("aadhar") || n.includes("pan");
+  }
+
+  const [urls, setUrls] = useState<string[]>(safeParseUrls(existingUrl));
   const [uploading, setUploading] = useState(false);
-  const isImage = /\.(png|jpe?g|gif|webp)$/i.test(url || "");
+  const isImage = (u: string) => /\.(png|jpe?g|gif|webp)$/i.test(u || "");
   return (
     <div className="mt-3 space-y-3">
       <div>
         <label className="mb-1 block text-sm font-medium text-slate-700">Upload file</label>
         <input
           type="file"
+          multiple={needsTwoSides(documentName)}
+          accept="image/*,.pdf"
           disabled={disabled || uploading}
           className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700"
           onChange={async (e) => {
-            const file = e.target.files?.[0];
-            if (!file) return;
+            const files = Array.from(e.target.files ?? []).filter(Boolean);
+            if (!files.length) return;
             setUploading(true);
             try {
-              const publicUrl = await onUpload(file);
-              setUrl(publicUrl);
+              const requireTwo = needsTwoSides(documentName);
+              const picked = requireTwo ? files.slice(0, 2) : files.slice(0, 1);
+              const next = await onUpload(picked);
+              setUrls(next);
             } finally {
               setUploading(false);
+              (e.target as HTMLInputElement).value = "";
             }
           }}
         />
@@ -877,18 +911,22 @@ function UploadBox({
 
       {uploading ? (
         <p className="text-sm text-slate-600">Uploading…</p>
-      ) : url ? (
+      ) : urls.length ? (
         <div className="rounded-xl border border-slate-200 p-3">
           <div className="text-sm font-medium text-slate-900">{documentName}</div>
-          <div className="mt-2">
-            {isImage ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img src={url} alt={documentName} className="max-h-64 w-auto rounded-lg border border-slate-200" />
-            ) : (
-              <a className="text-emerald-700 underline" href={url} target="_blank" rel="noreferrer">
-                View document
-              </a>
-            )}
+          <div className="mt-2 space-y-2">
+            {urls.map((u, idx) => (
+              <div key={u + idx}>
+                {isImage(u) ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={u} alt={documentName} className="max-h-64 w-auto rounded-lg border border-slate-200" />
+                ) : (
+                  <a className="text-emerald-700 underline" href={u} target="_blank" rel="noreferrer">
+                    View document{urls.length > 1 ? ` ${idx + 1}` : ""}
+                  </a>
+                )}
+              </div>
+            ))}
           </div>
         </div>
       ) : (

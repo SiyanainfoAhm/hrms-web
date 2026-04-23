@@ -100,6 +100,11 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
 
   const documentId = typeof body?.documentId === "string" ? body.documentId : "";
   const fileUrl = typeof body?.fileUrl === "string" ? body.fileUrl.trim() : "";
+  const fileUrlsRaw = Array.isArray(body?.fileUrls) ? body.fileUrls : null;
+  const fileUrls =
+    fileUrlsRaw && fileUrlsRaw.every((x: any) => typeof x === "string")
+      ? (fileUrlsRaw as string[]).map((s) => s.trim()).filter(Boolean)
+      : [];
   const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
   const statusOverride = typeof body?.status === "string" ? String(body.status) : "";
 
@@ -121,7 +126,9 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     (kind === "digital_signature" ? "signed" : "submitted");
 
   if (kind === "upload") {
-    if (!fileUrl) return NextResponse.json({ error: "fileUrl is required for upload documents" }, { status: 400 });
+    if (!fileUrl && fileUrls.length === 0) {
+      return NextResponse.json({ error: "fileUrl (or fileUrls) is required for upload documents" }, { status: 400 });
+    }
   } else {
     if (!signatureName) return NextResponse.json({ error: "signatureName is required" }, { status: 400 });
   }
@@ -135,7 +142,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
           user_id: id,
           document_id: documentId,
           status: nextStatus,
-          file_url: fileUrl || null,
+          file_url: fileUrls.length ? JSON.stringify(fileUrls) : (fileUrl || null),
           signature_name: signatureName || null,
           submitted_at: nowIso,
           signed_at: kind === "digital_signature" ? nowIso : null,

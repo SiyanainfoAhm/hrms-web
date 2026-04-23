@@ -69,6 +69,11 @@ export async function POST(request: NextRequest) {
 
   const documentId = typeof body?.documentId === "string" ? body.documentId : "";
   const fileUrl = typeof body?.fileUrl === "string" ? body.fileUrl.trim() : "";
+  const fileUrlsRaw = Array.isArray(body?.fileUrls) ? body.fileUrls : null;
+  const fileUrls =
+    fileUrlsRaw && fileUrlsRaw.every((x: any) => typeof x === "string")
+      ? (fileUrlsRaw as string[]).map((s) => s.trim()).filter(Boolean)
+      : [];
   const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
 
   if (!documentId) return NextResponse.json({ error: "documentId is required" }, { status: 400 });
@@ -84,7 +89,9 @@ export async function POST(request: NextRequest) {
 
   const nowIso = new Date().toISOString();
   if (String((doc as any).kind) === "upload") {
-    if (!fileUrl) return NextResponse.json({ error: "fileUrl is required for upload documents" }, { status: 400 });
+    if (!fileUrl && fileUrls.length === 0) {
+      return NextResponse.json({ error: "fileUrl (or fileUrls) is required for upload documents" }, { status: 400 });
+    }
     const { data, error } = await supabase
       .from("HRMS_employee_document_submissions")
       .upsert(
@@ -94,7 +101,7 @@ export async function POST(request: NextRequest) {
             user_id: session.id,
             document_id: documentId,
             status: "submitted",
-            file_url: fileUrl,
+            file_url: fileUrls.length ? JSON.stringify(fileUrls) : fileUrl,
             signature_name: null,
             submitted_at: nowIso,
             updated_at: nowIso,
