@@ -122,22 +122,6 @@ async function preboardingDocsCompleteByUserId(
   for (const id of userIds) result.set(id, false);
   if (!userIds.length) return result;
 
-  const { data: invites, error: invErr } = await supabaseClient
-    .from("HRMS_employee_invites")
-    .select("id, user_id, requested_document_ids, created_at")
-    .eq("company_id", companyId)
-    .in("user_id", userIds)
-    .order("created_at", { ascending: false });
-  if (invErr) return result;
-
-  const latestInviteByUser = new Map<string, { id: string; requested_document_ids: unknown }>();
-  for (const inv of invites ?? []) {
-    const uid = inv.user_id as string;
-    if (!latestInviteByUser.has(uid)) {
-      latestInviteByUser.set(uid, { id: inv.id as string, requested_document_ids: inv.requested_document_ids });
-    }
-  }
-
   const { data: subs, error: subsErr } = await supabaseClient
     .from("HRMS_employee_document_submissions")
     .select("user_id, document_id, status, file_url, signature_name")
@@ -167,19 +151,13 @@ async function preboardingDocsCompleteByUserId(
   }
 
   for (const uid of userIds) {
-    const inv = latestInviteByUser.get(uid) ?? null;
-
-    const requestedIds = inv && Array.isArray(inv.requested_document_ids)
-      ? (inv.requested_document_ids as unknown[]).filter((x): x is string => typeof x === "string")
-      : null;
-
-    let docScope = (allDocs ?? []) as { id: string; is_mandatory: boolean }[];
-    if (requestedIds?.length) {
-      const allow = new Set(requestedIds);
-      docScope = docScope.filter((d) => allow.has(d.id));
-    }
-
-    const mandatoryIds = docScope.filter((d) => d.is_mandatory).map((d) => d.id);
+    // Always evaluate completion against *all* mandatory company documents.
+    // Invites can request a subset, but the directory/dialog shows the full set,
+    // so the "documents complete" indicator must not turn green while any
+    // mandatory document is still pending.
+    const mandatoryIds = ((allDocs ?? []) as { id: string; is_mandatory: boolean }[])
+      .filter((d) => d.is_mandatory)
+      .map((d) => d.id);
     if (mandatoryIds.length === 0) {
       result.set(uid, true);
       continue;
