@@ -105,6 +105,7 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     fileUrlsRaw && fileUrlsRaw.every((x: any) => typeof x === "string")
       ? (fileUrlsRaw as string[]).map((s) => s.trim()).filter(Boolean)
       : [];
+  const clear = body?.clear === true;
   const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
   const statusOverride = typeof body?.status === "string" ? String(body.status) : "";
 
@@ -126,8 +127,19 @@ export async function POST(request: NextRequest, ctx: { params: Promise<{ id: st
     (kind === "digital_signature" ? "signed" : "submitted");
 
   if (kind === "upload") {
-    if (!fileUrl && fileUrls.length === 0) {
+    if (!clear && !fileUrl && fileUrls.length === 0) {
       return NextResponse.json({ error: "fileUrl (or fileUrls) is required for upload documents" }, { status: 400 });
+    }
+    if (clear) {
+      // Do not keep blank/pending rows; remove the submission record entirely.
+      const { error: delErr } = await supabase
+        .from("HRMS_employee_document_submissions")
+        .delete()
+        .eq("company_id", companyId)
+        .eq("user_id", id)
+        .eq("document_id", documentId);
+      if (delErr) return NextResponse.json({ error: delErr.message }, { status: 400 });
+      return NextResponse.json({ ok: true });
     }
   } else {
     if (!signatureName) return NextResponse.json({ error: "signatureName is required" }, { status: 400 });

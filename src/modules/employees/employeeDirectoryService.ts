@@ -65,6 +65,7 @@ export async function submitEmployeeDocument(args: {
   documentId: string;
   fileUrl?: string;
   fileUrls?: string[];
+  clear?: boolean;
   signatureName?: string;
 }): Promise<{ submission: unknown }> {
   return hrmsJson(`/api/employees/${encodeURIComponent(args.userId)}/documents`, {
@@ -74,6 +75,7 @@ export async function submitEmployeeDocument(args: {
       documentId: args.documentId,
       fileUrl: args.fileUrl,
       fileUrls: args.fileUrls,
+      clear: args.clear,
       signatureName: args.signatureName,
     },
   });

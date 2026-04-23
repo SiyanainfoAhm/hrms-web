@@ -177,7 +177,9 @@ export function ProfileContent() {
     const category = kind === "digital_signature" ? "esign" : "upload";
     const docFolder = sanitizeSegment(docName) || "Document";
     const safeFile = sanitizeSegment(fileNameHint) || "file";
-    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${Date.now()}_${safeFile}`;
+    const uniq =
+      typeof crypto !== "undefined" && "randomUUID" in crypto ? (crypto as any).randomUUID() : `${Date.now()}_${Math.random()}`;
+    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${uniq}_${safeFile}`;
     const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
     if (upErr) throw new Error(upErr.message);
     const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -214,6 +216,18 @@ export function ProfileContent() {
   function needsTwoSides(docName: string): boolean {
     const n = String(docName || "").toLowerCase();
     return n.includes("aadhaar") || n.includes("aadhar") || n.includes("pan");
+  }
+
+  function extractStoragePathFromPublicUrl(publicUrl: string): string | null {
+    const s = String(publicUrl || "");
+    if (!s) return null;
+    const marker = `/object/public/${bucket}/`;
+    const idx = s.indexOf(marker);
+    if (idx !== -1) return s.slice(idx + marker.length);
+    const alt = `/${bucket}/`;
+    const idx2 = s.indexOf(alt);
+    if (idx2 !== -1) return s.slice(idx2 + alt.length);
+    return null;
   }
 
   const myDocById = useMemo(() => {
@@ -1470,16 +1484,54 @@ export function ProfileContent() {
                       <td className="py-2 pr-4 align-top">
                         {row.file_url ? (
                           <div className="space-y-1">
-                            {fileUrlsFromFileUrl(row.file_url).map((u, idx) => (
-                              <a
-                                key={u + idx}
-                                href={u}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="block text-emerald-700 underline"
-                              >
-                                Open file{fileUrlsFromFileUrl(row.file_url).length > 1 ? ` ${idx + 1}` : ""}
-                              </a>
+                            {fileUrlsFromFileUrl(row.file_url).map((u, idx, arr) => (
+                              <div key={u + idx} className="flex items-center gap-2">
+                                <a href={u} target="_blank" rel="noreferrer" className="text-emerald-700 underline">
+                                  Open file{arr.length > 1 ? ` ${idx + 1}` : ""}
+                                </a>
+                                <button
+                                  type="button"
+                                  disabled={docBusyId === row.document_id}
+                                  className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                                  onClick={async () => {
+                                    const current = fileUrlsFromFileUrl(row.file_url);
+                                    const remaining = current.filter((_, i) => i !== idx);
+                                    try {
+                                      setDocBusyId(row.document_id);
+                                      const p = extractStoragePathFromPublicUrl(u);
+                                      if (p) {
+                                        try {
+                                          await supabase.storage.from(bucket).remove([p]);
+                                        } catch {
+                                          // ignore
+                                        }
+                                      }
+                                      const res = await fetch("/api/me/documents", {
+                                        method: "POST",
+                                        headers: { "Content-Type": "application/json" },
+                                        body: JSON.stringify({
+                                          action: "submit_document",
+                                          documentId: row.document_id,
+                                          ...(remaining.length
+                                            ? remaining.length > 1
+                                              ? { fileUrls: remaining }
+                                              : { fileUrl: remaining[0] }
+                                            : { clear: true }),
+                                        }),
+                                      });
+                                      const data = await res.json();
+                                      if (!res.ok) throw new Error(data?.error || "Failed to update document");
+                                      await refreshMyDocuments();
+                                    } catch (err: any) {
+                                      setDocsError(err?.message || "Failed to remove file");
+                                    } finally {
+                                      setDocBusyId(null);
+                                    }
+                                  }}
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             ))}
                           </div>
                         ) : row.signature_name ? (
@@ -1492,7 +1544,7 @@ export function ProfileContent() {
                         {row.kind === "upload" ? (
                           <input
                             type="file"
-                            multiple={needsTwoSides(row.document_name)}
+                            multiple
                             accept="image/*,.pdf"
                             disabled={docBusyId === row.document_id}
                             className="block w-[220px] text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 disabled:opacity-50"
@@ -1501,10 +1553,22 @@ export function ProfileContent() {
                               if (!files.length) return;
                               try {
                                 setDocBusyId(row.document_id);
-                                const requireTwo = needsTwoSides(row.document_name);
-                                const picked = requireTwo ? files.slice(0, 2) : files.slice(0, 1);
+                                const picked = files.slice(0, 3);
                                 const urls: string[] = [];
                                 for (const f of picked) urls.push(await uploadToStorage(row.document_name, "upload", f, f.name));
+                                // Best-effort remove previous files that aren't in the new set.
+                                const prev = row.file_url ? fileUrlsFromFileUrl(row.file_url) : [];
+                                const toDelete = prev
+                                  .filter((pu) => !urls.includes(pu))
+                                  .map((pu) => extractStoragePathFromPublicUrl(pu))
+                                  .filter((p): p is string => Boolean(p));
+                                if (toDelete.length) {
+                                  try {
+                                    await supabase.storage.from(bucket).remove(toDelete);
+                                  } catch {
+                                    // ignore
+                                  }
+                                }
                                 const res = await fetch("/api/me/documents", {
                                   method: "POST",
                                   headers: { "Content-Type": "application/json" },

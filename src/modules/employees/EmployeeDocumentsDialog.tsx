@@ -43,6 +43,18 @@ function needsTwoSides(docName: string): boolean {
   return n.includes("aadhaar") || n.includes("aadhar") || n.includes("pan");
 }
 
+function extractStoragePathFromPublicUrl(bucket: string, publicUrl: string): string | null {
+  const s = String(publicUrl || "");
+  if (!s) return null;
+  const marker = `/object/public/${bucket}/`;
+  const idx = s.indexOf(marker);
+  if (idx !== -1) return s.slice(idx + marker.length);
+  const alt = `/${bucket}/`;
+  const idx2 = s.indexOf(alt);
+  if (idx2 !== -1) return s.slice(idx2 + alt.length);
+  return null;
+}
+
 export function EmployeeDocumentsDialog(props: {
   open: boolean;
   userId: string | null;
@@ -84,7 +96,9 @@ export function EmployeeDocumentsDialog(props: {
     const category = kind === "digital_signature" ? "esign" : "upload";
     const docFolder = sanitizeSegment(docName) || "Document";
     const safeFile = sanitizeSegment(fileNameHint) || "file";
-    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${Date.now()}_${safeFile}`;
+    const uniq =
+      typeof crypto !== "undefined" && "randomUUID" in crypto ? (crypto as any).randomUUID() : `${Date.now()}_${Math.random()}`;
+    const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${uniq}_${safeFile}`;
     const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
     if (upErr) throw new Error(upErr.message);
     const { data } = supabase.storage.from(bucket).getPublicUrl(path);
@@ -365,16 +379,56 @@ export function EmployeeDocumentsDialog(props: {
                         <td className="py-2 pr-4 align-top">
                           {s?.file_url ? (
                             <div className="space-y-1">
-                              {fileUrlsFromSubmissionFileUrl(s.file_url).map((u, idx) => (
-                                <a
-                                  key={u + idx}
-                                  href={u}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="block text-[var(--primary)] underline font-medium"
-                                >
-                                  Open file{fileUrlsFromSubmissionFileUrl(s.file_url).length > 1 ? ` ${idx + 1}` : ""}
-                                </a>
+                              {fileUrlsFromSubmissionFileUrl(s.file_url).map((u, idx, arr) => (
+                                <div key={u + idx} className="flex items-center gap-2">
+                                  <a
+                                    href={u}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-[var(--primary)] underline font-medium"
+                                  >
+                                    Open file{arr.length > 1 ? ` ${idx + 1}` : ""}
+                                  </a>
+                                  <button
+                                    type="button"
+                                    disabled={canBusy || !userId}
+                                    className="text-xs text-red-600 hover:underline disabled:opacity-50"
+                                    onClick={async () => {
+                                      if (!userId || !s) return;
+                                      const current = fileUrlsFromSubmissionFileUrl(s.file_url);
+                                      const remaining = current.filter((_, i) => i !== idx);
+                                      try {
+                                        setBusyDocId(d.id);
+                                        // Best-effort remove the file from storage.
+                                        const p = extractStoragePathFromPublicUrl(bucket, u);
+                                        if (p) {
+                                          try {
+                                            await supabase.storage.from(bucket).remove([p]);
+                                          } catch {
+                                            // ignore
+                                          }
+                                        }
+                                        await submitEmployeeDocument({
+                                          userId,
+                                          documentId: d.id,
+                                          ...(remaining.length
+                                            ? remaining.length > 1
+                                              ? { fileUrls: remaining }
+                                              : { fileUrl: remaining[0] }
+                                            : { clear: true }),
+                                        });
+                                        await refresh();
+                                        onToast("success", remaining.length ? "File removed." : "Document cleared.");
+                                      } catch (e2) {
+                                        onToast("error", e2 instanceof Error ? e2.message : "Failed to remove file");
+                                      } finally {
+                                        setBusyDocId(null);
+                                      }
+                                    }}
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
                               ))}
                             </div>
                           ) : s?.signature_name ? (
@@ -387,7 +441,7 @@ export function EmployeeDocumentsDialog(props: {
                           {d.kind === "upload" ? (
                             <input
                               type="file"
-                              multiple={needsTwoSides(d.name)}
+                              multiple
                               accept="image/*,.pdf"
                               disabled={canBusy || !userId}
                               className="block w-[220px] text-sm text-gray-700 file:mr-3 file:rounded-lg file:border-0 file:bg-gray-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-gray-700 disabled:opacity-50"
@@ -396,12 +450,24 @@ export function EmployeeDocumentsDialog(props: {
                                 if (!files.length || !userId) return;
                                 try {
                                   setBusyDocId(d.id);
-                                  const requireTwo = needsTwoSides(d.name);
-                                  const picked = requireTwo ? files.slice(0, 2) : files.slice(0, 1);
+                                  const picked = files.slice(0, 3);
                                   const urls: string[] = [];
                                   for (const f of picked) {
                                     const u = await uploadToStorage(d.name, "upload", f, f.name);
                                     urls.push(u);
+                                  }
+                                  // Best-effort remove previously stored files that aren't in the new set.
+                                  const prev = s?.file_url ? fileUrlsFromSubmissionFileUrl(s.file_url) : [];
+                                  const toDelete = prev
+                                    .filter((pu) => !urls.includes(pu))
+                                    .map((pu) => extractStoragePathFromPublicUrl(bucket, pu))
+                                    .filter((p): p is string => Boolean(p));
+                                  if (toDelete.length) {
+                                    try {
+                                      await supabase.storage.from(bucket).remove(toDelete);
+                                    } catch {
+                                      // ignore
+                                    }
                                   }
                                   await submitEmployeeDocument({
                                     userId,
@@ -409,7 +475,7 @@ export function EmployeeDocumentsDialog(props: {
                                     ...(urls.length > 1 ? { fileUrls: urls } : { fileUrl: urls[0] }),
                                   });
                                   await refresh();
-                                  onToast("success", requireTwo ? "Documents uploaded." : "Document uploaded.");
+                                  onToast("success", "Document updated.");
                                 } catch (e2) {
                                   onToast("error", e2 instanceof Error ? e2.message : "Upload failed");
                                 } finally {

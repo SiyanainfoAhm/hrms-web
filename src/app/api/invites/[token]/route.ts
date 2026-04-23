@@ -133,6 +133,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       fileUrlsRaw && fileUrlsRaw.every((x: any) => typeof x === "string")
         ? (fileUrlsRaw as string[]).map((s) => s.trim()).filter(Boolean)
         : [];
+    const clear = body?.clear === true;
     const signatureName = typeof body?.signatureName === "string" ? body.signatureName.trim() : "";
 
     if (!documentId) return NextResponse.json({ error: "documentId is required" }, { status: 400 });
@@ -148,7 +149,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!doc) return NextResponse.json({ error: "Invalid document" }, { status: 400 });
 
     if (doc.kind === "upload") {
-      if (!fileUrl && fileUrls.length === 0) {
+      if (!clear && !fileUrl && fileUrls.length === 0) {
         return NextResponse.json({ error: "fileUrl (or fileUrls) is required for upload documents" }, { status: 400 });
       }
 
@@ -180,6 +181,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         // ignore cleanup errors (policy/service key may be missing)
       }
 
+      if (clear) {
+        // Do not keep blank/pending rows; remove the submission record entirely.
+        const { error: delErr } = await supabase
+          .from("HRMS_employee_document_submissions")
+          .delete()
+          .eq("company_id", invite.company_id)
+          .eq("user_id", invite.user_id)
+          .eq("document_id", documentId);
+        if (delErr) return NextResponse.json({ error: delErr.message }, { status: 400 });
+        return NextResponse.json({ ok: true });
+      }
+
+      const nowIso = new Date().toISOString();
       const { data, error: upErr } = await supabase
         .from("HRMS_employee_document_submissions")
         .upsert(
@@ -191,8 +205,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
               document_id: documentId,
               status: "submitted",
               file_url: fileUrls.length ? JSON.stringify(fileUrls) : fileUrl,
-              submitted_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
+              submitted_at: nowIso,
+              updated_at: nowIso,
             },
           ],
           // One submission per employee per document, even across re-invites.

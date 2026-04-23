@@ -235,7 +235,7 @@ function InvitePageInner() {
     return null;
   }
 
-  async function uploadToStorage(document: Doc, file: File): Promise<string> {
+  async function uploadToStorage(document: Doc, file: File, opts?: { sideIndex?: number }): Promise<string> {
     const userId = String(invite?.user_id || "unknown");
     const employeeName = sanitizeSegment(name) || "Employee";
     const employeeFolder = `${employeeName}${userId}`;
@@ -243,8 +243,9 @@ function InvitePageInner() {
     const docFolder = sanitizeSegment(document.name) || "Document";
     const ext = (file.name.split(".").pop() || "").slice(0, 10);
     const safeBase = docFolder;
-    const finalFileName = ext ? `${safeBase}.${ext}` : safeBase;
-    // Deterministic path so re-uploads overwrite the previous file for this doc.
+    const side = typeof opts?.sideIndex === "number" && opts.sideIndex >= 0 ? `_SIDE_${opts.sideIndex + 1}` : "";
+    const finalFileName = ext ? `${safeBase}${side}.${ext}` : `${safeBase}${side}`;
+    // Deterministic per-side path so re-uploads overwrite only that side.
     const path = `HRMS/${employeeFolder}/${category}/${docFolder}/${finalFileName}`;
     const { error: upErr } = await supabase.storage.from(bucket).upload(path, file, { upsert: true });
     if (upErr) throw new Error(upErr.message);
@@ -437,7 +438,9 @@ function InvitePageInner() {
                         onUpload={async (files) => {
                           if (!invite?.id) throw new Error("Invite not loaded");
                           const uploaded: string[] = [];
-                          for (const f of files) uploaded.push(await uploadToStorage(d, f));
+                          for (let i = 0; i < files.length; i++) {
+                            uploaded.push(await uploadToStorage(d, files[i], { sideIndex: i }));
+                          }
 
                           const res = await fetch(`/api/invites/${token}`, {
                             method: "POST",
@@ -453,6 +456,27 @@ function InvitePageInner() {
                           showToast("success", "Document submitted");
                           await refresh();
                           return uploaded;
+                        }}
+                        onRemoveAt={async (idx, currentUrls) => {
+                          const remaining = currentUrls.filter((_, i) => i !== idx);
+                          const res = await fetch(`/api/invites/${token}`, {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                              action: "submit_document",
+                              documentId: d.id,
+                              ...(remaining.length
+                                ? remaining.length > 1
+                                  ? { fileUrls: remaining }
+                                  : { fileUrl: remaining[0] }
+                                : { clear: true }),
+                            }),
+                          });
+                          const data = await res.json();
+                          if (!res.ok) throw new Error(data?.error || "Failed to update document");
+                          showToast("success", remaining.length ? "File removed." : "Document cleared.");
+                          await refresh();
+                          return remaining;
                         }}
                       />
                     ) : (
@@ -852,11 +876,13 @@ function UploadBox({
   existingUrl,
   documentName,
   onUpload,
+  onRemoveAt,
 }: {
   disabled: boolean;
   existingUrl: string;
   documentName: string;
   onUpload: (files: File[]) => Promise<string[]>;
+  onRemoveAt: (idx: number, currentUrls: string[]) => Promise<string[]>;
 }) {
   function safeParseUrls(raw: string): string[] {
     const s = String(raw || "").trim();
@@ -888,7 +914,7 @@ function UploadBox({
         <label className="mb-1 block text-sm font-medium text-slate-700">Upload file</label>
         <input
           type="file"
-          multiple={needsTwoSides(documentName)}
+          multiple
           accept="image/*,.pdf"
           disabled={disabled || uploading}
           className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-slate-700"
@@ -897,8 +923,7 @@ function UploadBox({
             if (!files.length) return;
             setUploading(true);
             try {
-              const requireTwo = needsTwoSides(documentName);
-              const picked = requireTwo ? files.slice(0, 2) : files.slice(0, 1);
+              const picked = files.slice(0, 3);
               const next = await onUpload(picked);
               setUrls(next);
             } finally {
@@ -916,14 +941,32 @@ function UploadBox({
           <div className="text-sm font-medium text-slate-900">{documentName}</div>
           <div className="mt-2 space-y-2">
             {urls.map((u, idx) => (
-              <div key={u + idx}>
-                {isImage(u) ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={u} alt={documentName} className="max-h-64 w-auto rounded-lg border border-slate-200" />
-                ) : (
+              <div key={u + idx} className="space-y-1">
+                <div className="flex items-center gap-2">
                   <a className="text-emerald-700 underline" href={u} target="_blank" rel="noreferrer">
                     View document{urls.length > 1 ? ` ${idx + 1}` : ""}
                   </a>
+                  {!disabled && (
+                    <button
+                      type="button"
+                      className="text-xs text-red-600 hover:underline"
+                      onClick={async () => {
+                        setUploading(true);
+                        try {
+                          const next = await onRemoveAt(idx, urls);
+                          setUrls(next);
+                        } finally {
+                          setUploading(false);
+                        }
+                      }}
+                    >
+                      Remove
+                    </button>
+                  )}
+                </div>
+                {isImage(u) && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={u} alt={documentName} className="max-h-64 w-auto rounded-lg border border-slate-200" />
                 )}
               </div>
             ))}
