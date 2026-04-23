@@ -151,6 +151,9 @@ export function ProfileContent() {
   const [myDocuments, setMyDocuments] = useState<MyDocRow[]>([]);
   const [docsLoading, setDocsLoading] = useState(false);
   const [docsError, setDocsError] = useState<string | null>(null);
+  const [companyDocs, setCompanyDocs] = useState<{ id: string; name: string; kind: string; is_mandatory: boolean }[]>(
+    [],
+  );
   const [meId, setMeId] = useState<string>("");
   const [docBusyId, setDocBusyId] = useState<string | null>(null);
 
@@ -183,11 +186,76 @@ export function ProfileContent() {
   }
 
   async function refreshMyDocuments() {
-    const res = await fetch("/api/me/documents");
-    const data = await res.json();
-    if (!res.ok) throw new Error(data?.error || "Failed to load documents");
-    setMyDocuments(data.items ?? []);
+    const [mineRes, companyRes] = await Promise.all([fetch("/api/me/documents"), fetch("/api/company/documents")]);
+    const mine = await mineRes.json().catch(() => ({}));
+    const company = await companyRes.json().catch(() => ({}));
+    if (!mineRes.ok) throw new Error(mine?.error || "Failed to load documents");
+    if (!companyRes.ok) throw new Error(company?.error || "Failed to load company documents");
+    setMyDocuments(mine.items ?? []);
+    setCompanyDocs(company.documents ?? []);
   }
+
+  function fileUrlsFromFileUrl(raw: string | null | undefined): string[] {
+    const s = String(raw || "").trim();
+    if (!s) return [];
+    if (s.startsWith("[")) {
+      try {
+        const parsed = JSON.parse(s);
+        return Array.isArray(parsed)
+          ? parsed.filter((x) => typeof x === "string" && x.trim()).map((x) => String(x).trim())
+          : [];
+      } catch {
+        return [s];
+      }
+    }
+    return [s];
+  }
+
+  function needsTwoSides(docName: string): boolean {
+    const n = String(docName || "").toLowerCase();
+    return n.includes("aadhaar") || n.includes("aadhar") || n.includes("pan");
+  }
+
+  const myDocById = useMemo(() => {
+    const m = new Map<string, MyDocRow>();
+    for (const r of myDocuments) m.set(String(r.document_id), r);
+    return m;
+  }, [myDocuments]);
+
+  const mergedDocs = useMemo(() => {
+    const mandatory = (companyDocs ?? []).filter((d) => d.is_mandatory);
+    const out: any[] = [];
+    const seen = new Set<string>();
+
+    for (const d of mandatory) {
+      const sub = myDocById.get(d.id);
+      if (sub) out.push({ ...sub, is_mandatory: true, pending: false });
+      else {
+        out.push({
+          submission_id: `pending_${d.id}`,
+          document_id: d.id,
+          document_name: d.name,
+          kind: d.kind,
+          status: "pending",
+          file_url: null,
+          signature_name: null,
+          signed_at: null,
+          submitted_at: null,
+          review_note: null,
+          is_mandatory: true,
+          pending: true,
+        });
+      }
+      seen.add(d.id);
+    }
+
+    for (const r of myDocuments) {
+      if (seen.has(String(r.document_id))) continue;
+      out.push({ ...(r as any), pending: false });
+    }
+
+    return out;
+  }, [companyDocs, myDocById, myDocuments]);
 
   async function handleDownloadPdf(userName?: string, month?: string, year?: string) {
     const el = payslipRef.current;
@@ -1378,10 +1446,8 @@ export function ProfileContent() {
           </div>
           {docsLoading && <p className="muted">Loading…</p>}
           {docsError && <p className="text-sm text-red-600">{docsError}</p>}
-          {!docsLoading && !docsError && myDocuments.length === 0 && (
-            <p className="muted">No documents on file yet.</p>
-          )}
-          {!docsLoading && myDocuments.length > 0 && (
+          {!docsLoading && !docsError && mergedDocs.length === 0 && <p className="muted">No documents configured.</p>}
+          {!docsLoading && mergedDocs.length > 0 && (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
@@ -1394,7 +1460,7 @@ export function ProfileContent() {
                   </tr>
                 </thead>
                 <tbody>
-                  {myDocuments.map((row) => (
+                  {mergedDocs.map((row: any) => (
                     <tr key={row.submission_id} className="border-b border-slate-100">
                       <td className="py-2 pr-4 align-top">{row.document_name}</td>
                       <td className="py-2 pr-4 align-top">
@@ -1403,9 +1469,19 @@ export function ProfileContent() {
                       <td className="py-2 pr-4 align-top">{row.status}</td>
                       <td className="py-2 pr-4 align-top">
                         {row.file_url ? (
-                          <a href={row.file_url} target="_blank" rel="noreferrer" className="text-emerald-700 underline">
-                            Open file
-                          </a>
+                          <div className="space-y-1">
+                            {fileUrlsFromFileUrl(row.file_url).map((u, idx) => (
+                              <a
+                                key={u + idx}
+                                href={u}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="block text-emerald-700 underline"
+                              >
+                                Open file{fileUrlsFromFileUrl(row.file_url).length > 1 ? ` ${idx + 1}` : ""}
+                              </a>
+                            ))}
+                          </div>
                         ) : row.signature_name ? (
                           <span className="text-slate-600">Signed as {row.signature_name}</span>
                         ) : (
@@ -1416,18 +1492,27 @@ export function ProfileContent() {
                         {row.kind === "upload" ? (
                           <input
                             type="file"
+                            multiple={needsTwoSides(row.document_name)}
+                            accept="image/*,.pdf"
                             disabled={docBusyId === row.document_id}
                             className="block w-[220px] text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-slate-100 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-slate-700 disabled:opacity-50"
                             onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
+                              const files = Array.from(e.target.files ?? []).filter(Boolean);
+                              if (!files.length) return;
                               try {
                                 setDocBusyId(row.document_id);
-                                const publicUrl = await uploadToStorage(row.document_name, "upload", file, file.name);
+                                const requireTwo = needsTwoSides(row.document_name);
+                                const picked = requireTwo ? files.slice(0, 2) : files.slice(0, 1);
+                                const urls: string[] = [];
+                                for (const f of picked) urls.push(await uploadToStorage(row.document_name, "upload", f, f.name));
                                 const res = await fetch("/api/me/documents", {
                                   method: "POST",
                                   headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({ action: "submit_document", documentId: row.document_id, fileUrl: publicUrl }),
+                                  body: JSON.stringify({
+                                    action: "submit_document",
+                                    documentId: row.document_id,
+                                    ...(urls.length > 1 ? { fileUrls: urls } : { fileUrl: urls[0] }),
+                                  }),
                                 });
                                 const data = await res.json();
                                 if (!res.ok) throw new Error(data?.error || "Failed to submit document");
