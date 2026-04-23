@@ -295,6 +295,10 @@ export function EmployeeDirectoryPage() {
         label: "Documents",
         icon: <Eye className="w-4 h-4" />,
         visible: { anyPermission: ["employees.write"] },
+        classNameForRow: (r) => {
+          // If the employee has completed all requested/mandatory docs, fill the icon button green.
+          return r.preboardingDocsComplete ? "bg-green-600 border-green-600 text-white hover:bg-green-700" : undefined;
+        },
         onClick: (r) => {
           setEmpDocsUserId(r.id);
           setEmpDocsOpen(true);

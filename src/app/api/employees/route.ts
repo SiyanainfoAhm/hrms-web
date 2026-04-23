@@ -140,7 +140,7 @@ async function preboardingDocsCompleteByUserId(
 
   const { data: subs, error: subsErr } = await supabaseClient
     .from("HRMS_employee_document_submissions")
-    .select("user_id, document_id, status")
+    .select("user_id, document_id, status, file_url, signature_name")
     .eq("company_id", companyId)
     .in("user_id", userIds);
   if (subsErr) return result;
@@ -151,11 +151,19 @@ async function preboardingDocsCompleteByUserId(
     .eq("company_id", companyId);
   if (docErr) return result;
 
-  const subsByUser = new Map<string, { document_id: string; status: string }[]>();
+  const subsByUser = new Map<
+    string,
+    { document_id: string; status: string; file_url: string | null; signature_name: string | null }[]
+  >();
   for (const s of subs ?? []) {
     const uid = s.user_id as string;
     if (!subsByUser.has(uid)) subsByUser.set(uid, []);
-    subsByUser.get(uid)!.push({ document_id: s.document_id as string, status: String(s.status) });
+    subsByUser.get(uid)!.push({
+      document_id: s.document_id as string,
+      status: String(s.status),
+      file_url: (s as any).file_url ? String((s as any).file_url) : null,
+      signature_name: (s as any).signature_name ? String((s as any).signature_name) : null,
+    });
   }
 
   for (const uid of userIds) {
@@ -178,8 +186,19 @@ async function preboardingDocsCompleteByUserId(
     }
 
     const userSubs = subsByUser.get(uid) ?? [];
+    // Count a doc as "done" when the employee has actually provided it:
+    // - upload doc: file_url exists
+    // - e-sign doc: signature_name exists
+    // - OR status is already in a done state
+    // Rejected never counts as done even if a previous file exists.
     const done = new Set(
-      userSubs.filter((s) => PREBOARDING_DOC_DONE.has(s.status)).map((s) => s.document_id),
+      userSubs
+        .filter((s) => {
+          const st = String(s.status || "").toLowerCase();
+          if (st === "rejected") return false;
+          return Boolean(s.file_url) || Boolean(s.signature_name) || PREBOARDING_DOC_DONE.has(st);
+        })
+        .map((s) => s.document_id),
     );
     result.set(uid, mandatoryIds.every((mid) => done.has(mid)));
   }
@@ -391,7 +410,7 @@ export async function GET(request: NextRequest) {
     const lookups = { designationById, departmentById, divisionById, shiftById };
 
     let preboardingComplete: Map<string, boolean> | null = null;
-    if (employmentStatusParam === "preboarding" && rows.length) {
+    if ((employmentStatusParam === "preboarding" || employmentStatusParam === "current") && rows.length) {
       preboardingComplete = await preboardingDocsCompleteByUserId(
         companyId,
         rows.map((r: any) => r.id as string),
@@ -437,7 +456,23 @@ export async function GET(request: NextRequest) {
   const shiftById = new Map((shiftsRes.data ?? []).map((d: any) => [d.id, { name: d.name }]));
   const lookups = { designationById, departmentById, divisionById, shiftById };
 
-  return NextResponse.json({ employees: rows.map((r: any) => mapRow(r, lookups)) });
+  // When not paginated, still attach document completion so callers can
+  // highlight "documents" actions consistently (e.g. current tab).
+  let preboardingComplete: Map<string, boolean> | null = null;
+  if (rows.length) {
+    preboardingComplete = await preboardingDocsCompleteByUserId(
+      companyId,
+      rows.map((r: any) => r.id as string),
+      supabase,
+    );
+  }
+
+  return NextResponse.json({
+    employees: rows.map((r: any) => {
+      const base = mapRow(r, lookups);
+      return preboardingComplete ? { ...base, preboardingDocsComplete: preboardingComplete.get(r.id) ?? false } : base;
+    }),
+  });
 }
 
 export async function POST(request: NextRequest) {
