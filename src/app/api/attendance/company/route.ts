@@ -55,6 +55,15 @@ export async function GET(request: NextRequest) {
   let filterEmployeeId: string | null = null;
   if (userIdFilter) {
     filterEmployeeId = await attendanceEmployeeIdForUser(supabase, me.company_id, userIdFilter);
+    if (!filterEmployeeId) {
+      return NextResponse.json({
+        startDate,
+        endDate,
+        workDate,
+        rows: [],
+        error: "Selected user is not linked to an employee profile (HRMS_employees).",
+      });
+    }
   }
 
   let logQuery = supabase

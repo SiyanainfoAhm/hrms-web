@@ -2,13 +2,14 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 /**
  * Attendance rows use `HRMS_attendance_logs.employee_id`.
- * Prefer `HRMS_employees.id` when a mirror row exists; otherwise use the user's id (HRMS_users.id).
+ * With the `HRMS_attendance_logs_employee_id_fkey` constraint enforced, this must always be
+ * a valid `HRMS_employees.id`. If the employee mirror row doesn't exist, attendance cannot be marked.
  */
 export async function attendanceEmployeeIdForUser(
   supabase: SupabaseClient,
   companyId: string,
   userId: string,
-): Promise<string> {
+): Promise<string | null> {
   const { data: emp } = await supabase
     .from("HRMS_employees")
     .select("id")
@@ -16,7 +17,7 @@ export async function attendanceEmployeeIdForUser(
     .eq("user_id", userId)
     .maybeSingle();
   if (emp?.id) return String(emp.id);
-  return userId;
+  return null;
 }
 
 export async function canUserMarkAttendance(
@@ -31,5 +32,6 @@ export async function canUserMarkAttendance(
   if (error || !u?.company_id) return { ok: false };
   if (String(u.employment_status ?? "") !== "current") return { ok: false };
   const attendanceEmployeeId = await attendanceEmployeeIdForUser(supabase, u.company_id, userId);
+  if (!attendanceEmployeeId) return { ok: false };
   return { ok: true, companyId: u.company_id, attendanceEmployeeId };
 }
