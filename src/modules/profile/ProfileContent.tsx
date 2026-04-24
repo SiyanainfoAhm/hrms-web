@@ -559,10 +559,18 @@ export function ProfileContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to change password");
+      // Ensure the browser has the updated session cookie before the user continues.
+      // This prevents immediate follow-up actions from hitting a stale session version.
+      try {
+        await fetch("/api/auth/session");
+      } catch {
+        // best-effort
+      }
       setPasswordSuccess("Password updated");
       setCurrentPassword("");
       setNewPassword("");
       setConfirmPassword("");
+      router.refresh();
     } catch (e: unknown) {
       setPasswordError(e instanceof Error ? e.message : "Failed to change password");
     } finally {
