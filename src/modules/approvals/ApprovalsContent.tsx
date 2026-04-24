@@ -838,7 +838,7 @@ export function ApprovalsContent() {
             <p className="muted">
               {canApprove
                 ? "Add leave directly. Super Admin/Admin/HR entries are auto-approved."
-                : "Submit a leave request. Super Admin/Admin/HR can approve/reject."}
+                : "Submit a leave request. Admin/HR can approve/reject."}
             </p>
 
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
