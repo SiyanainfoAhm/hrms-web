@@ -1,23 +1,18 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 
 /**
  * Attendance rows use `HRMS_attendance_logs.employee_id`.
  * With the `HRMS_attendance_logs_employee_id_fkey` constraint enforced, this must always be
- * a valid `HRMS_employees.id`. If the employee mirror row doesn't exist, attendance cannot be marked.
+ * a valid `HRMS_employees.id`.
  */
 export async function attendanceEmployeeIdForUser(
   supabase: SupabaseClient,
   companyId: string,
   userId: string,
 ): Promise<string | null> {
-  const { data: emp } = await supabase
-    .from("HRMS_employees")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("user_id", userId)
-    .maybeSingle();
-  if (emp?.id) return String(emp.id);
-  return null;
+  const ensured = await ensureEmployeeMirrorForUser(supabase, companyId, userId);
+  return ensured.ok ? ensured.row.id : null;
 }
 
 export async function canUserMarkAttendance(
