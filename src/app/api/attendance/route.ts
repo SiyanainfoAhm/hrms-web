@@ -50,7 +50,29 @@ type AttendanceRow = {
   lunch_check_in_at?: string | null;
   tea_check_out_at?: string | null;
   tea_check_in_at?: string | null;
+  lunch_break_segments?: any;
+  tea_break_segments?: any;
 };
+
+function asSegments(raw: unknown): { out: string; in: string }[] {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw
+      .map((x) => (x && typeof x === "object" ? x : null))
+      .filter(Boolean)
+      .map((x: any) => ({ out: String(x.out ?? ""), in: String(x.in ?? "") }))
+      .filter((s) => s.out && s.in);
+  }
+  if (typeof raw === "string") {
+    try {
+      const parsed = JSON.parse(raw);
+      return asSegments(parsed);
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
 
 export async function GET() {
   const cookieStore = await cookies();
@@ -66,7 +88,7 @@ export async function GET() {
   const { data: log, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office"
+      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, lunch_break_segments, tea_break_segments, status, in_office"
     )
     .eq("company_id", gate.companyId)
     .eq("employee_id", gate.attendanceEmployeeId)
@@ -129,7 +151,7 @@ export async function POST(request: NextRequest) {
   const { data: existing, error: exErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, notes, check_in_in_office, in_office, office_note"
+      "id, check_in_at, check_out_at, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, lunch_break_segments, tea_break_segments, notes, check_in_in_office, in_office, office_note"
     )
     .eq("company_id", meCompanyId)
     .eq("employee_id", attendanceEmployeeId)
@@ -147,6 +169,8 @@ export async function POST(request: NextRequest) {
     const teaStarted = row.tea_break_started_at ?? null;
     const lunchMinBase = clampMinutes(Number(row.lunch_break_minutes) || 0);
     const teaMinBase = clampMinutes(Number(row.tea_break_minutes) || 0);
+    let lunchSeg = asSegments((row as any).lunch_break_segments);
+    let teaSeg = asSegments((row as any).tea_break_segments);
 
     // Toggle semantics:
     // - starting a break stops the other break (if running) and accumulates it
@@ -168,10 +192,12 @@ export async function POST(request: NextRequest) {
         nextLunchMin = addAccumulatedMinutes(lunchMinBase, lunchStarted, nowIso);
         nextLunchStarted = null;
         nextLunchInAt = nowIso;
+        if (lunchStarted) lunchSeg = [...lunchSeg, { out: lunchStarted, in: nowIso }];
       } else {
         nextTeaMin = addAccumulatedMinutes(teaMinBase, teaStarted, nowIso);
         nextTeaStarted = null;
         nextTeaInAt = nowIso;
+        if (teaStarted) teaSeg = [...teaSeg, { out: teaStarted, in: nowIso }];
       }
     } else {
       // stop other break if running
@@ -179,11 +205,13 @@ export async function POST(request: NextRequest) {
         nextTeaMin = addAccumulatedMinutes(teaMinBase, teaStarted, nowIso);
         nextTeaStarted = null;
         nextTeaInAt = nowIso;
+        teaSeg = [...teaSeg, { out: teaStarted, in: nowIso }];
       }
       if (breakKind === "tea" && lunchStarted) {
         nextLunchMin = addAccumulatedMinutes(lunchMinBase, lunchStarted, nowIso);
         nextLunchStarted = null;
         nextLunchInAt = nowIso;
+        lunchSeg = [...lunchSeg, { out: lunchStarted, in: nowIso }];
       }
       // start this break
       if (breakKind === "lunch") {
@@ -206,11 +234,13 @@ export async function POST(request: NextRequest) {
         lunch_check_in_at: nextLunchInAt ?? null,
         tea_check_out_at: nextTeaOutAt ?? null,
         tea_check_in_at: nextTeaInAt ?? null,
+        lunch_break_segments: lunchSeg,
+        tea_break_segments: teaSeg,
         updated_at: nowIso,
       })
       .eq("id", row.id)
       .select(
-        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status"
+        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, lunch_break_segments, tea_break_segments, status"
       )
       .single();
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
@@ -258,6 +288,8 @@ export async function POST(request: NextRequest) {
           lunch_check_in_at: null,
           tea_check_out_at: null,
           tea_check_in_at: null,
+          lunch_break_segments: [],
+          tea_break_segments: [],
           total_hours: null,
           status: "present",
           check_in_lat: reqLat,
@@ -271,7 +303,7 @@ export async function POST(request: NextRequest) {
         },
       ])
       .select(
-        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office, office_note, notes"
+        "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, lunch_break_segments, tea_break_segments, status, in_office, office_note, notes"
       )
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
@@ -366,7 +398,7 @@ export async function POST(request: NextRequest) {
     })
     .eq("id", existing.id)
     .select(
-      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office, office_note, notes"
+      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, lunch_break_segments, tea_break_segments, status, in_office, office_note, notes"
     )
     .single();
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });

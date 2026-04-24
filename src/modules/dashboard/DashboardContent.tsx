@@ -45,8 +45,39 @@ type AttendanceLog = {
   lunch_check_in_at?: string | null;
   tea_check_out_at?: string | null;
   tea_check_in_at?: string | null;
+  lunch_break_segments?: { out: string; in: string }[] | null;
+  tea_break_segments?: { out: string; in: string }[] | null;
   status: string | null;
 };
+
+function fmtTimeIstShort(iso: string): string {
+  try {
+    return new Date(iso).toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "—";
+  }
+}
+
+function segmentsToTotalMs(segments: { out: string; in: string }[] | null | undefined): number {
+  const segs = Array.isArray(segments) ? segments : [];
+  let total = 0;
+  for (const s of segs) {
+    const o = new Date(String(s.out)).getTime();
+    const i = new Date(String(s.in)).getTime();
+    if (Number.isFinite(o) && Number.isFinite(i) && i > o) total += i - o;
+  }
+  return Math.max(0, total);
+}
+
+function segmentsLabelIst(segments: { out: string; in: string }[] | null | undefined): string | null {
+  const segs = Array.isArray(segments) ? segments : [];
+  if (!segs.length) return null;
+  return segs.map((s) => `${fmtTimeIstShort(s.out)}–${fmtTimeIstShort(s.in)}`).join(", ");
+}
 
 /** Display ms as H:MM:SS or M:SS for live counters */
 function formatDurationMs(ms: number): string {
@@ -343,18 +374,11 @@ export function DashboardContent() {
     const punchInMs = punchedInOpen && attLog?.check_in_at ? new Date(attLog.check_in_at).getTime() : 0;
     const lunchBaseMs = (Number(attLog?.lunch_break_minutes) || 0) * 60 * 1000;
     const teaBaseMs = (Number(attLog?.tea_break_minutes) || 0) * 60 * 1000;
-    const lunchOutAtMs = attLog?.lunch_check_out_at ? new Date(String(attLog.lunch_check_out_at)).getTime() : NaN;
-    const lunchInAtMs = attLog?.lunch_check_in_at ? new Date(String(attLog.lunch_check_in_at)).getTime() : NaN;
-    const lunchSpanMs =
-      Number.isFinite(lunchOutAtMs) && Number.isFinite(lunchInAtMs) && lunchInAtMs > lunchOutAtMs
-        ? lunchInAtMs - lunchOutAtMs
-        : 0;
-    const teaOutAtMs = attLog?.tea_check_out_at ? new Date(String(attLog.tea_check_out_at)).getTime() : NaN;
-    const teaInAtMs = attLog?.tea_check_in_at ? new Date(String(attLog.tea_check_in_at)).getTime() : NaN;
-    const teaSpanMs =
-      Number.isFinite(teaOutAtMs) && Number.isFinite(teaInAtMs) && teaInAtMs > teaOutAtMs ? teaInAtMs - teaOutAtMs : 0;
-    const lunchIdleBaseMs = Math.max(lunchBaseMs, lunchSpanMs);
-    const teaIdleBaseMs = Math.max(teaBaseMs, teaSpanMs);
+    const lunchSegMs = segmentsToTotalMs(attLog?.lunch_break_segments);
+    const teaSegMs = segmentsToTotalMs(attLog?.tea_break_segments);
+    // Prefer segments total when present; fall back to minutes (legacy rows).
+    const lunchIdleBaseMs = lunchSegMs > 0 ? lunchSegMs : lunchBaseMs;
+    const teaIdleBaseMs = teaSegMs > 0 ? teaSegMs : teaBaseMs;
     const lunchRunningSinceMs =
       punchedInOpen && attLog?.lunch_break_started_at ? new Date(attLog.lunch_break_started_at).getTime() : null;
     const teaRunningSinceMs =
@@ -372,6 +396,7 @@ export function DashboardContent() {
     const activeMeetsPresent = activeMs >= 8 * 60 * 60 * 1000;
     const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
     const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
+    const lunchSegLabel = segmentsLabelIst(attLog?.lunch_break_segments);
 
     return (
       <section className="min-h-[60vh]">
@@ -621,6 +646,11 @@ export function DashboardContent() {
                             >
                               {punching ? "Saving…" : "3. Check in after lunch"}
                             </button>
+                            {lunchSegLabel && (
+                              <p className="mt-2 text-[11px] text-slate-600">
+                                Lunch breaks: <span className="font-medium">{lunchSegLabel}</span>
+                              </p>
+                            )}
                           </li>
                           <li>
                             <span className="font-medium text-slate-800">Final check out</span>
