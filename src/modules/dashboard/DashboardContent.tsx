@@ -43,6 +43,8 @@ type AttendanceLog = {
   tea_break_started_at?: string | null;
   lunch_check_out_at?: string | null;
   lunch_check_in_at?: string | null;
+  tea_check_out_at?: string | null;
+  tea_check_in_at?: string | null;
   status: string | null;
 };
 
@@ -341,18 +343,30 @@ export function DashboardContent() {
     const punchInMs = punchedInOpen && attLog?.check_in_at ? new Date(attLog.check_in_at).getTime() : 0;
     const lunchBaseMs = (Number(attLog?.lunch_break_minutes) || 0) * 60 * 1000;
     const teaBaseMs = (Number(attLog?.tea_break_minutes) || 0) * 60 * 1000;
+    const lunchOutAtMs = attLog?.lunch_check_out_at ? new Date(String(attLog.lunch_check_out_at)).getTime() : NaN;
+    const lunchInAtMs = attLog?.lunch_check_in_at ? new Date(String(attLog.lunch_check_in_at)).getTime() : NaN;
+    const lunchSpanMs =
+      Number.isFinite(lunchOutAtMs) && Number.isFinite(lunchInAtMs) && lunchInAtMs > lunchOutAtMs
+        ? lunchInAtMs - lunchOutAtMs
+        : 0;
+    const teaOutAtMs = attLog?.tea_check_out_at ? new Date(String(attLog.tea_check_out_at)).getTime() : NaN;
+    const teaInAtMs = attLog?.tea_check_in_at ? new Date(String(attLog.tea_check_in_at)).getTime() : NaN;
+    const teaSpanMs =
+      Number.isFinite(teaOutAtMs) && Number.isFinite(teaInAtMs) && teaInAtMs > teaOutAtMs ? teaInAtMs - teaOutAtMs : 0;
+    const lunchIdleBaseMs = Math.max(lunchBaseMs, lunchSpanMs);
+    const teaIdleBaseMs = Math.max(teaBaseMs, teaSpanMs);
     const lunchRunningSinceMs =
       punchedInOpen && attLog?.lunch_break_started_at ? new Date(attLog.lunch_break_started_at).getTime() : null;
     const teaRunningSinceMs =
       punchedInOpen && attLog?.tea_break_started_at ? new Date(attLog.tea_break_started_at).getTime() : null;
     const lunchTotalMs =
       punchedInOpen && lunchRunningSinceMs != null && Number.isFinite(lunchRunningSinceMs)
-        ? lunchBaseMs + Math.max(0, nowMs - lunchRunningSinceMs)
-        : lunchBaseMs;
+        ? lunchIdleBaseMs + Math.max(0, nowMs - lunchRunningSinceMs)
+        : lunchIdleBaseMs;
     const teaTotalMs =
       punchedInOpen && teaRunningSinceMs != null && Number.isFinite(teaRunningSinceMs)
-        ? teaBaseMs + Math.max(0, nowMs - teaRunningSinceMs)
-        : teaBaseMs;
+        ? teaIdleBaseMs + Math.max(0, nowMs - teaRunningSinceMs)
+        : teaIdleBaseMs;
     const elapsedMs = punchInMs ? nowMs - punchInMs : 0;
     const activeMs = punchedInOpen ? Math.max(0, elapsedMs - lunchTotalMs - teaTotalMs) : 0;
     const activeMeetsPresent = activeMs >= 8 * 60 * 60 * 1000;

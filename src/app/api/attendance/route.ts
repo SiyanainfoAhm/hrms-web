@@ -66,7 +66,7 @@ export async function GET() {
   const { data: log, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, status, in_office"
+      "id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_break_started_at, tea_break_started_at, lunch_check_out_at, lunch_check_in_at, tea_check_out_at, tea_check_in_at, status, in_office"
     )
     .eq("company_id", gate.companyId)
     .eq("employee_id", gate.attendanceEmployeeId)
