@@ -360,7 +360,7 @@ export default function AttendancePage() {
       : "Company attendance"
     : "My attendance";
   const description = isManagerial
-    ? "Punch sequence: first check in → lunch out → lunch in → final check out. If lunch punches are missing, a mandatory 1 hour lunch is applied for that day (stored on final check out when possible). Active time = gross minus lunch (effective) and tea. Present for payroll when active work is at least 8 hours. Dates use the IST calendar."
+    ? "Punch sequence: first check in → lunch out → lunch in → final check out. Lunch is deducted only when it is recorded (minutes or punches). Active time = gross minus lunch and tea. Present for payroll when active work is at least 8 hours. Dates use the IST calendar."
     : "Your records for the selected period (IST). Same punch rules as on the dashboard. Use the Dashboard to punch in/out for today.";
 
   return (
