@@ -7,6 +7,7 @@ import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { PageHeader } from "@/components/common/PageHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useToast } from "@/components/common/ToastProvider";
+import { supabase } from "@/lib/supabaseClient";
 
 const PRIMARY = "var(--primary)";
 
@@ -119,6 +120,32 @@ export function DashboardContent() {
       log: (data.log as AttendanceLog) ?? null,
     });
   }
+
+  // Realtime refresh when attendance row changes (lunch/tea toggles, punch-out, etc.)
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    let queued = false;
+
+    const channel = supabase
+      .channel(`att:${id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "HRMS_attendance_logs" }, () => {
+        if (cancelled) return;
+        // Coalesce bursts of updates into one refresh.
+        if (queued) return;
+        queued = true;
+        queueMicrotask(() => {
+          queued = false;
+          if (!cancelled) void refreshAttendance();
+        });
+      })
+      .subscribe();
+
+    return () => {
+      cancelled = true;
+      void supabase.removeChannel(channel);
+    };
+  }, [id]);
 
   useEffect(() => {
     let cancelled = false;
