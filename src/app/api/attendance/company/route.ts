@@ -18,6 +18,14 @@ function isYmd(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+type ShiftKind = "all" | "day" | "night";
+function parseShiftKind(v: string | null): ShiftKind {
+  const x = String(v ?? "").trim().toLowerCase();
+  if (x === "day") return "day";
+  if (x === "night") return "night";
+  return "all";
+}
+
 export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
@@ -29,6 +37,7 @@ export async function GET(request: NextRequest) {
   const startRaw = searchParams.get("startDate") || "";
   const endRaw = searchParams.get("endDate") || "";
   const userIdFilter = searchParams.get("userId")?.trim() || "";
+  const shiftKind = parseShiftKind(searchParams.get("shiftKind"));
   const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
   let startDate: string;
@@ -66,6 +75,35 @@ export async function GET(request: NextRequest) {
     }
   }
 
+  let allowedEmployeeIds: string[] | null = null;
+  if (shiftKind !== "all" && !filterEmployeeId) {
+    const { data: empsAll, error: empsAllErr } = await supabase
+      .from("HRMS_employees")
+      .select("id, shift_id")
+      .eq("company_id", me.company_id);
+    if (empsAllErr) return NextResponse.json({ error: empsAllErr.message }, { status: 400 });
+
+    const shiftIds = [...new Set((empsAll ?? []).map((e: any) => e.shift_id).filter(Boolean))].map((x) => String(x));
+    const { data: shifts, error: shErr } = shiftIds.length
+      ? await supabase
+          .from("HRMS_shifts")
+          .select("id, is_night_shift")
+          .eq("company_id", me.company_id)
+          .in("id", shiftIds)
+      : { data: [], error: null };
+    if (shErr) return NextResponse.json({ error: shErr.message }, { status: 400 });
+
+    const nightByShiftId = new Map((shifts ?? []).map((s: any) => [String(s.id), Boolean(s.is_night_shift)]));
+    allowedEmployeeIds = (empsAll ?? [])
+      .filter((e: any) => {
+        const sid = e.shift_id != null ? String(e.shift_id) : "";
+        const isNight = sid ? nightByShiftId.get(sid) === true : false;
+        return shiftKind === "night" ? isNight : !isNight;
+      })
+      .map((e: any) => String(e.id))
+      .filter(Boolean);
+  }
+
   let logQuery = supabase
     .from("HRMS_attendance_logs")
     .select(
@@ -76,6 +114,11 @@ export async function GET(request: NextRequest) {
     .lte("work_date", endDate);
   if (filterEmployeeId) {
     logQuery = logQuery.eq("employee_id", filterEmployeeId);
+  } else if (allowedEmployeeIds) {
+    if (allowedEmployeeIds.length === 0) {
+      return NextResponse.json({ startDate, endDate, workDate, rows: [] });
+    }
+    logQuery = logQuery.in("employee_id", allowedEmployeeIds);
   }
   const { data: logs, error: logErr } = await logQuery;
   if (logErr) return NextResponse.json({ error: logErr.message }, { status: 400 });

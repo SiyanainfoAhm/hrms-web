@@ -5,10 +5,25 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
+import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
 
-/** Calendar date (YYYY-MM-DD) in Asia/Kolkata — matches typical Indian office "today" for attendance. */
-function workDateIST(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+async function workDateForUser(args: { companyId: string; attendanceEmployeeId: string }): Promise<{
+  workDate: string;
+  timeZone: string;
+}> {
+  const ctx = await getAttendanceContextForUser({
+    supabase,
+    companyId: args.companyId,
+    attendanceEmployeeId: args.attendanceEmployeeId,
+  });
+  const workDate = computeWorkDateForNow({
+    now: new Date(),
+    tz: ctx.timeZone,
+    shiftStartTime: ctx.shiftStartTime,
+    shiftEndTime: ctx.shiftEndTime,
+    isNightShift: ctx.isNightShift,
+  });
+  return { workDate, timeZone: ctx.timeZone };
 }
 
 function clampMinutes(n: number): number {
@@ -81,10 +96,13 @@ export async function GET() {
 
   const gate = await canUserMarkAttendance(supabase, session.id);
   if (!gate.ok) {
-    return NextResponse.json({ hasEmployee: false, workDate: workDateIST(), log: null });
+    return NextResponse.json({ hasEmployee: false, workDate: null, timeZone: null, log: null });
   }
 
-  const wd = workDateIST();
+  const { workDate: wd, timeZone } = await workDateForUser({
+    companyId: gate.companyId,
+    attendanceEmployeeId: gate.attendanceEmployeeId,
+  });
   const { data: log, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
@@ -99,6 +117,7 @@ export async function GET() {
   return NextResponse.json({
     hasEmployee: true,
     workDate: wd,
+    timeZone,
     log,
   });
 }
@@ -145,7 +164,7 @@ export async function POST(request: NextRequest) {
   const officeLng = company?.longitude != null ? Number(company.longitude) : null;
   const officeRadiusM = company?.office_radius_m != null ? Math.max(10, Number(company.office_radius_m)) : 150;
 
-  const wd = workDateIST();
+  const { workDate: wd } = await workDateForUser({ companyId: meCompanyId, attendanceEmployeeId });
   const nowIso = new Date().toISOString();
 
   const { data: existing, error: exErr } = await supabase

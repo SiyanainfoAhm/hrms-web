@@ -44,6 +44,12 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
       : typeof body?.location === "string"
         ? body.location.trim() || null
         : undefined;
+  const divisionId =
+    body?.divisionId === null
+      ? null
+      : typeof body?.divisionId === "string"
+        ? body.divisionId.trim() || null
+        : undefined;
   const isOptional = typeof body?.isOptional === "boolean" ? body.isOptional : undefined;
 
   if (name !== undefined && !name) return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
@@ -103,6 +109,7 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (holidayDate !== undefined) payload.holiday_date = holidayDate;
   if (location !== undefined) payload.location = location;
   if (isOptional !== undefined) payload.is_optional = isOptional;
+  if (divisionId !== undefined) payload.division_id = divisionId;
 
   if (holidayEndDateInBody) {
     if (holidayEndDateRaw === null || holidayEndDateRaw === undefined || holidayEndDateRaw === "") {
@@ -114,6 +121,17 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
 
   if (Object.keys(payload).length === 0) {
     return NextResponse.json({ error: "No fields to update" }, { status: 400 });
+  }
+
+  if (divisionId !== undefined && divisionId !== null) {
+    const { data: div, error: divErr } = await supabase
+      .from("HRMS_divisions")
+      .select("id")
+      .eq("company_id", me.company_id)
+      .eq("id", divisionId)
+      .maybeSingle();
+    if (divErr) return NextResponse.json({ error: divErr.message }, { status: 400 });
+    if (!div) return NextResponse.json({ error: "Invalid division" }, { status: 400 });
   }
 
   const { data, error } = await supabase

@@ -7,7 +7,8 @@ import { computeGovernmentMonthlyPayroll, masterRowToDeductionDefaults } from "@
 import {
   computePayrollFromCtc,
   computePayrollFromGross,
-  isWithinEsicGrossCeiling,
+  defaultSalaryBreakup,
+  isWithinEsicWageCeiling,
   isPfStatutorilyMandatory,
 } from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
@@ -647,23 +648,47 @@ export async function POST(request: NextRequest) {
     finalEsicEligible = false;
     finalGovernmentPayLevel = governmentPayLevelPost;
   } else {
-    // Private payroll input is gross (CTC may be provided by legacy clients).
-    // When CTC is provided (and gross is not), derive gross from CTC since CTC includes employer PF/ESIC.
+    // Private payroll: gross **or** monthly CTC (CTC includes employer PF/ESIC; gross is derived).
     const hasGross = Number.isFinite(grossPrivate) && grossPrivate > 0;
     const hasCtc = !hasGross && Number.isFinite(ctcPrivate) && ctcPrivate > 0;
-    finalGrossSalary = hasGross ? grossPrivate : ctcPrivate;
-    // Defaults: PF generally on; ESIC only if within ceiling.
-    // Allow explicit override from UI when provided.
-    const pfDefault = isPfStatutorilyMandatory(finalGrossSalary, Math.round(finalGrossSalary * 0.2)) || true;
-    const esicDefault = isWithinEsicGrossCeiling(finalGrossSalary, privateCfg);
-    finalPfEligible = typeof pfEligibleRaw === "boolean" ? pfEligibleRaw : pfDefault;
-    finalEsicEligible = typeof esicEligibleRaw === "boolean" ? esicEligibleRaw : esicDefault;
-    const ptUsed = computeProfessionalTaxMonthly(finalGrossSalary, privateCfg, ptMonthly);
-    const calc = hasCtc
-      ? computePayrollFromCtc(ctcPrivate, finalPfEligible, finalEsicEligible, ptUsed, undefined, privateCfg)
-      : computePayrollFromGross(finalGrossSalary, finalPfEligible, finalEsicEligible, ptUsed, undefined, privateCfg);
-    calculatedCtc = hasCtc ? Math.round(ctcPrivate) : calc.ctc;
-    if (hasCtc && (calc as any).gross != null) finalGrossSalary = Math.round(Number((calc as any).gross) || finalGrossSalary);
+    const ptFromGross = (g: number) => computeProfessionalTaxMonthly(g, privateCfg, ptMonthly);
+
+    if (hasCtc) {
+      // Converge PF/ESIC defaults with derived gross (PT follows gross slabs via ptFromGross inside CTC iteration).
+      let gEst = Math.round(ctcPrivate * 0.985);
+      let calc!: ReturnType<typeof computePayrollFromGross> & { gross?: number; ctc?: number };
+      for (let iter = 0; iter < 20; iter++) {
+        const pfDef =
+          typeof pfEligibleRaw === "boolean"
+            ? pfEligibleRaw
+            : isPfStatutorilyMandatory(gEst, defaultSalaryBreakup(gEst, privateCfg).hra) || true;
+        const esDef =
+          typeof esicEligibleRaw === "boolean"
+            ? esicEligibleRaw
+            : isWithinEsicWageCeiling(defaultSalaryBreakup(gEst, privateCfg).basic, privateCfg);
+        calc = computePayrollFromCtc(ctcPrivate, pfDef, esDef, ptFromGross, undefined, privateCfg);
+        const gNext = Math.round(Number((calc as { gross?: number }).gross) || gEst);
+        finalPfEligible = pfDef;
+        finalEsicEligible = esDef;
+        if (Math.abs(gNext - gEst) <= 1) {
+          gEst = gNext;
+          break;
+        }
+        gEst = gNext;
+      }
+      finalGrossSalary = Math.round(Number((calc as { gross?: number }).gross) || gEst);
+      calculatedCtc = Math.round(ctcPrivate);
+    } else {
+      finalGrossSalary = grossPrivate;
+      const pfDefault =
+        isPfStatutorilyMandatory(finalGrossSalary, defaultSalaryBreakup(finalGrossSalary, privateCfg).hra) || true;
+      const esicDefault = isWithinEsicWageCeiling(defaultSalaryBreakup(finalGrossSalary, privateCfg).basic, privateCfg);
+      finalPfEligible = typeof pfEligibleRaw === "boolean" ? pfEligibleRaw : pfDefault;
+      finalEsicEligible = typeof esicEligibleRaw === "boolean" ? esicEligibleRaw : esicDefault;
+      const ptUsed = ptFromGross(finalGrossSalary);
+      const calc = computePayrollFromGross(finalGrossSalary, finalPfEligible, finalEsicEligible, ptUsed, undefined, privateCfg);
+      calculatedCtc = calc.ctc;
+    }
     finalGovernmentPayLevel = null;
   }
 
@@ -895,6 +920,9 @@ export async function PUT(request: NextRequest) {
   const grossPrivateRawPut = body?.grossSalary ?? body?.gross ?? body?.grossMonthly;
   const grossPrivatePut =
     grossPrivateRawPut != null && grossPrivateRawPut !== "" ? Number(grossPrivateRawPut) : undefined;
+  const ctcPrivateRawPut = body?.ctc ?? body?.ctcMonthly ?? body?.monthlyCtc;
+  const ctcPrivatePut =
+    ctcPrivateRawPut != null && ctcPrivateRawPut !== "" ? Number(ctcPrivateRawPut) : undefined;
   const grossBasicRawPut = body?.grossBasic;
   const grossBasicPut =
     grossBasicRawPut != null && grossBasicRawPut !== "" ? Number(grossBasicRawPut) : undefined;
@@ -937,8 +965,11 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Monthly gross basic pay must be greater than zero" }, { status: 400 });
     }
   } else {
-    if (grossPrivatePut != null && (!Number.isFinite(grossPrivatePut) || grossPrivatePut <= 0)) {
+    if (grossPrivatePut != null && grossPrivateRawPut !== "" && (!Number.isFinite(grossPrivatePut) || grossPrivatePut <= 0)) {
       return NextResponse.json({ error: "Monthly gross salary must be greater than zero" }, { status: 400 });
+    }
+    if (ctcPrivatePut != null && ctcPrivateRawPut !== "" && (!Number.isFinite(ctcPrivatePut) || ctcPrivatePut <= 0)) {
+      return NextResponse.json({ error: "Monthly CTC must be greater than zero" }, { status: 400 });
     }
   }
 
@@ -1020,13 +1051,44 @@ export async function PUT(request: NextRequest) {
       finalGovernmentPayLevel = governmentPayLevel;
     }
   } else {
-    const gross = grossPrivatePut != null && Number.isFinite(grossPrivatePut) && grossPrivatePut > 0 ? grossPrivatePut : null;
-    if (gross != null) {
-      const pfDefault = isPfStatutorilyMandatory(gross, Math.round(gross * 0.2)) || true;
-      const esicDefault = isWithinEsicGrossCeiling(gross, privateCfgPut);
+    const hasGross = grossPrivatePut != null && Number.isFinite(grossPrivatePut) && grossPrivatePut > 0;
+    const hasCtc =
+      !hasGross && ctcPrivatePut != null && Number.isFinite(ctcPrivatePut) && ctcPrivatePut > 0;
+    const ptFromGrossPut = (g: number) => computeProfessionalTaxMonthly(g, privateCfgPut, ptMonthlyPut);
+
+    if (hasCtc && ctcPrivatePut != null) {
+      let gEst = Math.round(ctcPrivatePut * 0.985);
+      let calc!: ReturnType<typeof computePayrollFromGross> & { gross?: number; ctc?: number };
+      for (let iter = 0; iter < 20; iter++) {
+        const pfDef =
+          typeof pfEligibleRawPut === "boolean"
+            ? pfEligibleRawPut
+            : isPfStatutorilyMandatory(gEst, defaultSalaryBreakup(gEst, privateCfgPut).hra) || true;
+        const esDef =
+          typeof esicEligibleRawPut === "boolean"
+            ? esicEligibleRawPut
+            : isWithinEsicWageCeiling(defaultSalaryBreakup(gEst, privateCfgPut).basic, privateCfgPut);
+        calc = computePayrollFromCtc(ctcPrivatePut, pfDef, esDef, ptFromGrossPut, undefined, privateCfgPut);
+        const gNext = Math.round(Number((calc as { gross?: number }).gross) || gEst);
+        finalPfEligible = pfDef;
+        finalEsicEligible = esDef;
+        if (Math.abs(gNext - gEst) <= 1) {
+          gEst = gNext;
+          break;
+        }
+        gEst = gNext;
+      }
+      finalGrossSalary = Math.round(Number((calc as { gross?: number }).gross) || gEst);
+      calculatedCtc = Math.round(ctcPrivatePut);
+      finalGovernmentPayLevel = null;
+    } else if (hasGross && grossPrivatePut != null) {
+      const gross = grossPrivatePut;
+      const pfDefault =
+        isPfStatutorilyMandatory(gross, defaultSalaryBreakup(gross, privateCfgPut).hra) || true;
+      const esicDefault = isWithinEsicWageCeiling(defaultSalaryBreakup(gross, privateCfgPut).basic, privateCfgPut);
       const pfEligible = typeof pfEligibleRawPut === "boolean" ? pfEligibleRawPut : pfDefault;
       const esicEligible = typeof esicEligibleRawPut === "boolean" ? esicEligibleRawPut : esicDefault;
-      const ptUsed = computeProfessionalTaxMonthly(gross, privateCfgPut, ptMonthlyPut);
+      const ptUsed = ptFromGrossPut(gross);
       const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, undefined, privateCfgPut);
       calculatedCtc = calc.ctc;
       finalGrossSalary = gross;

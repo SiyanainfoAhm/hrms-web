@@ -5,6 +5,7 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
+import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
 
 /** YYYY-MM-DD */
 function isYmd(s: string): boolean {
@@ -21,30 +22,43 @@ export async function GET(request: NextRequest) {
   const workDateRaw = searchParams.get("workDate") || "";
   const startRaw = searchParams.get("startDate") || "";
   const endRaw = searchParams.get("endDate") || "";
-  const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
   let startDate: string;
   let endDate: string;
+  const gate = await canUserMarkAttendance(supabase, session.id);
+  if (!gate.ok) {
+    return NextResponse.json({
+      startDate: null,
+      endDate: null,
+      workDate: null,
+      hasEmployee: false,
+      timeZone: null,
+      rows: [],
+    });
+  }
+
+  const ctx = await getAttendanceContextForUser({
+    supabase,
+    companyId: gate.companyId,
+    attendanceEmployeeId: gate.attendanceEmployeeId,
+  });
+  const todayTz = computeWorkDateForNow({
+    now: new Date(),
+    tz: ctx.timeZone,
+    shiftStartTime: ctx.shiftStartTime,
+    shiftEndTime: ctx.shiftEndTime,
+    isNightShift: ctx.isNightShift,
+  });
+
   if (isYmd(startRaw) && isYmd(endRaw)) {
     startDate = startRaw <= endRaw ? startRaw : endRaw;
     endDate = startRaw <= endRaw ? endRaw : startRaw;
   } else if (isYmd(workDateRaw)) {
     startDate = endDate = workDateRaw;
   } else {
-    startDate = endDate = todayIst;
+    startDate = endDate = todayTz;
   }
   const workDate = startDate === endDate ? startDate : null;
-
-  const gate = await canUserMarkAttendance(supabase, session.id);
-  if (!gate.ok) {
-    return NextResponse.json({
-      startDate,
-      endDate,
-      workDate,
-      hasEmployee: false,
-      rows: [],
-    });
-  }
 
   const { data: empMirror } = await supabase
     .from("HRMS_employees")
@@ -153,6 +167,7 @@ export async function GET(request: NextRequest) {
     endDate,
     workDate,
     hasEmployee: true,
+    timeZone: ctx.timeZone,
     rows,
   });
 }

@@ -8,6 +8,9 @@ import { HrmsShellPage } from "@/components/layout/HrmsShellPage";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtDmy } from "@/lib/dateFormat";
+import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
+import { IST_TZ, US_EASTERN_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
+import { todayYmdTz } from "@/lib/tzCalendar";
 
 type Row = {
   logId: string;
@@ -39,11 +42,11 @@ type Row = {
   notes?: string | null;
 };
 
-function formatTimeIST(iso: string | null | undefined): string {
+function formatTimeTz(iso: string | null | undefined, tz: AttendanceTimeZoneId): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleTimeString("en-IN", {
-      timeZone: "Asia/Kolkata",
+    return new Date(iso).toLocaleTimeString("en-US", {
+      timeZone: tz,
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -72,10 +75,12 @@ function AttendanceRow({
   r,
   showDateCol,
   showEmployeeCols,
+  tz,
 }: {
   r: Row;
   showDateCol: boolean;
   showEmployeeCols: boolean;
+  tz: AttendanceTimeZoneId;
 }) {
   const idleLunch = r.idleLunchMinutes ?? r.lunchBreakMinutes ?? 0;
   const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
@@ -91,10 +96,10 @@ function AttendanceRow({
           <div className="text-xs text-slate-500">{r.employeeEmail}</div>
         </td>
       )}
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.checkInAt)}</td>
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.lunchCheckOutAt)}</td>
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.lunchCheckInAt)}</td>
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeIST(r.checkOutAt)}</td>
+      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.checkInAt, tz)}</td>
+      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.lunchCheckOutAt, tz)}</td>
+      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.lunchCheckInAt, tz)}</td>
+      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.checkOutAt, tz)}</td>
       <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.grossMinutes)}</td>
       <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</td>
       <td className="px-3 py-3 text-xs text-slate-600">
@@ -138,10 +143,12 @@ function AttendanceMobileCard({
   r,
   showEmployeeCols,
   showDateLine,
+  tz,
 }: {
   r: Row;
   showEmployeeCols: boolean;
   showDateLine: boolean;
+  tz: AttendanceTimeZoneId;
 }) {
   const idleLunch = r.idleLunchMinutes ?? r.lunchBreakMinutes ?? 0;
   const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
@@ -160,19 +167,19 @@ function AttendanceMobileCard({
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
         <div>
           <dt className="text-xs text-slate-500">1. First in</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.checkInAt)}</dd>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.checkInAt, tz)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">2. Lunch out</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.lunchCheckOutAt)}</dd>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.lunchCheckOutAt, tz)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">3. Lunch in</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.lunchCheckInAt)}</dd>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.lunchCheckInAt, tz)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">4. Final out</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeIST(r.checkOutAt)}</dd>
+          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.checkOutAt, tz)}</dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">Gross</dt>
@@ -217,6 +224,7 @@ export default function AttendancePage() {
   const { role } = useHrmsSession();
   const isManagerial = role === "super_admin" || role === "admin" || role === "hr";
 
+  const [viewTz, setViewTz] = useState<AttendanceTimeZoneId>(IST_TZ);
   const [startDate, setStartDate] = useState(() =>
     new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" })
   );
@@ -287,6 +295,9 @@ export default function AttendancePage() {
       if (isManagerial && employeeFilterUserId) {
         params.set("userId", employeeFilterUserId);
       }
+      if (isManagerial && !employeeFilterUserId) {
+        params.set("shiftKind", viewTz === US_EASTERN_TZ ? "night" : "day");
+      }
       const url = isManagerial
         ? `/api/attendance/company?${params.toString()}`
         : `/api/attendance/me?${params.toString()}`;
@@ -296,6 +307,9 @@ export default function AttendancePage() {
       if (!res.ok) throw new Error(data?.error || "Failed to load");
       setRows(data.rows ?? []);
       setHasEmployee(data.hasEmployee !== false);
+      if (!isManagerial && data?.timeZone) {
+        setViewTz((data.timeZone as AttendanceTimeZoneId) || IST_TZ);
+      }
     } catch (e: unknown) {
       if (e instanceof Error && e.name === "AbortError") return;
       if (ac.signal.aborted || seq !== loadSeq.current) return;
@@ -306,11 +320,21 @@ export default function AttendancePage() {
         setLoading(false);
       }
     }
-  }, [isManagerial, startDate, endDate, employeeFilterUserId]);
+  }, [isManagerial, startDate, endDate, employeeFilterUserId, viewTz]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  // When admin toggles timezone, switch the calendar presets to that timezone
+  // so "Today/This week/This month" matches the selected view.
+  useEffect(() => {
+    if (!isManagerial) return;
+    const ymd = todayYmdTz(viewTz === US_EASTERN_TZ ? "America/New_York" : "Asia/Kolkata");
+    setStartDate(ymd);
+    setEndDate(ymd);
+    setPreset("today");
+  }, [isManagerial, viewTz]);
 
   const showDateCol = startDate !== endDate;
   const showEmployeeCols = isManagerial && !employeeFilterUserId;
@@ -361,7 +385,7 @@ export default function AttendancePage() {
     : "My attendance";
   const description = isManagerial
     ? "Punch sequence: first check in → lunch out → lunch in → final check out. Lunch is deducted only when it is recorded (minutes or punches). Active time = gross minus lunch and tea. Present for payroll when active work is at least 8 hours. Dates use the IST calendar."
-    : "Your records for the selected period (IST). Same punch rules as on the dashboard. Use the Dashboard to punch in/out for today.";
+    : `Your records for the selected period (${timeZoneLabel(viewTz)}). Same punch rules as on the dashboard. Use the Dashboard to punch in/out for today.`;
 
   return (
     <HrmsShellPage title={title} description={description}>
@@ -377,10 +401,24 @@ export default function AttendancePage() {
           <div className="rounded-xl border border-gray-200 bg-white shadow-sm p-4 sm:p-6">
             <div className="mb-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:flex-wrap">
+                {isManagerial && (
+                  <label className="flex min-w-[min(100%,12rem)] flex-col gap-1 text-sm">
+                    <span className="font-medium text-slate-700">View timezone</span>
+                    <select
+                      className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                      value={viewTz}
+                      onChange={(e) => setViewTz(e.target.value as AttendanceTimeZoneId)}
+                    >
+                      <option value={IST_TZ}>IST (Asia/Kolkata)</option>
+                      <option value={US_EASTERN_TZ}>US/Eastern (New York)</option>
+                    </select>
+                  </label>
+                )}
                 <AttendanceDateFilter
                   startDate={startDate}
                   endDate={endDate}
                   preset={preset}
+                  timeZone={viewTz === US_EASTERN_TZ ? "America/New_York" : "Asia/Kolkata"}
                   onChange={(next) => {
                     setStartDate(next.startDate);
                     setEndDate(next.endDate);
@@ -499,7 +537,7 @@ export default function AttendancePage() {
                   <tbody className="divide-y divide-gray-100">
                     {!showDateCol &&
                       rows.map((r) => (
-                        <AttendanceRow key={r.logId} r={r} showDateCol={false} showEmployeeCols={showEmployeeCols} />
+                        <AttendanceRow key={r.logId} r={r} showDateCol={false} showEmployeeCols={showEmployeeCols} tz={viewTz} />
                       ))}
                     {showDateCol &&
                       grouped?.map(([date, dayRows]) => (
@@ -513,7 +551,7 @@ export default function AttendancePage() {
                             </td>
                           </tr>
                           {dayRows.map((r) => (
-                            <AttendanceRow key={r.logId} r={r} showDateCol={true} showEmployeeCols={showEmployeeCols} />
+                            <AttendanceRow key={r.logId} r={r} showDateCol={true} showEmployeeCols={showEmployeeCols} tz={viewTz} />
                           ))}
                         </Fragment>
                       ))}
@@ -536,6 +574,7 @@ export default function AttendancePage() {
                     r={r}
                     showEmployeeCols={showEmployeeCols}
                     showDateLine={!showDateCol}
+                    tz={viewTz}
                   />
                 </Fragment>
               ))}

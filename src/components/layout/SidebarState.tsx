@@ -1,42 +1,80 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useContext, useMemo, useState } from "react";
 import { getLocalStorageItem, setLocalStorageItem } from "../../lib/storage";
+
+export type SidebarMode = "expanded" | "collapsed" | "hover";
 
 type SidebarState = {
   expanded: boolean;
+  mode: SidebarMode;
+  setMode: (mode: SidebarMode) => void;
   setExpanded: (value: boolean) => void;
   toggle: () => void;
+  setHovering: (hovering: boolean) => void;
 };
 
 const SidebarStateContext = createContext<SidebarState | null>(null);
 
 export function SidebarStateProvider({
   children,
-  storageKey = "sidebarExpanded"
+  storageKey = "sidebarExpanded",
+  modeStorageKey = "sidebarMode"
 }: {
   children: React.ReactNode;
   storageKey?: string;
+  modeStorageKey?: string;
 }) {
-  const [expanded, setExpandedState] = useState(true);
-
-  useEffect(() => {
+  const [explicitExpanded, setExplicitExpanded] = useState(() => {
     const stored = getLocalStorageItem(storageKey);
-    if (stored === "true") setExpandedState(true);
-    if (stored === "false") setExpandedState(false);
-  }, [storageKey]);
+    if (stored === "false") return false;
+    if (stored === "true") return true;
+    return true;
+  });
+  const [mode, setModeState] = useState<SidebarMode>(() => {
+    const storedMode = getLocalStorageItem(modeStorageKey);
+    if (storedMode === "expanded" || storedMode === "collapsed" || storedMode === "hover") return storedMode;
+    const stored = getLocalStorageItem(storageKey);
+    return stored === "false" ? "collapsed" : "expanded";
+  });
+  const [hovering, setHoveringState] = useState(false);
+
+  const expanded = mode === "expanded" ? true : mode === "collapsed" ? false : hovering;
 
   const api = useMemo<SidebarState>(() => {
     function setExpanded(value: boolean) {
-      setExpandedState(value);
+      setExplicitExpanded(value);
+      setModeState(value ? "expanded" : "collapsed");
       setLocalStorageItem(storageKey, value ? "true" : "false");
+      setLocalStorageItem(modeStorageKey, value ? "expanded" : "collapsed");
+    }
+    function setMode(nextMode: SidebarMode) {
+      setModeState(nextMode);
+      setLocalStorageItem(modeStorageKey, nextMode);
+      if (nextMode === "expanded") {
+        setExplicitExpanded(true);
+        setLocalStorageItem(storageKey, "true");
+      } else if (nextMode === "collapsed") {
+        setExplicitExpanded(false);
+        setLocalStorageItem(storageKey, "false");
+      }
     }
     return {
       expanded,
+      mode,
+      setMode,
       setExpanded,
-      toggle: () => setExpanded(!expanded)
+      toggle: () => {
+        // Keep old toggle semantics for any existing callers.
+        if (mode === "hover") {
+          setMode("expanded");
+          return;
+        }
+        setExpanded(!explicitExpanded);
+      },
+      setHovering: (h: boolean) => setHoveringState(h)
     };
-  }, [expanded, storageKey]);
+  }, [expanded, explicitExpanded, mode, storageKey, modeStorageKey]);
 
   return <SidebarStateContext.Provider value={api}>{children}</SidebarStateContext.Provider>;
 }

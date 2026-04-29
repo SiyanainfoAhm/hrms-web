@@ -4,16 +4,18 @@ import { useEffect, useRef, useState } from "react";
 import { DayPicker, type DateRange } from "react-day-picker";
 import "react-day-picker/style.css";
 import { enIN } from "date-fns/locale/en-IN";
+import { enUS } from "date-fns/locale/en-US";
+import type { CalendarTz } from "@/lib/tzCalendar";
 import {
-  addDaysIST,
-  dateToYmdIST,
-  istTodayYmd,
-  lastMonthRangeIST,
-  lastWeekRangeIST,
-  thisMonthRangeIST,
-  thisWeekRangeIST,
-  ymdToNoonIST,
-} from "@/lib/istCalendar";
+  addDaysTz,
+  dateToYmdTz,
+  lastMonthRangeTz,
+  lastWeekRangeTz,
+  thisMonthRangeTz,
+  thisWeekRangeTz,
+  todayYmdTz,
+  ymdToNoonTz,
+} from "@/lib/tzCalendar";
 
 export type AttendancePreset =
   | "today"
@@ -34,39 +36,43 @@ const PRESETS: { id: AttendancePreset; label: string }[] = [
   { id: "custom", label: "Custom range" },
 ];
 
-function computePresetRange(id: Exclude<AttendancePreset, "custom">, anchorYmd: string): { start: string; end: string } {
+function computePresetRange(
+  id: Exclude<AttendancePreset, "custom">,
+  anchorYmd: string,
+  tz: CalendarTz,
+): { start: string; end: string } {
   switch (id) {
     case "today":
       return { start: anchorYmd, end: anchorYmd };
     case "yesterday":
-      return { start: addDaysIST(anchorYmd, -1), end: addDaysIST(anchorYmd, -1) };
+      return { start: addDaysTz(anchorYmd, -1, tz), end: addDaysTz(anchorYmd, -1, tz) };
     case "this_week":
-      return thisWeekRangeIST(anchorYmd);
+      return thisWeekRangeTz(anchorYmd, tz);
     case "last_week":
-      return lastWeekRangeIST(anchorYmd);
+      return lastWeekRangeTz(anchorYmd, tz);
     case "this_month":
-      return thisMonthRangeIST(anchorYmd);
+      return thisMonthRangeTz(anchorYmd);
     case "last_month":
-      return lastMonthRangeIST(anchorYmd);
+      return lastMonthRangeTz(anchorYmd);
     default:
       return { start: anchorYmd, end: anchorYmd };
   }
 }
 
-function formatRangeLabel(start: string, end: string): string {
+function formatRangeLabel(start: string, end: string, tz: CalendarTz): string {
   if (start === end) {
-    return new Date(`${start}T12:00:00+05:30`).toLocaleDateString("en-IN", {
+    return ymdToNoonTz(start, tz).toLocaleDateString("en-US", {
       weekday: "short",
       day: "numeric",
       month: "short",
       year: "numeric",
     });
   }
-  const a = new Date(`${start}T12:00:00+05:30`).toLocaleDateString("en-IN", {
+  const a = ymdToNoonTz(start, tz).toLocaleDateString("en-US", {
     day: "numeric",
     month: "short",
   });
-  const b = new Date(`${end}T12:00:00+05:30`).toLocaleDateString("en-IN", {
+  const b = ymdToNoonTz(end, tz).toLocaleDateString("en-US", {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -79,17 +85,19 @@ export function AttendanceDateFilter({
   endDate,
   preset,
   onChange,
+  timeZone,
 }: {
   startDate: string;
   endDate: string;
   preset: AttendancePreset;
   onChange: (next: { startDate: string; endDate: string; preset: AttendancePreset }) => void;
+  timeZone: CalendarTz;
 }) {
   const [customOpen, setCustomOpen] = useState(false);
   const [monthCount, setMonthCount] = useState(1);
   const [rangeDraft, setRangeDraft] = useState<DateRange | undefined>(() => ({
-    from: ymdToNoonIST(startDate),
-    to: ymdToNoonIST(endDate),
+    from: ymdToNoonTz(startDate, timeZone),
+    to: ymdToNoonTz(endDate, timeZone),
   }));
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -116,16 +124,16 @@ export function AttendanceDateFilter({
     if (id === "custom") {
       if (!customOpen) {
         setRangeDraft({
-          from: ymdToNoonIST(startDate),
-          to: ymdToNoonIST(endDate),
+          from: ymdToNoonTz(startDate, timeZone),
+          to: ymdToNoonTz(endDate, timeZone),
         });
       }
       setCustomOpen((o) => !o);
       return;
     }
     setCustomOpen(false);
-    const anchor = istTodayYmd();
-    const { start, end } = computePresetRange(id, anchor);
+    const anchor = todayYmdTz(timeZone);
+    const { start, end } = computePresetRange(id, anchor, timeZone);
     onChange({ startDate: start, endDate: end, preset: id });
   }
 
@@ -133,8 +141,8 @@ export function AttendanceDateFilter({
     const from = rangeDraft?.from;
     const to = rangeDraft?.to ?? rangeDraft?.from;
     if (!from) return;
-    const start = dateToYmdIST(from);
-    const end = to ? dateToYmdIST(to) : start;
+    const start = dateToYmdTz(from, timeZone);
+    const end = to ? dateToYmdTz(to, timeZone) : start;
     const lo = start <= end ? start : end;
     const hi = start <= end ? end : start;
     onChange({ startDate: lo, endDate: hi, preset: "custom" });
@@ -166,8 +174,10 @@ export function AttendanceDateFilter({
 
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 shadow-sm">
         <div>
-          <p className="text-[11px] font-medium uppercase tracking-wide text-gray-600">Selected period (IST)</p>
-          <p className="text-sm font-semibold text-gray-900">{formatRangeLabel(startDate, endDate)}</p>
+          <p className="text-[11px] font-medium uppercase tracking-wide text-gray-600">
+            Selected period ({timeZone === "America/New_York" ? "US/Eastern" : "IST"})
+          </p>
+          <p className="text-sm font-semibold text-gray-900">{formatRangeLabel(startDate, endDate, timeZone)}</p>
         </div>
         {preset === "custom" && (
           <span className="rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-900 ring-1 ring-amber-200/80">
@@ -185,11 +195,11 @@ export function AttendanceDateFilter({
           <div className="rdp-theme attendance-day-picker flex justify-center overflow-x-auto">
             <DayPicker
               mode="range"
-              locale={enIN}
+              locale={timeZone === "America/New_York" ? enUS : enIN}
               numberOfMonths={monthCount}
               selected={rangeDraft}
               onSelect={setRangeDraft}
-              defaultMonth={ymdToNoonIST(startDate)}
+              defaultMonth={ymdToNoonTz(startDate, timeZone)}
               showOutsideDays
               className="rdp-root"
             />

@@ -11,7 +11,12 @@ import {
   validateAadhaarInteractive,
   validatePanNormalized
 } from "../../lib/employeeValidators";
-import { computePayrollFromGross } from "@/lib/payrollCalc";
+import {
+  computePayrollFromGross,
+  defaultSalaryBreakup,
+  isPfStatutorilyMandatory,
+  isWithinEsicWageCeiling,
+} from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import {
   fetchCompanyDocuments,
@@ -69,6 +74,10 @@ export function EmployeeFormModal({
   const [addingDesignation, setAddingDesignation] = useState(false);
   const [designationOpen, setDesignationOpen] = useState(false);
   const designationWrapRef = useRef<HTMLDivElement | null>(null);
+  /** User toggled ESIC manually — skip auto recommendation from Basic+DA ceiling. */
+  const esicEligibilityUserOverrideRef = useRef(false);
+  /** User toggled PF manually — skip auto recommendation from Basic+DA ceiling. */
+  const pfEligibilityUserOverrideRef = useRef(false);
   const [departmentId, setDepartmentId] = useState("");
   const [divisionId, setDivisionId] = useState("");
   const [shiftId, setShiftId] = useState("");
@@ -165,6 +174,8 @@ export function EmployeeFormModal({
     setGrossSalary("");
     setPfEligible(true);
     setEsicEligible(false);
+    esicEligibilityUserOverrideRef.current = false;
+    pfEligibilityUserOverrideRef.current = false;
     setIncomeTaxMonthly("");
     setPassword("");
     setCurrentAddressLine1("");
@@ -262,6 +273,10 @@ export function EmployeeFormModal({
         setShowGovernmentPayroll(u.governmentPayLevel != null);
         setGovernmentPayLevel(u.governmentPayLevel != null ? String(u.governmentPayLevel) : "");
         setGrossBasic(u.grossBasic != null ? String(u.grossBasic) : "");
+        if (u.governmentPayLevel == null) {
+          // Private payroll uses monthly gross salary as the single input.
+        } else {
+        }
         setGrossSalary(u.grossSalary != null ? String(u.grossSalary) : "");
         setPfEligible(Boolean((u as any).pfEligible));
         setEsicEligible(Boolean((u as any).esicEligible));
@@ -495,7 +510,8 @@ export function EmployeeFormModal({
         ? "Monthly gross basic pay is required"
         : null;
     const grossSalaryErr =
-      !showGovernmentPayroll && (!grossSalary.trim() || !Number.isFinite(grossSalaryParsed) || grossSalaryParsed <= 0)
+      !showGovernmentPayroll &&
+      (!grossSalary.trim() || !Number.isFinite(grossSalaryParsed) || grossSalaryParsed <= 0)
         ? "Monthly gross salary is required"
         : null;
 
@@ -537,23 +553,90 @@ export function EmployeeFormModal({
 
   const privatePreview = useMemo(() => {
     if (showGovernmentPayroll) return null;
-    const gross = Number(grossSalary);
-    if (!Number.isFinite(gross) || gross <= 0) return null;
     const tds = Math.max(0, Number(incomeTaxMonthly) || 0);
     const cfg = normalizePrivatePayrollConfig(privatePayrollConfig);
-    const ptUsed = computeProfessionalTaxMonthly(gross, cfg, ptMonthly);
-    const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, undefined, cfg);
-    const takeHome = Math.max(0, Math.round(calc.takeHome - tds));
-    return {
-      gross: Math.round(gross),
-      ptMonthly: Math.round(ptUsed),
-      tds,
-      pfEmployee: Math.round(calc.pfEmp),
-      esicEmployee: Math.round(calc.esicEmp),
-      takeHome,
-      ctc: Math.round(calc.ctc),
+
+    const buildFromSnap = (
+      gross: number,
+      calc: ReturnType<typeof computePayrollFromGross>,
+    ) => {
+      const ptUsed = computeProfessionalTaxMonthly(gross, cfg, ptMonthly);
+      const ptR = Math.round(ptUsed);
+      const pfEmp = Math.round(calc.pfEmp);
+      const esicEmp = Math.round(calc.esicEmp);
+      const totalDeductions = pfEmp + esicEmp + ptR;
+      const netSalary = Math.max(0, Math.round(calc.takeHome));
+      const takeHomeAfterTds = Math.max(0, Math.round(calc.takeHome - tds));
+      const breakupSum = Math.round(calc.basic + calc.hra + calc.medical + calc.trans + calc.lta + calc.personal);
+      return {
+        gross: Math.round(gross),
+        ptMonthly: ptR,
+        tds,
+        pfEmployee: pfEmp,
+        esicEmployee: esicEmp,
+        pfEmployer: Math.round(calc.pfEmpr),
+        esicEmployer: Math.round(calc.esicEmpr),
+        netSalary,
+        takeHomeAfterTds,
+        totalDeductions,
+        ctc: Math.round(calc.ctc),
+        basicDa: Math.round(calc.basic),
+        hra: Math.round(calc.hra),
+        advanceBonus: Math.round(calc.medical),
+        specialAllowance: Math.round(calc.personal),
+        breakupSum,
+      };
     };
-  }, [showGovernmentPayroll, grossSalary, pfEligible, esicEligible, ptMonthly, incomeTaxMonthly, privatePayrollConfig]);
+
+    const gross = Number(grossSalary);
+    if (!Number.isFinite(gross) || gross <= 0) return null;
+    const ptUsed = computeProfessionalTaxMonthly(gross, cfg, ptMonthly);
+    const br = defaultSalaryBreakup(gross, cfg);
+    const calc = computePayrollFromGross(gross, pfEligible, esicEligible, ptUsed, br, cfg);
+    return buildFromSnap(gross, calc);
+  }, [
+    showGovernmentPayroll,
+    grossSalary,
+    pfEligible,
+    esicEligible,
+    submitted,
+    ptMonthly,
+    incomeTaxMonthly,
+    privatePayrollConfig,
+  ]);
+
+  /** Align ESIC checkbox with policy (Basic+DA ≤ wage ceiling); user can override. Do not depend on `esicEligible` — converge CTC+gross like the API so auto-sync does not fight the checkbox. */
+  useEffect(() => {
+    // Only auto-recommend ESIC for Add employee. For Edit, keep the stored checkbox unless user changes it.
+    if (!open || mode !== "add" || showGovernmentPayroll || esicEligibilityUserOverrideRef.current) return;
+    const cfg = normalizePrivatePayrollConfig(privatePayrollConfig);
+    const ptFn = (g: number) => computeProfessionalTaxMonthly(g, cfg, ptMonthly);
+
+    const gross = Number(grossSalary);
+    if (!Number.isFinite(gross) || gross <= 0) return;
+    const basic = defaultSalaryBreakup(gross, cfg).basic;
+    setEsicEligible(isWithinEsicWageCeiling(basic, cfg));
+  }, [
+    open,
+    mode,
+    showGovernmentPayroll,
+    grossSalary,
+    pfEligible,
+    ptMonthly,
+    privatePayrollConfig,
+  ]);
+
+  /** Align PF checkbox with policy (Basic+DA ≤ PF wage cap); user can override. */
+  useEffect(() => {
+    // Only auto-recommend PF for Add employee. For Edit, keep the stored checkbox unless user changes it.
+    if (!open || mode !== "add" || showGovernmentPayroll || pfEligibilityUserOverrideRef.current) return;
+    const cfg = normalizePrivatePayrollConfig(privatePayrollConfig);
+
+    const gross = Number(grossSalary);
+    if (!Number.isFinite(gross) || gross <= 0) return;
+    const hra = defaultSalaryBreakup(gross, cfg).hra;
+    setPfEligible(isPfStatutorilyMandatory(gross, hra));
+  }, [open, mode, showGovernmentPayroll, grossSalary, ptMonthly, privatePayrollConfig]);
 
   if (!open) return null;
 
@@ -855,7 +938,7 @@ export function EmployeeFormModal({
                   {!showGovernmentPayroll ? (
                     <>
                       <label className="text-sm">
-                        <span className="text-gray-600">Gross (monthly)</span>
+                        <span className="text-gray-600">Gross total (monthly)</span>
                         <input
                           className={showErr("grossSalary") ? fieldErr : field}
                           inputMode="decimal"
@@ -867,7 +950,9 @@ export function EmployeeFormModal({
                           onBlur={() => markTouched("grossSalary")}
                           aria-invalid={showErr("grossSalary")}
                         />
-                        {showErr("grossSalary") && <div className="mt-1 text-xs text-red-700">{errors.grossSalary}</div>}
+                        {showErr("grossSalary") && (
+                          <div className="mt-1 text-xs text-red-700">{errors.grossSalary}</div>
+                        )}
                       </label>
                       <label className="text-sm">
                         <span className="text-gray-600">Income tax / month</span>
@@ -877,43 +962,138 @@ export function EmployeeFormModal({
                         <span className="text-gray-600">Statutory</span>
                         <div className="mt-1 flex flex-wrap gap-4">
                           <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
-                            <input type="checkbox" checked={pfEligible} onChange={(e) => setPfEligible(e.target.checked)} />
+                            <input
+                              type="checkbox"
+                              checked={pfEligible}
+                              onChange={(e) => {
+                                pfEligibilityUserOverrideRef.current = true;
+                                setPfEligible(e.target.checked);
+                              }}
+                            />
                             PF eligible
                           </label>
                           <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
-                            <input type="checkbox" checked={esicEligible} onChange={(e) => setEsicEligible(e.target.checked)} />
+                            <input
+                              type="checkbox"
+                              checked={esicEligible}
+                              onChange={(e) => {
+                                esicEligibilityUserOverrideRef.current = true;
+                                setEsicEligible(e.target.checked);
+                              }}
+                            />
                             ESIC eligible
                           </label>
                         </div>
                       </label>
                       {privatePreview && (
-                        <div className="sm:col-span-2 rounded-lg border border-gray-100 bg-gray-50 px-3 py-2">
-                          <div className="flex flex-wrap items-center justify-between gap-2">
-                            <div className="text-xs text-gray-600">
-                              Preview uses PT ₹{privatePreview.ptMonthly} + TDS ₹{Math.round(privatePreview.tds)}.
-                            </div>
-                            <div className="text-sm font-semibold text-gray-900">
-                              Take-home: ₹{privatePreview.takeHome.toLocaleString("en-IN")}
+                        <div className="sm:col-span-2 space-y-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
+                          <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Calculated preview</div>
+                          <p className="text-xs text-gray-600">
+                            <strong className="text-gray-800">Net Salary / Take Home</strong> = gross − PT − PF − ESIC (matches payslip statutory net).
+                            {privatePreview.tds > 0 ? (
+                              <>
+                                {" "}
+                                <strong className="text-gray-800">Take-home</strong> = net salary − income tax / month (TDS).
+                              </>
+                            ) : (
+                              <> With no TDS entered, take-home equals net salary.</>
+                            )}
+                          </p>
+
+                          <div>
+                            <div className="mb-1 text-[11px] font-medium uppercase text-gray-500">Salary breakup</div>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">
+                                  Gross total
+                                </div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.gross.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">Basic + DA</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.basicDa.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">HRA</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.hra.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">Advance bonus</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.advanceBonus.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">Special allowance</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.specialAllowance.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">Sum (check)</div>
+                                <div className="font-semibold tabular-nums text-gray-800">₹{privatePreview.breakupSum.toLocaleString("en-IN")}</div>
+                              </div>
                             </div>
                           </div>
-                          <div className="mt-2 grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs text-gray-700">
-                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1">
-                              <div className="text-[10px] uppercase text-gray-500">CTC</div>
-                              <div className="font-semibold">₹{privatePreview.ctc.toLocaleString("en-IN")}</div>
-                            </div>
-                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1">
-                              <div className="text-[10px] uppercase text-gray-500">PF (Emp)</div>
-                              <div className="font-semibold">₹{privatePreview.pfEmployee.toLocaleString("en-IN")}</div>
-                            </div>
-                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1">
-                              <div className="text-[10px] uppercase text-gray-500">ESIC (Emp)</div>
-                              <div className="font-semibold">₹{privatePreview.esicEmployee.toLocaleString("en-IN")}</div>
-                            </div>
-                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1">
-                              <div className="text-[10px] uppercase text-gray-500">TDS</div>
-                              <div className="font-semibold">₹{Math.round(privatePreview.tds).toLocaleString("en-IN")}</div>
+
+                          <div>
+                            <div className="mb-1 text-[11px] font-medium uppercase text-gray-500">Deductions (employee)</div>
+                            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">PT</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.ptMonthly.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">PF (emp)</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.pfEmployee.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">ESIC (emp)</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.esicEmployee.toLocaleString("en-IN")}</div>
+                              </div>
+                              <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">Total ded.</div>
+                                <div className="font-semibold tabular-nums">₹{privatePreview.totalDeductions.toLocaleString("en-IN")}</div>
+                              </div>
                             </div>
                           </div>
+
+                          <div className="flex flex-wrap items-end justify-between gap-3 border-t border-gray-200 pt-3">
+                            <div>
+                              <div className="text-[10px] uppercase text-gray-500">Net Salary / Take Home</div>
+                              <div className="text-lg font-semibold tabular-nums text-gray-900">
+                                ₹{privatePreview.netSalary.toLocaleString("en-IN")}
+                              </div>
+                            </div>
+                            {privatePreview.tds > 0 ? (
+                              <div>
+                                <div className="text-[10px] uppercase text-gray-500">Take-home (after TDS)</div>
+                                <div className="text-lg font-semibold tabular-nums text-emerald-800">
+                                  ₹{privatePreview.takeHomeAfterTds.toLocaleString("en-IN")}
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="grid grid-cols-2 gap-2 border-t border-gray-200 pt-3 sm:grid-cols-4">
+                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                                <div className="text-[10px] uppercase text-gray-500">CTC (Gross + Employer PF + Employer ESIC)</div>
+                              <div className="font-semibold tabular-nums">₹{privatePreview.ctc.toLocaleString("en-IN")}</div>
+                            </div>
+                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                              <div className="text-[10px] uppercase text-gray-500">PF (employer)</div>
+                              <div className="font-semibold tabular-nums">₹{privatePreview.pfEmployer.toLocaleString("en-IN")}</div>
+                            </div>
+                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                              <div className="text-[10px] uppercase text-gray-500">ESIC (employer)</div>
+                              <div className="font-semibold tabular-nums">₹{privatePreview.esicEmployer.toLocaleString("en-IN")}</div>
+                            </div>
+                            <div className="rounded-md bg-white border border-gray-100 px-2 py-1.5">
+                              <div className="text-[10px] uppercase text-gray-500">TDS (month)</div>
+                              <div className="font-semibold tabular-nums">₹{Math.round(privatePreview.tds).toLocaleString("en-IN")}</div>
+                            </div>
+                          </div>
+                          {!showGovernmentPayroll && (
+                            <p className="text-[11px] text-gray-500">
+                              ESIC checkbox updates from policy when Basic+DA is within the ceiling (≤ ₹21,000); change it manually if needed.
+                            </p>
+                          )}
                         </div>
                       )}
                     </>

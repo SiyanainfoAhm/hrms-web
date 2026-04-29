@@ -21,7 +21,7 @@ function normalizeHolidayEnd(start: string, endRaw: string | undefined): string 
   return endRaw;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const cookieStore = await cookies();
   const session = await getValidatedSession(cookieStore.get(COOKIE_NAME)?.value);
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -34,11 +34,38 @@ export async function GET() {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ holidays: [] });
 
-  const { data, error } = await supabase
-    .from("HRMS_holidays")
-    .select("*")
-    .eq("company_id", me.company_id)
-    .order("holiday_date", { ascending: true });
+  // Super admin can filter by division tab; employees see only their division + global (division_id null).
+  const { searchParams } = new URL(request.url);
+  const divisionIdParam = (searchParams.get("divisionId") || "").trim();
+
+  let divisionIdForFilter: string | null = null;
+  if (canManageHolidays(session.role)) {
+    // divisionIdParam: "" or "ALL" means no filter.
+    if (divisionIdParam && divisionIdParam.toUpperCase() !== "ALL") {
+      divisionIdForFilter = divisionIdParam;
+    } else {
+      divisionIdForFilter = null;
+    }
+  } else {
+    const { data: emp, error: empErr } = await supabase
+      .from("HRMS_employees")
+      .select("division_id")
+      .eq("company_id", me.company_id)
+      .eq("user_id", session.id)
+      .maybeSingle();
+    if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
+    divisionIdForFilter = (emp as any)?.division_id ? String((emp as any).division_id) : null;
+  }
+
+  let q = supabase.from("HRMS_holidays").select("*").eq("company_id", me.company_id);
+  if (divisionIdForFilter && !canManageHolidays(session.role)) {
+    // employee: global + their division
+    q = q.or(`division_id.is.null,division_id.eq.${divisionIdForFilter}`);
+  } else if (divisionIdForFilter && canManageHolidays(session.role)) {
+    // admin: exact division filter (no global unless stored with this division)
+    q = q.eq("division_id", divisionIdForFilter);
+  }
+  const { data, error } = await q.order("holiday_date", { ascending: true });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
   return NextResponse.json({ holidays: data ?? [] });
@@ -56,6 +83,12 @@ export async function POST(request: NextRequest) {
   const holidayEndDateRaw =
     typeof body?.holidayEndDate === "string" ? body.holidayEndDate.trim() : undefined;
   const location = typeof body?.location === "string" ? body.location.trim() : undefined;
+  const divisionId =
+    body?.divisionId === null
+      ? null
+      : typeof body?.divisionId === "string"
+        ? body.divisionId.trim() || null
+        : undefined;
   const isOptional = Boolean(body?.isOptional);
   if (!name || !holidayDate) return NextResponse.json({ error: "Name and date are required" }, { status: 400 });
   if (!isYmd(holidayDate)) return NextResponse.json({ error: "Invalid start date" }, { status: 400 });
@@ -75,6 +108,17 @@ export async function POST(request: NextRequest) {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
+  if (divisionId !== undefined && divisionId !== null) {
+    const { data: div, error: divErr } = await supabase
+      .from("HRMS_divisions")
+      .select("id")
+      .eq("company_id", me.company_id)
+      .eq("id", divisionId)
+      .maybeSingle();
+    if (divErr) return NextResponse.json({ error: divErr.message }, { status: 400 });
+    if (!div) return NextResponse.json({ error: "Invalid division" }, { status: 400 });
+  }
+
   const { data, error } = await supabase
     .from("HRMS_holidays")
     .insert([
@@ -84,6 +128,7 @@ export async function POST(request: NextRequest) {
         holiday_date: holidayDate,
         holiday_end_date: holidayEndDate,
         location: location || null,
+        division_id: divisionId === undefined ? null : divisionId,
         is_optional: isOptional,
       },
     ])

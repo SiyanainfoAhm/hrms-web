@@ -9,7 +9,12 @@ import Image from "next/image";
 import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
-import { computePayrollFromCtc, computePayrollFromGross, defaultSalaryBreakup } from "@/lib/payrollCalc";
+import {
+  computePayrollFromGross,
+  defaultSalaryBreakup,
+  isPfStatutorilyMandatory,
+  isWithinEsicWageCeiling,
+} from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import {
   computeGovernmentMonthlyPayroll,
@@ -296,7 +301,7 @@ function dayAfterYmd(isoYmd: string): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** True if the six components match `defaultSalaryBreakup(gross)` within rounding tolerance. */
+/** True if the six components match policy default split (Basic+DA, HRA rule, remainder heads) within rounding tolerance. */
 function isDefaultSalaryBreakupForGross(
   gross: number,
   basic: number,
@@ -304,10 +309,11 @@ function isDefaultSalaryBreakupForGross(
   medical: number,
   trans: number,
   lta: number,
-  personal: number
+  personal: number,
+  cfg: ReturnType<typeof normalizePrivatePayrollConfig>,
 ): boolean {
   if (gross <= 0) return false;
-  const d = defaultSalaryBreakup(gross);
+  const d = defaultSalaryBreakup(gross, cfg);
   const tol = 2;
   return (
     Math.abs(basic - d.basic) <= tol &&
@@ -338,8 +344,7 @@ function computeRowStatutory(
   >
 ) {
   const br = breakupIfMatchesGross(row);
-  const calc =
-    row.ctc > 0 ? computePayrollFromCtc(row.ctc, row.pfEligible, row.esicEligible, row.pt, br) : computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br);
+  const calc = computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br);
   const takeHome = Math.max(0, calc.takeHome - row.tds + row.advanceBonus);
   return {
     ctc: calc.ctc,
@@ -387,10 +392,7 @@ function computePreviewPrivateStatutory(row: {
         ? Math.round((Math.max(0, Number(row.grossPay) || 0) * denom) / Math.max(1, payPd))
         : Math.max(0, Math.round(Number(row.grossPay) || 0));
 
-  const monthlyCalc =
-    row.ctc > 0
-      ? computePayrollFromCtc(row.ctc, pfEligible, esicEligible, profMonth)
-      : computePayrollFromGross(fallbackMonthly, pfEligible, esicEligible, profMonth);
+  const monthlyCalc = computePayrollFromGross(fallbackMonthly, pfEligible, esicEligible, profMonth);
 
   const grossMonthly = Math.max(0, Math.round((monthlyCalc as any).gross ?? fallbackMonthly));
   const grossPay = Math.max(0, Math.round(grossMonthly * ratio));
@@ -580,7 +582,7 @@ function buildMasterGridRow(apiRow: any, companyPtFixed: number, privateCfg: Ret
   let lta = Number(m.lta) || 0;
   let personal = Number(m.personal) || 0;
   if (basic + hra + medical + trans + lta + personal === 0 && gross > 0) {
-    const d = defaultSalaryBreakup(gross);
+    const d = defaultSalaryBreakup(gross, privateCfg);
     basic = d.basic;
     hra = d.hra;
     medical = d.medical;
@@ -642,6 +644,7 @@ function PayrollPageContent() {
   const [masterFocusId, setMasterFocusId] = useState<string | null>(null);
   const [editMasterOpen, setEditMasterOpen] = useState<any>(null);
   const [editGross, setEditGross] = useState("");
+  /** Private payroll master: enter monthly Gross only (CTC is derived). */
   const [editBasic, setEditBasic] = useState("");
   const [editHra, setEditHra] = useState("");
   const [editMedical, setEditMedical] = useState("");
@@ -686,6 +689,12 @@ function PayrollPageContent() {
   const [editCpfDefault, setEditCpfDefault] = useState("0");
   const [editDaCpfDefault, setEditDaCpfDefault] = useState("0");
   const [editGovLevel, setEditGovLevel] = useState<number | null>(null);
+  /** User toggled ESIC in payroll master dialog — skip auto recommendation from Basic+DA ceiling (same as Add employee). */
+  const editMasterEsicOverrideRef = useRef(false);
+  /** User toggled PF in payroll master dialog — skip auto recommendation from Basic+DA ceiling (same as Add employee). */
+  const editMasterPfOverrideRef = useRef(false);
+  /** User edited salary breakup heads manually — keep them stable (do not auto-split from derived gross). */
+  const editMasterBreakupOverrideRef = useRef(false);
 
   const [runMonth, setRunMonth] = useState(() => String(new Date().getMonth() + 1).padStart(2, "0"));
   const [runYear, setRunYear] = useState(() => String(new Date().getFullYear()));
@@ -1433,13 +1442,8 @@ function PayrollPageContent() {
 
   function handleEditEffectiveStartChange(v: string) {
     setEditEffectiveDate(v);
-    setEditPreviousEndDate((prev) => {
-      const cap = dayBeforeYmd(v);
-      if (!cap) return prev;
-      if (!prev || prev >= v) return cap;
-      if (prev > cap) return cap;
-      return prev;
-    });
+    const previousDay = dayBeforeYmd(v);
+    setEditPreviousEndDate(previousDay || "");
   }
 
   const editMasterPreview = useMemo(() => {
@@ -1503,7 +1507,9 @@ function PayrollPageContent() {
         return null;
       }
     }
-    const gross = parseFloat(editGross) || 0;
+    const cfg = normalizePrivatePayrollConfig(privatePayrollCfg);
+    const ptParsed = parseFloat(editPt);
+    const ptFallback = Number.isFinite(ptParsed) && ptParsed >= 0 ? ptParsed : companyPt;
     const basic = parseFloat(editBasic) || 0;
     const hra = parseFloat(editHra) || 0;
     const medical = parseFloat(editMedical) || 0;
@@ -1513,13 +1519,21 @@ function PayrollPageContent() {
     const componentsSum = basic + hra + medical + trans + lta + personal;
     const salaryBreakup =
       componentsSum > 0 ? { basic, hra, medical, trans, lta, personal } : undefined;
-    const ptParsed = parseFloat(editPt);
-    const ptMonthly = Number.isFinite(ptParsed) && ptParsed >= 0 ? ptParsed : companyPt;
     const tds = parseFloat(editTds) || 0;
     const advanceBonus = parseFloat(editAdvanceBonus) || 0;
-    const calc = computePayrollFromGross(gross, editPfEligible, editEsicEligible, ptMonthly, salaryBreakup);
+
+    const gross = parseFloat(editGross) || 0;
+    if (!Number.isFinite(gross) || gross <= 0) return null;
+    const ptMonth = computeProfessionalTaxMonthly(gross, cfg, ptFallback);
+    const calc = computePayrollFromGross(gross, editPfEligible, editEsicEligible, ptMonth, salaryBreakup, cfg);
     const takeHome = Math.max(0, calc.takeHome - tds + advanceBonus);
-    return { ...calc, takeHome, ptMonthly, tds, advanceBonus };
+    return {
+      ...calc,
+      takeHome,
+      ptMonthly: ptMonth,
+      tds,
+      advanceBonus,
+    };
   }, [
     editMasterOpen,
     editPayrollMode,
@@ -1545,6 +1559,50 @@ function PayrollPageContent() {
     editTds,
     editAdvanceBonus,
     companyPt,
+    privatePayrollCfg,
+  ]);
+
+  useEffect(() => {
+    if (!editMasterOpen) editMasterEsicOverrideRef.current = false;
+  }, [editMasterOpen]);
+
+  useEffect(() => {
+    if (!editMasterOpen) editMasterPfOverrideRef.current = false;
+  }, [editMasterOpen]);
+
+  useEffect(() => {
+    if (!editMasterOpen) editMasterBreakupOverrideRef.current = false;
+  }, [editMasterOpen]);
+
+  /** Private payroll master: align PF with policy unless the user checked/unchecked manually. */
+  useEffect(() => {
+    if (!editMasterOpen || editPayrollMode !== "private" || editMasterPfOverrideRef.current) return;
+    const cfg = normalizePrivatePayrollConfig(privatePayrollCfg);
+    const gross = parseFloat(editGross);
+    if (!Number.isFinite(gross) || gross <= 0) return;
+    const hra = defaultSalaryBreakup(gross, cfg).hra;
+    setEditPfEligible(isPfStatutorilyMandatory(gross, hra));
+  }, [editMasterOpen, editPayrollMode, editGross, privatePayrollCfg]);
+
+  /** Private payroll master: align ESIC with policy unless the user checked/unchecked manually. */
+  useEffect(() => {
+    if (!editMasterOpen || editPayrollMode !== "private" || editMasterEsicOverrideRef.current) return;
+    const cfg = normalizePrivatePayrollConfig(privatePayrollCfg);
+    const ptParsed = parseFloat(editPt);
+    const ptFallback = Number.isFinite(ptParsed) && ptParsed >= 0 ? ptParsed : companyPt;
+
+    const gross = parseFloat(editGross);
+    if (!Number.isFinite(gross) || gross <= 0) return;
+    const basic = defaultSalaryBreakup(gross, cfg).basic;
+    setEditEsicEligible(isWithinEsicWageCeiling(basic, cfg));
+  }, [
+    editMasterOpen,
+    editPayrollMode,
+    editGross,
+    editPfEligible,
+    editPt,
+    companyPt,
+    privatePayrollCfg,
   ]);
 
   const masterHasGovernment = useMemo(
@@ -1582,15 +1640,18 @@ function PayrollPageContent() {
 
   /** Opens the salary breakup modal from the current grid row (includes unsaved inline edits). */
   function openPayrollMasterEditDialog(gridRow: MasterGridRow, apiRow?: any) {
+    editMasterEsicOverrideRef.current = false;
+    editMasterPfOverrideRef.current = false;
+    editMasterBreakupOverrideRef.current = false;
     setPayrollMasterHistory([]);
     const gross = gridRow.gross;
     const componentsSum =
       gridRow.basic + gridRow.hra + gridRow.medical + gridRow.trans + gridRow.lta + gridRow.personal;
-    /** If stored components don’t add up to gross, use the standard split for gross (Basic 50%, HRA 20%, etc.). */
+    /** If stored components don’t add up to gross, use policy default (Basic+DA %, HRA threshold rule, remainder). */
     const split =
       gross > 0 &&
       (componentsSum === 0 || Math.abs(componentsSum - gross) > 2)
-        ? defaultSalaryBreakup(gross)
+        ? defaultSalaryBreakup(gross, privatePayrollCfg)
         : componentsSum > 0
           ? {
               basic: gridRow.basic,
@@ -1600,7 +1661,7 @@ function PayrollPageContent() {
               lta: gridRow.lta,
               personal: gridRow.personal,
             }
-          : defaultSalaryBreakup(gross);
+          : defaultSalaryBreakup(gross, privatePayrollCfg);
     setEditMasterTab("structure");
     setEditBankName(String(apiRow?.bankName ?? ""));
     setEditBankAccountHolderName(String(apiRow?.bankAccountHolderName ?? ""));
@@ -1855,13 +1916,19 @@ function PayrollPageContent() {
         setEditSaving(false);
         return;
       }
-      const gross = parseFloat(editGross) || 0;
       const basic = parseFloat(editBasic) || 0;
       const hra = parseFloat(editHra) || 0;
       const medical = parseFloat(editMedical) || 0;
       const trans = parseFloat(editTrans) || 0;
       const lta = parseFloat(editLta) || 0;
       const personal = parseFloat(editPersonal) || 0;
+
+      const gross = parseFloat(editGross) || 0;
+      if (gross <= 0) {
+        showToast("error", "Monthly gross salary is required.");
+        setEditSaving(false);
+        return;
+      }
       const res = await fetch("/api/payroll/master", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -2115,7 +2182,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                step={100}
+                                step={1}
                                 className={inpGross}
                                 value={row.gross}
                                 onChange={(e) =>
@@ -2164,7 +2231,7 @@ function PayrollPageContent() {
                                 <input
                                   type="number"
                                   min={0}
-                                  step={100}
+                                  step={1}
                                   className={inp}
                                   value={row.medicalFixed}
                                   onChange={(e) =>
@@ -2275,7 +2342,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                step={100}
+                                step={1}
                                 className={inp}
                                 value={isGov ? row.incomeTaxDefault : row.tds}
                                 onChange={(e) => {
@@ -2312,7 +2379,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                step={100}
+                                step={1}
                                 className={inp}
                                 value={row.advanceBonus}
                                 onChange={(e) =>
@@ -2490,7 +2557,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                step={100}
+                                step={1}
                                 className={inpGross}
                                 value={row.gross}
                                 onChange={(e) =>
@@ -2539,7 +2606,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                step={100}
+                                step={1}
                                 className={inp}
                                 value={row.advanceBonus}
                                 onChange={(e) =>
@@ -2567,7 +2634,7 @@ function PayrollPageContent() {
                               <input
                                 type="number"
                                 min={0}
-                                step={100}
+                                step={1}
                                 className={inp}
                                 value={row.tds}
                                 onChange={(e) =>
@@ -2773,7 +2840,7 @@ function PayrollPageContent() {
                     <input
                       type="number"
                       min="0"
-                      step="100"
+                      step="1"
                       value={editGrossBasic}
                       onChange={(e) => setEditGrossBasic(e.target.value)}
                       required
@@ -2791,7 +2858,7 @@ function PayrollPageContent() {
                     </div>
                     <div>
                       <label className="text-slate-600">Medical (fixed)</label>
-                      <input type="number" step="100" value={editMedicalFixed} onChange={(e) => setEditMedicalFixed(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                      <input type="number" step="1" value={editMedicalFixed} onChange={(e) => setEditMedicalFixed(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
                     </div>
                     <div>
                       <label className="text-slate-600">Transport DA %</label>
@@ -2818,13 +2885,13 @@ function PayrollPageContent() {
                   </div>
                 </div>
               ) : (
-              <>
+              <div className="space-y-4">
               <div>
                 <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly) *</label>
                 <input
                   type="number"
                   min="0"
-                  step="100"
+                  step="1"
                   value={editGross}
                   onChange={(e) => {
                     const v = e.target.value;
@@ -2842,9 +2909,9 @@ function PayrollPageContent() {
                     const empty = sum === 0;
                     const wasDefaultForPrev =
                       prevGross > 0 &&
-                      isDefaultSalaryBreakupForGross(prevGross, basic, hra, medical, trans, lta, personal);
+                      isDefaultSalaryBreakupForGross(prevGross, basic, hra, medical, trans, lta, personal, privatePayrollCfg);
                     if (empty || wasDefaultForPrev) {
-                      const s = defaultSalaryBreakup(g);
+                      const s = defaultSalaryBreakup(g, privatePayrollCfg);
                       setEditBasic(String(s.basic));
                       setEditHra(String(s.hra));
                       setEditMedical(String(s.medical));
@@ -2864,7 +2931,7 @@ function PayrollPageContent() {
                       (parseFloat(editLta) || 0) +
                       (parseFloat(editPersonal) || 0);
                     if (Math.abs(sum - g) > 2) {
-                      const s = defaultSalaryBreakup(g);
+                      const s = defaultSalaryBreakup(g, privatePayrollCfg);
                       setEditBasic(String(s.basic));
                       setEditHra(String(s.hra));
                       setEditMedical(String(s.medical));
@@ -2881,35 +2948,95 @@ function PayrollPageContent() {
                 <p className="mb-2 text-xs font-medium text-slate-600">Salary breakdown (optional, for payslip)</p>
                 <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                   <div>
-                    <label className="text-slate-600">Basic</label>
-                    <input type="number" min="0" step="100" value={editBasic} onChange={(e) => setEditBasic(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <label className="text-slate-600">Basic + DA</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editBasic}
+                      onChange={(e) => {
+                        editMasterBreakupOverrideRef.current = true;
+                        setEditBasic(e.target.value);
+                      }}
+                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
                   </div>
                   <div>
                     <label className="text-slate-600">HRA</label>
-                    <input type="number" min="0" step="100" value={editHra} onChange={(e) => setEditHra(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editHra}
+                      onChange={(e) => {
+                        editMasterBreakupOverrideRef.current = true;
+                        setEditHra(e.target.value);
+                      }}
+                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
                   </div>
                   <div>
-                    <label className="text-slate-600">Medical</label>
-                    <input type="number" min="0" step="1" value={editMedical} onChange={(e) => setEditMedical(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <label className="text-slate-600">Advance bonus</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editMedical}
+                      onChange={(e) => {
+                        editMasterBreakupOverrideRef.current = true;
+                        setEditMedical(e.target.value);
+                      }}
+                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
                   </div>
                   <div>
                     <label className="text-slate-600">Trans</label>
-                    <input type="number" min="0" step="1" value={editTrans} onChange={(e) => setEditTrans(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editTrans}
+                      onChange={(e) => {
+                        editMasterBreakupOverrideRef.current = true;
+                        setEditTrans(e.target.value);
+                      }}
+                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
                   </div>
                   <div>
                     <label className="text-slate-600">LTA</label>
-                    <input type="number" min="0" step="1" value={editLta} onChange={(e) => setEditLta(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editLta}
+                      onChange={(e) => {
+                        editMasterBreakupOverrideRef.current = true;
+                        setEditLta(e.target.value);
+                      }}
+                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
                   </div>
                   <div>
-                    <label className="text-slate-600">Personal</label>
-                    <input type="number" min="0" step="1" value={editPersonal} onChange={(e) => setEditPersonal(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                    <label className="text-slate-600">Special allowance</label>
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={editPersonal}
+                      onChange={(e) => {
+                        editMasterBreakupOverrideRef.current = true;
+                        setEditPersonal(e.target.value);
+                      }}
+                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                    />
                   </div>
                 </div>
                 <p className="mt-2 text-xs text-slate-500">
-                  Leave all blank for auto-split from gross. When gross changes, Basic/HRA and other heads update if you were on the standard split. If the six fields don’t add up to gross, tab out of gross to align them.
+                  Leave all blank for auto-split from monthly gross (Basic+DA share, HRA threshold rule, remainder). The separate “Advance bonus” below adjusts take-home on top of statutory net.
                 </p>
               </div>
-              </>
+              </div>
               )}
               {editMasterPreview && (
                 <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
@@ -2976,8 +3103,10 @@ function PayrollPageContent() {
                       tds: number;
                       advanceBonus: number;
                     };
+                    const hasPrivateAmount = (parseFloat(editGross) || 0) > 0;
                     return (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 text-sm">
+                  <div className="space-y-2 text-sm">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                     <div>
                       <span className="text-slate-500">CTC </span>
                       <span className="font-medium tabular-nums text-slate-900">
@@ -2987,15 +3116,15 @@ function PayrollPageContent() {
                       </span>
                     </div>
                     <div>
-                      <span className="text-slate-500">Take home </span>
+                      <span className="text-slate-500">Net Salary / Take Home </span>
                       <span className="font-medium tabular-nums text-slate-900">
-                        {(parseFloat(editGross) || 0) > 0
+                        {hasPrivateAmount
                           ? `₹${Math.round(pv.takeHome).toLocaleString("en-IN")}`
                           : "—"}
                       </span>
                     </div>
                     <div className="text-xs text-slate-500 sm:col-span-1">
-                      {(parseFloat(editGross) || 0) > 0 && (
+                      {hasPrivateAmount && (
                         <>
                           PT ₹{Math.round(pv.ptMonthly).toLocaleString("en-IN")}
                           {pv.pfEmp > 0 && ` · PF ₹${Math.round(pv.pfEmp).toLocaleString("en-IN")}`}
@@ -3007,6 +3136,7 @@ function PayrollPageContent() {
                       )}
                     </div>
                   </div>
+                  </div>
                     );
                   })()
                   )}
@@ -3016,14 +3146,31 @@ function PayrollPageContent() {
                 <>
               <div className="flex gap-4">
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={editPfEligible} onChange={(e) => setEditPfEligible(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={editPfEligible}
+                    onChange={(e) => {
+                      editMasterPfOverrideRef.current = true;
+                      setEditPfEligible(e.target.checked);
+                    }}
+                  />
                   PF eligible
                 </label>
                 <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={editEsicEligible} onChange={(e) => setEditEsicEligible(e.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={editEsicEligible}
+                    onChange={(e) => {
+                      editMasterEsicOverrideRef.current = true;
+                      setEditEsicEligible(e.target.checked);
+                    }}
+                  />
                   ESIC eligible
                 </label>
               </div>
+              <p className="text-xs text-slate-500">
+                ESIC follows policy when Basic+DA is within the ceiling (≤ ₹21,000 by default); change the checkbox to override. Same behaviour as Add employee.
+              </p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">PT (monthly)</label>
@@ -3041,7 +3188,7 @@ function PayrollPageContent() {
                   <input
                     type="number"
                     min={0}
-                    step={100}
+                    step={1}
                     value={editTds}
                     onChange={(e) => setEditTds(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -3052,7 +3199,7 @@ function PayrollPageContent() {
                   <input
                     type="number"
                     min={0}
-                    step={100}
+                    step={1}
                     value={editAdvanceBonus}
                     onChange={(e) => setEditAdvanceBonus(e.target.value)}
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -3066,7 +3213,7 @@ function PayrollPageContent() {
                   <input
                     type="number"
                     min={0}
-                    step={100}
+                    step={1}
                     value={editAdvanceBonus}
                     onChange={(e) => setEditAdvanceBonus(e.target.value)}
                     className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
@@ -3289,7 +3436,7 @@ function PayrollPageContent() {
                         : "Payroll generated for this period. Values are read-only."
                       : previewAllGovernment
                         ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. Note: Days can be 0.5 — if active hours < 8, the day counts as 0.5 and the missing 0.5 is covered by available Earned Leave (EL) when possible; otherwise pay days reduce by 0.5."}
+                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. For now, default pay days follow calendar days (including holidays) minus unpaid leave days."}
                   </p>
                   {previewAllGovernment && preview?.daysInMonth ? (
                     <GovernmentRunPreviewTable

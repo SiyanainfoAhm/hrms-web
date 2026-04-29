@@ -15,6 +15,7 @@ type Holiday = {
   holiday_end_date: string | null;
   is_optional: boolean;
   location: string | null;
+  division_id?: string | null;
 };
 
 const TAB_ALL = "ALL";
@@ -50,7 +51,8 @@ export default function HolidaysPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [activeLocationTab, setActiveLocationTab] = useState<string>(TAB_ALL);
+  const [divisions, setDivisions] = useState<{ id: string; name: string; is_active?: boolean }[]>([]);
+  const [activeDivisionTab, setActiveDivisionTab] = useState<string>(TAB_ALL);
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingHoliday, setEditingHoliday] = useState<Holiday | null>(null);
@@ -58,7 +60,7 @@ export default function HolidaysPage() {
   const [holidayDate, setHolidayDate] = useState("");
   const [holidayEndDate, setHolidayEndDate] = useState("");
   const [location, setLocation] = useState("");
-  const [isOptional, setIsOptional] = useState(false);
+  const [divisionId, setDivisionId] = useState<string>("");
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
@@ -66,32 +68,21 @@ export default function HolidaysPage() {
   const [holidayListPage, setHolidayListPage] = useState(1);
   const holidayPageSize = useResponsivePageSize();
 
-  const locationTabs = useMemo(() => {
-    const locs = new Set<string>();
-    let hasEmpty = false;
-    for (const h of holidays) {
-      const t = (h.location || "").trim();
-      if (!t) hasEmpty = true;
-      else locs.add(t);
-    }
-    const sorted = [...locs].sort((a, b) => a.localeCompare(b));
-    const tabs: { key: string; label: string }[] = [{ key: TAB_ALL, label: "All locations" }];
-    if (hasEmpty) tabs.push({ key: TAB_EMPTY, label: "All offices" });
-    for (const loc of sorted) tabs.push({ key: loc, label: loc });
-    return tabs;
-  }, [holidays]);
+  const divisionTabs = useMemo(() => {
+    if (!canManage) return [];
+    const list = (divisions ?? []).filter((d) => d?.is_active !== false);
+    const sorted = [...list].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    return [{ key: TAB_ALL, label: "All" }, ...sorted.map((d) => ({ key: d.id, label: d.name }))];
+  }, [divisions, canManage]);
 
   const filteredHolidays = useMemo(() => {
-    let list: Holiday[];
-    if (activeLocationTab === TAB_ALL) list = [...holidays];
-    else if (activeLocationTab === TAB_EMPTY) list = holidays.filter((h) => !(h.location || "").trim());
-    else list = holidays.filter((h) => (h.location || "").trim() === activeLocationTab);
-    return list.sort((a, b) => String(a.holiday_date).localeCompare(String(b.holiday_date)));
-  }, [holidays, activeLocationTab]);
+    // Server already filters for employees; for super admin tabs are server-driven as well.
+    return [...holidays].sort((a, b) => String(a.holiday_date).localeCompare(String(b.holiday_date)));
+  }, [holidays]);
 
   useEffect(() => {
     setHolidayListPage(1);
-  }, [activeLocationTab]);
+  }, [activeDivisionTab]);
 
   useEffect(() => {
     const tp = Math.max(1, Math.ceil(filteredHolidays.length / holidayPageSize));
@@ -108,15 +99,40 @@ export default function HolidaysPage() {
   }, [holidayPageSize]);
 
   useEffect(() => {
-    const keys = new Set(locationTabs.map((t) => t.key));
-    if (!keys.has(activeLocationTab)) setActiveLocationTab(TAB_ALL);
-  }, [locationTabs, activeLocationTab]);
+    if (!canManage) return;
+    const keys = new Set(divisionTabs.map((t) => t.key));
+    if (!keys.has(activeDivisionTab)) setActiveDivisionTab(TAB_ALL);
+  }, [divisionTabs, activeDivisionTab, canManage]);
+
+  useEffect(() => {
+    if (!canManage) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/settings/divisions");
+        const data = await res.json().catch(() => ({}));
+        if (!cancelled && res.ok) {
+          setDivisions(data.divisions ?? []);
+        }
+      } catch {
+        if (!cancelled) setDivisions([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManage]);
 
   async function loadHolidays() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch("/api/holidays");
+      const params = new URLSearchParams();
+      if (canManage) {
+        params.set("divisionId", activeDivisionTab);
+      }
+      const url = params.toString() ? `/api/holidays?${params.toString()}` : "/api/holidays";
+      const res = await fetch(url);
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to load holidays");
       setHolidays(data.holidays || []);
@@ -136,7 +152,7 @@ export default function HolidaysPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [activeDivisionTab, canManage]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -161,7 +177,7 @@ export default function HolidaysPage() {
     setHolidayDate("");
     setHolidayEndDate("");
     setLocation("");
-    setIsOptional(false);
+    setDivisionId("");
   }
 
   function openAddDialog() {
@@ -178,7 +194,7 @@ export default function HolidaysPage() {
     const start = String(h.holiday_date).slice(0, 10);
     setHolidayEndDate(end && end !== start ? end : "");
     setLocation((h.location || "").trim());
-    setIsOptional(Boolean(h.is_optional));
+    setDivisionId(h.division_id ? String(h.division_id) : "");
     setIsDialogOpen(true);
   }
 
@@ -203,7 +219,7 @@ export default function HolidaysPage() {
             holidayDate,
             holidayEndDate: endPayload,
             location: location.trim() || null,
-            isOptional,
+            divisionId: divisionId || null,
           }),
         });
         const data = await res.json();
@@ -221,7 +237,7 @@ export default function HolidaysPage() {
             holidayDate,
             ...(endPayload ? { holidayEndDate: endPayload } : {}),
             location: location.trim() || undefined,
-            isOptional,
+            divisionId: divisionId || null,
           }),
         });
         const data = await res.json();
@@ -271,13 +287,13 @@ export default function HolidaysPage() {
 
       {!loading && holidays.length > 0 && (
         <div className="flex flex-wrap gap-2 border-b border-slate-200 pb-3">
-          {locationTabs.map((tab) => (
+          {divisionTabs.map((tab) => (
             <button
               key={tab.key}
               type="button"
-              onClick={() => setActiveLocationTab(tab.key)}
+              onClick={() => setActiveDivisionTab(tab.key)}
               className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${
-                activeLocationTab === tab.key
+                activeDivisionTab === tab.key
                   ? "bg-[var(--primary)] text-white shadow-sm ring-1 ring-black/5 hover:brightness-95"
                   : "border border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
               }`}
@@ -352,6 +368,25 @@ export default function HolidaysPage() {
                   <p className="mt-1 text-xs text-slate-500">Leave empty or same as start for a single day.</p>
                 </div>
                 <div className="md:col-span-4">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Division</label>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:outline-none focus-visible:shadow-[var(--focus-ring)]"
+                    value={divisionId}
+                    onChange={(e) => setDivisionId(e.target.value)}
+                  >
+                    <option value="">All divisions</option>
+                    {(divisions ?? [])
+                      .filter((d) => d?.is_active !== false)
+                      .sort((a, b) => String(a.name).localeCompare(String(b.name)))
+                      .map((d) => (
+                        <option key={d.id} value={d.id}>
+                          {d.name}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">Leave as “All divisions” to apply company-wide.</p>
+                </div>
+                <div className="md:col-span-4">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Location (optional)</label>
                   <input
                     type="text"
@@ -362,10 +397,7 @@ export default function HolidaysPage() {
                   />
                 </div>
                 <div className="md:col-span-4 flex flex-wrap items-center justify-between gap-3">
-                  <label className="flex items-center gap-2 text-sm text-slate-700">
-                    <input type="checkbox" checked={isOptional} onChange={(e) => setIsOptional(e.target.checked)} />
-                    Optional holiday
-                  </label>
+                  <div />
                   <div className="flex flex-col items-end">
                     {formError && <p className="text-sm text-red-600">{formError}</p>}
                     <div className="flex gap-2">
@@ -446,7 +478,7 @@ export default function HolidaysPage() {
         ) : holidays.length === 0 ? (
           <p className="muted">No holidays configured.</p>
         ) : filteredHolidays.length === 0 ? (
-          <p className="muted">No holidays for this location.</p>
+          <p className="muted">{canManage ? "No holidays for this division." : "No holidays found."}</p>
         ) : (
           <>
             {filteredHolidays.length > holidayPageSize && (

@@ -22,11 +22,24 @@ export type PrivatePayrollConfig = {
   pfCap: number;
   esicEmployeeRate: number;
   esicEmployerRate: number;
-  esicGrossCeilingInclusive: number;
+  /** Max Basic+DA (monthly) for ESIC contributions (same as statutory “₹21,000” gross threshold, applied to wage column E). */
+  esicWageCeilingInclusive: number;
+  /**
+   * If true, ESIC can be applied even when Basic+DA is above the ceiling,
+   * as long as the user explicitly marks ESIC eligible (manual override).
+   */
+  esicApplyAboveCeilingWhenEligible?: boolean;
   ptMonthlyDefault: number;
   ptMode?: "fixed" | "slab";
   ptSlabs?: PrivatePayrollPtSlab[];
   breakupPct: PrivatePayrollBreakupPct;
+  /** HRA = basicDa × rate when (basicDa × rate) ≥ threshold; otherwise 0 (common ₹6,000 floor on the HRA amount). */
+  hraRateOnBasicDa: number;
+  hraZeroWhenPotentialHraBelow: number;
+  /** IF(gross×basic% ≤ floor, Basic+DA = floor, else ROUND(gross×basic%)). */
+  basicDaFloorWhenHalfGrossLow: number;
+  /** Advance bonus column (stored as `medical`): ROUND(Basic+DA × rate). Default 8.33%. */
+  advanceBonusRateOnBasic: number;
 };
 
 export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
@@ -35,7 +48,9 @@ export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
   pfCap: 1800,
   esicEmployeeRate: 0.0075,
   esicEmployerRate: 0.0325,
-  esicGrossCeilingInclusive: 21000,
+  esicWageCeilingInclusive: 21000,
+  // Excel/statutory behaviour: ESIC applies only when Basic+DA is within ceiling (≤ 21,000).
+  esicApplyAboveCeilingWhenEligible: false,
   ptMonthlyDefault: 200,
   // Default to slabs (matches common PT practice and PowerApps logic used in this project).
   ptMode: "slab",
@@ -45,14 +60,19 @@ export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
     { minInclusive: 9000, maxExclusive: 12000, amount: 150 },
     { minInclusive: 12000, maxExclusive: null, amount: 200 },
   ],
+  // Basic is typically 50% of gross; HRA follows `hraRateOnBasicDa` + floor rule; remainder is special allowance (personal).
   breakupPct: {
     basicPct: 0.5,
-    hraPct: 0.2,
-    medicalPct: 0.05,
-    transPct: 0.05,
-    ltaPct: 0.1,
-    personalPct: 0.1,
+    hraPct: 0,
+    medicalPct: 0,
+    transPct: 0,
+    ltaPct: 0,
+    personalPct: 0,
   },
+  hraRateOnBasicDa: 0.4,
+  hraZeroWhenPotentialHraBelow: 6000,
+  basicDaFloorWhenHalfGrossLow: 14290,
+  advanceBonusRateOnBasic: 0.0833,
 };
 
 function n(v: unknown): number | null {
@@ -129,20 +149,50 @@ export function normalizePrivatePayrollConfig(raw: unknown): PrivatePayrollConfi
     personalPct: pct(bp.personalPct) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.breakupPct.personalPct,
   };
 
+  const hraRateOnBasicDa = clamp(
+    n(r.hraRateOnBasicDa) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.hraRateOnBasicDa,
+    0,
+    1,
+  );
+  const hraZeroWhenPotentialHraBelow = Math.max(
+    0,
+    n(r.hraZeroWhenPotentialHraBelow) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.hraZeroWhenPotentialHraBelow,
+  );
+
+  const basicDaFloorWhenHalfGrossLow = Math.max(
+    0,
+    n(r.basicDaFloorWhenHalfGrossLow) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.basicDaFloorWhenHalfGrossLow,
+  );
+  const advanceBonusRateOnBasic = clamp(
+    n(r.advanceBonusRateOnBasic) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.advanceBonusRateOnBasic,
+    0,
+    1,
+  );
+
   return {
     pfRate: clamp(n(r.pfRate) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.pfRate, 0, 1),
     pfWageCap: Math.max(0, n(r.pfWageCap) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.pfWageCap),
     pfCap: Math.max(0, n(r.pfCap) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.pfCap),
     esicEmployeeRate: clamp(n(r.esicEmployeeRate) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.esicEmployeeRate, 0, 1),
     esicEmployerRate: clamp(n(r.esicEmployerRate) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.esicEmployerRate, 0, 1),
-    esicGrossCeilingInclusive: Math.max(
+    esicWageCeilingInclusive: Math.max(
       0,
-      n(r.esicGrossCeilingInclusive) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.esicGrossCeilingInclusive,
+      n(r.esicWageCeilingInclusive) ??
+        n(r.esicGrossCeilingInclusive) ??
+        DEFAULT_PRIVATE_PAYROLL_CONFIG.esicWageCeilingInclusive,
     ),
+    esicApplyAboveCeilingWhenEligible:
+      typeof r.esicApplyAboveCeilingWhenEligible === "boolean"
+        ? r.esicApplyAboveCeilingWhenEligible
+        : DEFAULT_PRIVATE_PAYROLL_CONFIG.esicApplyAboveCeilingWhenEligible,
     ptMonthlyDefault: Math.max(0, n(r.ptMonthlyDefault) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.ptMonthlyDefault),
     ptMode,
     ptSlabs: ptSlabs.length ? ptSlabs : DEFAULT_PRIVATE_PAYROLL_CONFIG.ptSlabs,
     breakupPct,
+    hraRateOnBasicDa,
+    hraZeroWhenPotentialHraBelow,
+    basicDaFloorWhenHalfGrossLow,
+    advanceBonusRateOnBasic,
   };
 }
 

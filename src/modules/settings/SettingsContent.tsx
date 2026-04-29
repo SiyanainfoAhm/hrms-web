@@ -1359,17 +1359,17 @@ export function SettingsContent() {
 
                   <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     <label className="text-sm">
-                      <span className="text-slate-600">ESIC ceiling (₹)</span>
+                      <span className="text-slate-600">ESIC wage ceiling — Basic+DA max (₹)</span>
                       <input
                         className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                         type="number"
                         step="1"
                         min="0"
-                        value={payrollCfg.esicGrossCeilingInclusive}
+                        value={payrollCfg.esicWageCeilingInclusive}
                         onChange={(e) =>
                           setPayrollCfg((p) => ({
                             ...p,
-                            esicGrossCeilingInclusive: Math.max(0, Number(e.target.value) || 0),
+                            esicWageCeilingInclusive: Math.max(0, Number(e.target.value) || 0),
                           }))
                         }
                       />

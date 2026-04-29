@@ -9,6 +9,7 @@ import {
   deriveTransportSlabFromLevel,
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
+import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -441,22 +442,41 @@ export async function PATCH(request: NextRequest) {
     .eq("id", me.company_id)
     .single();
   const companyPt = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
-  const ptMonthly = ptOverride != null && Number.isFinite(ptOverride) ? ptOverride : companyPt;
+  const ptMonthlyFallback = ptOverride != null && Number.isFinite(ptOverride) ? ptOverride : companyPt;
+
+  let privateCfg = normalizePrivatePayrollConfig(null);
+  try {
+    const { data: cfgRow } = await supabase
+      .from("HRMS_company_payroll_config")
+      .select("private_config")
+      .eq("company_id", me.company_id)
+      .maybeSingle();
+    privateCfg = normalizePrivatePayrollConfig((cfgRow as { private_config?: unknown } | null)?.private_config);
+  } catch {
+    // ignore
+  }
 
   const salaryBreakup = componentsSum > 0
     ? { basic, hra, medical, trans, lta, personal }
     : undefined;
   const inputCtc = body?.ctc != null && Number.isFinite(Number(body.ctc)) ? Math.max(0, Number(body.ctc)) : null;
   const calcLib = await import("@/lib/payrollCalc");
+  const ptFromGross = (g: number) => computeProfessionalTaxMonthly(g, privateCfg, ptMonthlyFallback);
+  const grossRoundedInitial = Math.max(0, Math.round(Number(grossSalary) || 0));
+  const ptForGrossPath = computeProfessionalTaxMonthly(grossRoundedInitial, privateCfg, ptMonthlyFallback);
+
   const calc =
     inputCtc != null && inputCtc > 0
-      ? calcLib.computePayrollFromCtc(inputCtc, pfEligible, esicEligible, ptMonthly, salaryBreakup)
-      : calcLib.computePayrollFromGross(grossSalary, pfEligible, esicEligible, ptMonthly, salaryBreakup);
+      ? calcLib.computePayrollFromCtc(inputCtc, pfEligible, esicEligible, ptFromGross, salaryBreakup, privateCfg)
+      : calcLib.computePayrollFromGross(grossSalary, pfEligible, esicEligible, ptForGrossPath, salaryBreakup, privateCfg);
   const { pfEmp, pfEmpr, esicEmp, esicEmpr, ctc, takeHome: baseTakeHome, basic: calcBasic, hra: calcHra, medical: calcMedical, trans: calcTrans, lta: calcLta, personal: calcPersonal } = calc;
   const takeHome = Math.max(0, baseTakeHome - tdsVal + advanceBonusVal);
-  if (inputCtc != null && inputCtc > 0 && (calc as any).gross != null) {
-    grossSalary = Number((calc as any).gross) || grossSalary;
+  if (inputCtc != null && inputCtc > 0 && (calc as { gross?: number }).gross != null) {
+    grossSalary = Number((calc as { gross?: number }).gross) || grossSalary;
   }
+
+  const grossFinal = Math.max(0, Math.round(Number(grossSalary) || 0));
+  const ptStored = computeProfessionalTaxMonthly(grossFinal, privateCfg, ptMonthlyFallback);
 
   const salaryComponents = {
     basic: calcBasic,
@@ -480,7 +500,7 @@ export async function PATCH(request: NextRequest) {
       pf_employer: pfEmpr,
       esic_employee: esicEmp,
       esic_employer: esicEmpr,
-      pt: ptMonthly,
+      pt: ptStored,
       tds: tdsVal,
       advance_bonus: advanceBonusVal,
       take_home: takeHome,

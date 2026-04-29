@@ -8,6 +8,8 @@ import { PageHeader } from "@/components/common/PageHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { useToast } from "@/components/common/ToastProvider";
 import { supabase } from "@/lib/supabaseClient";
+import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
+import { IST_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
 
 const PRIMARY = "var(--primary)";
 
@@ -18,11 +20,11 @@ function getGreeting(): string {
   return "Good Evening";
 }
 
-function formatTimeIST(iso: string | null | undefined): string {
+function formatTimeTz(iso: string | null | undefined, tz: AttendanceTimeZoneId): string {
   if (!iso) return "—";
   try {
-    return new Date(iso).toLocaleTimeString("en-IN", {
-      timeZone: "Asia/Kolkata",
+    return new Date(iso).toLocaleTimeString("en-US", {
+      timeZone: tz,
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -50,10 +52,10 @@ type AttendanceLog = {
   status: string | null;
 };
 
-function fmtTimeIstShort(iso: string): string {
+function fmtTimeShortTz(iso: string, tz: AttendanceTimeZoneId): string {
   try {
-    return new Date(iso).toLocaleTimeString("en-IN", {
-      timeZone: "Asia/Kolkata",
+    return new Date(iso).toLocaleTimeString("en-US", {
+      timeZone: tz,
       hour: "2-digit",
       minute: "2-digit",
     });
@@ -73,10 +75,13 @@ function segmentsToTotalMs(segments: { out: string; in: string }[] | null | unde
   return Math.max(0, total);
 }
 
-function segmentsLabelIst(segments: { out: string; in: string }[] | null | undefined): string | null {
+function segmentsLabelTz(
+  segments: { out: string; in: string }[] | null | undefined,
+  tz: AttendanceTimeZoneId,
+): string | null {
   const segs = Array.isArray(segments) ? segments : [];
   if (!segs.length) return null;
-  return segs.map((s) => `${fmtTimeIstShort(s.out)}–${fmtTimeIstShort(s.in)}`).join(", ");
+  return segs.map((s) => `${fmtTimeShortTz(s.out, tz)}–${fmtTimeShortTz(s.in, tz)}`).join(", ");
 }
 
 /** Display ms as H:MM:SS or M:SS for live counters */
@@ -118,6 +123,7 @@ export function DashboardContent() {
   const [attendance, setAttendance] = useState<{
     hasEmployee: boolean;
     workDate: string;
+    timeZone: AttendanceTimeZoneId;
     log: AttendanceLog | null;
   } | null>(null);
 
@@ -150,6 +156,7 @@ export function DashboardContent() {
     setAttendance({
       hasEmployee: data.hasEmployee === true,
       workDate: String(data.workDate ?? ""),
+      timeZone: (data.timeZone as AttendanceTimeZoneId) || IST_TZ,
       log: (data.log as AttendanceLog) ?? null,
     });
   }
@@ -232,6 +239,7 @@ export function DashboardContent() {
           setAttendance({
             hasEmployee: d.hasEmployee === true,
             workDate: String(d.workDate ?? ""),
+            timeZone: (d.timeZone as AttendanceTimeZoneId) || IST_TZ,
             log: (d.log as AttendanceLog) ?? null,
           });
         } else if (!cancelled) {
@@ -360,6 +368,7 @@ export function DashboardContent() {
       : "—";
 
     const attLog = attendance?.log;
+    const tz = (attendance?.timeZone as AttendanceTimeZoneId) || IST_TZ;
     const attDateLabel = attendance?.workDate
       ? new Date(attendance.workDate + "T12:00:00Z").toLocaleDateString("en-IN", {
           weekday: "short",
@@ -396,7 +405,7 @@ export function DashboardContent() {
     const activeMeetsPresent = activeMs >= 8 * 60 * 60 * 1000;
     const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
     const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
-    const lunchSegLabel = segmentsLabelIst(attLog?.lunch_break_segments);
+    const lunchSegLabel = segmentsLabelTz(attLog?.lunch_break_segments, tz);
 
     return (
       <section className="min-h-[60vh]">
@@ -536,27 +545,32 @@ export function DashboardContent() {
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    <p className="text-xs text-slate-500">{attDateLabel}</p>
+                    <p className="text-xs text-slate-500">
+                      {attDateLabel}
+                      {attendance?.timeZone ? (
+                        <span className="text-slate-400">{` · ${timeZoneLabel(tz)}`}</span>
+                      ) : null}
+                    </p>
                     {attLog?.check_in_at && attLog?.check_out_at ? (
                       <div className="grid gap-3 sm:grid-cols-2">
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
                           <p className="text-xs font-medium text-slate-500">1. First check in</p>
-                          <p className="text-lg font-semibold text-slate-900">{formatTimeIST(attLog.check_in_at)}</p>
+                          <p className="text-lg font-semibold text-slate-900">{formatTimeTz(attLog.check_in_at, tz)}</p>
                         </div>
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
                           <p className="text-xs font-medium text-slate-500">4. Final check out</p>
-                          <p className="text-lg font-semibold text-slate-900">{formatTimeIST(attLog.check_out_at)}</p>
+                          <p className="text-lg font-semibold text-slate-900">{formatTimeTz(attLog.check_out_at, tz)}</p>
                         </div>
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
                           <p className="text-xs font-medium text-slate-500">2. Lunch check out</p>
                           <p className="text-lg font-semibold text-slate-900">
-                            {formatTimeIST(attLog.lunch_check_out_at)}
+                            {formatTimeTz(attLog.lunch_check_out_at, tz)}
                           </p>
                         </div>
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
                           <p className="text-xs font-medium text-slate-500">3. Lunch check in</p>
                           <p className="text-lg font-semibold text-slate-900">
-                            {formatTimeIST(attLog.lunch_check_in_at)}
+                            {formatTimeTz(attLog.lunch_check_in_at, tz)}
                           </p>
                         </div>
                         <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3 sm:col-span-2">
@@ -593,7 +607,7 @@ export function DashboardContent() {
                       <div className="space-y-4">
                         <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-4">
                           <p className="text-xs font-medium text-emerald-800">
-                            Step 1 done — First check in at {formatTimeIST(attLog.check_in_at)}
+                            Step 1 done — First check in at {formatTimeTz(attLog.check_in_at, tz)}
                           </p>
                           <div className="mt-3 grid gap-3 sm:grid-cols-2">
                             <div>
