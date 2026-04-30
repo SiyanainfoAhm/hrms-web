@@ -12,6 +12,8 @@ import {
   leaveYearStart,
   type LeavePolicy,
 } from "@/lib/leavePolicy";
+import { buildLeaveEmailHtml } from "@/lib/leaveEmail";
+import { sendPowerAutomateEmail } from "@/lib/powerAutomateEmail";
 
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -180,7 +182,7 @@ export async function POST(request: NextRequest) {
   // Ensure leave type belongs to the same company, and apply visibility rules
   const { data: lt, error: ltErr } = await supabase
     .from("HRMS_leave_types")
-    .select("id, is_paid, HRMS_leave_policies(*)")
+    .select("id, name, code, is_paid, HRMS_leave_policies(*)")
     .eq("company_id", me.company_id)
     .eq("id", leaveTypeId)
     .maybeSingle();
@@ -275,6 +277,67 @@ export async function POST(request: NextRequest) {
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  // Email notifications via Power Automate (best-effort; do not block leave creation).
+  try {
+    const hrEmail = "hr@siyanainfo.com";
+    const { data: empRow } = await supabase
+      .from("HRMS_users")
+      .select("name, email")
+      .eq("id", targetEmployeeUserId)
+      .maybeSingle();
+    const employeeName = (empRow as any)?.name ? String((empRow as any).name) : null;
+    const employeeEmail = (empRow as any)?.email ? String((empRow as any).email) : null;
+    const { data: companyRow } = await supabase
+      .from("HRMS_companies")
+      .select("name")
+      .eq("id", me.company_id)
+      .maybeSingle();
+    const companyName = (companyRow as any)?.name ? String((companyRow as any).name) : null;
+    const leaveTypeName = (lt as any)?.name ? String((lt as any).name) : "Leave";
+
+    if (autoApprove) {
+      // Approver-created leave is saved as approved — notify employee.
+      if (employeeEmail) {
+        const subject = `${companyName ? `${companyName} — ` : ""}Leave approved: ${startDate} to ${endDate}`;
+        const body = buildLeaveEmailHtml({
+          title: "Your leave has been approved",
+          companyName,
+          employeeName,
+          employeeEmail,
+          leaveTypeName,
+          startDate,
+          endDate,
+          totalDays,
+          paidDays,
+          unpaidDays,
+          reason: reason || null,
+          status: "approved",
+        });
+        await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
+      }
+    } else {
+      // Employee requested leave — notify HR.
+      const subject = `${companyName ? `${companyName} — ` : ""}Leave request: ${employeeName || employeeEmail || "Employee"} (${startDate} to ${endDate})`;
+      const body = buildLeaveEmailHtml({
+        title: "New leave request",
+        companyName,
+        employeeName,
+        employeeEmail,
+        leaveTypeName,
+        startDate,
+        endDate,
+        totalDays,
+        paidDays,
+        unpaidDays,
+        reason: reason || null,
+        status: "pending",
+      });
+      await sendPowerAutomateEmail({ toEmail: hrEmail, subject, body });
+    }
+  } catch (e) {
+    console.warn("[leave-email] notify failed", e);
+  }
+
   return NextResponse.json({ request: data });
 }
 
@@ -313,6 +376,60 @@ export async function PATCH(request: NextRequest) {
     .select("*")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  // Email employee on approve/reject (best-effort).
+  try {
+    const employeeUserId = String((data as any)?.employee_user_id ?? "");
+    const leaveTypeId = String((data as any)?.leave_type_id ?? "");
+    const { data: empRow } = employeeUserId
+      ? await supabase.from("HRMS_users").select("name, email").eq("id", employeeUserId).maybeSingle()
+      : { data: null };
+    const employeeEmail = (empRow as any)?.email ? String((empRow as any).email) : "";
+    if (employeeEmail) {
+      const employeeName = (empRow as any)?.name ? String((empRow as any).name) : null;
+      const { data: companyRow } = await supabase
+        .from("HRMS_companies")
+        .select("name")
+        .eq("id", me.company_id)
+        .maybeSingle();
+      const companyName = (companyRow as any)?.name ? String((companyRow as any).name) : null;
+      const { data: ltRow } = leaveTypeId
+        ? await supabase.from("HRMS_leave_types").select("name").eq("id", leaveTypeId).maybeSingle()
+        : { data: null };
+      const leaveTypeName = (ltRow as any)?.name ? String((ltRow as any).name) : "Leave";
+
+      const startDate = String((data as any)?.start_date ?? "");
+      const endDate = String((data as any)?.end_date ?? "");
+      const totalDays = Number((data as any)?.total_days ?? 0) || 0;
+      const paidDays = Number((data as any)?.paid_days ?? 0) || 0;
+      const unpaidDays = Number((data as any)?.unpaid_days ?? 0) || 0;
+      const status = String((data as any)?.status ?? "");
+      const rejectionReason = (data as any)?.rejection_reason ? String((data as any).rejection_reason) : null;
+      const reason = (data as any)?.reason ? String((data as any).reason) : null;
+
+      const isApproved = status === "approved";
+      const subject = `${companyName ? `${companyName} — ` : ""}Leave ${isApproved ? "approved" : "rejected"}: ${startDate} to ${endDate}`;
+      const body = buildLeaveEmailHtml({
+        title: isApproved ? "Your leave has been approved" : "Your leave has been rejected",
+        companyName,
+        employeeName,
+        employeeEmail,
+        leaveTypeName,
+        startDate,
+        endDate,
+        totalDays,
+        paidDays,
+        unpaidDays,
+        reason,
+        status,
+        rejectionReason,
+      });
+
+      await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
+    }
+  } catch (e) {
+    console.warn("[leave-email] decision notify failed", e);
+  }
 
   return NextResponse.json({ request: data });
 }
