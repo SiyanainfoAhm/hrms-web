@@ -40,6 +40,13 @@ export type PrivatePayrollConfig = {
   basicDaFloorWhenHalfGrossLow: number;
   /** Advance bonus column (stored as `medical`): ROUND(Basic+DA × rate). Default 8.33%. */
   advanceBonusRateOnBasic: number;
+  /**
+   * Private payslip earnings layout (labels/visible heads).
+   * Stored in company payroll config so new periods can adopt a new format without changing old payslips.
+   */
+  payslipEarningsMode?: "classic" | "basic_hra_advance_special";
+  /** YYYY-MM; applies when slip periodMonth >= this value. Empty/invalid means "do not switch". */
+  payslipEarningsEffectiveFromYm?: string;
 };
 
 export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
@@ -73,6 +80,8 @@ export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
   hraZeroWhenPotentialHraBelow: 6000,
   basicDaFloorWhenHalfGrossLow: 14290,
   advanceBonusRateOnBasic: 0.0833,
+  payslipEarningsMode: "classic",
+  payslipEarningsEffectiveFromYm: "",
 };
 
 function n(v: unknown): number | null {
@@ -169,6 +178,14 @@ export function normalizePrivatePayrollConfig(raw: unknown): PrivatePayrollConfi
     1,
   );
 
+  const payslipEarningsModeRaw = typeof r.payslipEarningsMode === "string" ? r.payslipEarningsMode : "";
+  const payslipEarningsMode =
+    payslipEarningsModeRaw === "basic_hra_advance_special" ? "basic_hra_advance_special" : "classic";
+  const payslipEarningsEffectiveFromYmRaw =
+    typeof r.payslipEarningsEffectiveFromYm === "string" ? r.payslipEarningsEffectiveFromYm.trim() : "";
+  const payslipEarningsEffectiveFromYm =
+    /^\d{4}-\d{2}$/.test(payslipEarningsEffectiveFromYmRaw) ? payslipEarningsEffectiveFromYmRaw : "";
+
   return {
     pfRate: clamp(n(r.pfRate) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.pfRate, 0, 1),
     pfWageCap: Math.max(0, n(r.pfWageCap) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.pfWageCap),
@@ -193,6 +210,8 @@ export function normalizePrivatePayrollConfig(raw: unknown): PrivatePayrollConfi
     hraZeroWhenPotentialHraBelow,
     basicDaFloorWhenHalfGrossLow,
     advanceBonusRateOnBasic,
+    payslipEarningsMode,
+    payslipEarningsEffectiveFromYm,
   };
 }
 

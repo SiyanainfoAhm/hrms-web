@@ -120,6 +120,7 @@ export function ProfileContent() {
       governmentMonthly?: Record<string, number> | null;
       leavePayslip?: GovernmentLeavePayslipDisplay | null;
     }[];
+    privatePayrollConfig?: { payslipEarningsMode?: string; payslipEarningsEffectiveFromYm?: string } | null;
   } | null>(null);
   const [myPayrollMaster, setMyPayrollMaster] = useState<{ tds?: number | null } | null>(null);
   const [payslipsLoading, setPayslipsLoading] = useState(false);
@@ -496,6 +497,7 @@ export function ProfileContent() {
             company: data.company,
             user: data.user,
             payslips: data.payslips || [],
+            privatePayrollConfig: data.privatePayrollConfig ?? null,
           });
           const slips = data.payslips || [];
           const first = slips[0];
@@ -1230,6 +1232,7 @@ export function ProfileContent() {
                   const slip = payslipsData.payslips.find((p) => p.periodMonth === key);
                   const company = payslipsData.company;
                   const user = payslipsData.user;
+                  const cfg = payslipsData.privatePayrollConfig;
 
                   if (!slip) {
                     return <p className="muted">No payslip for the selected period.</p>;
@@ -1276,6 +1279,26 @@ export function ProfileContent() {
 
                   const cellClass = "border border-black px-3 py-2 align-top text-sm";
                   const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
+                  const effYm = cfg?.payslipEarningsEffectiveFromYm ?? "";
+                  const mode = cfg?.payslipEarningsMode ?? "classic";
+                  const useCompactHeads =
+                    mode === "basic_hra_advance_special" && /^\d{4}-\d{2}$/.test(effYm) && slip.periodMonth >= effYm;
+
+                  const earningsRows = useCompactHeads
+                    ? ([
+                        ["Basic + DA", slip.basic],
+                        ["HRA", slip.hra],
+                        ["Advance bonus", slip.medical],
+                        ["Special allowance", slip.personal],
+                      ] as const)
+                    : ([
+                        ["Basic", slip.basic],
+                        ["HRA", slip.hra],
+                        ["Medical", slip.medical],
+                        ["Trans", slip.trans],
+                        ["LTA", slip.lta],
+                        ["Personal", slip.personal],
+                      ] as const);
 
                   return (
                     <div ref={payslipRef} className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]" style={{ minWidth: "min(100%, 190mm)" }}>
@@ -1365,54 +1388,40 @@ export function ProfileContent() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  <tr>
-                                    <td className={cellClass}>Basic</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
-                                    <td className={cellClass}>Professional Tax</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
-                                    <td className={cellClass}>Bonus</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
-                                  </tr>
-                                  <tr>
-                                    <td className={cellClass}>HRA</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
-                                    <td className={cellClass}>PF</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
-                                    <td className={cellClass}>Incentive</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
-                                  </tr>
-                                  <tr>
-                                    <td className={cellClass}>Medical</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
-                                    <td className={cellClass}>ESIC</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
-                                    <td className={cellClass}>Reimbursement</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
-                                  </tr>
-                                  <tr>
-                                    <td className={cellClass}>Trans</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
-                                    <td colSpan={2} className={cellClass}></td>
-                                    <td colSpan={2} className={cellClass}></td>
-                                  </tr>
-                                  <tr>
-                                    <td className={cellClass}>LTA</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
-                                    <td colSpan={2} className={cellClass}></td>
-                                    <td colSpan={2} className={cellClass}></td>
-                                  </tr>
-                                  <tr>
-                                    <td className={cellClass}>Personal</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
-                                    <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
-                                    <td colSpan={2} className={cellClass}></td>
-                                    <td colSpan={2} className={cellClass}></td>
-                                  </tr>
+                                  {earningsRows.map(([label, val], idx) => (
+                                    <tr key={label}>
+                                      <td className={cellClass}>{label}</td>
+                                      <td className={`${cellClass} text-right`}>{n(val)}</td>
+                                      <td className={`${cellClass} text-right`}>{n(val)}</td>
+                                      {idx === 0 ? (
+                                        <>
+                                          <td className={cellClass}>Professional Tax</td>
+                                          <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
+                                          <td className={cellClass}>Bonus</td>
+                                          <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
+                                        </>
+                                      ) : idx === 1 ? (
+                                        <>
+                                          <td className={cellClass}>PF</td>
+                                          <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
+                                          <td className={cellClass}>Incentive</td>
+                                          <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
+                                        </>
+                                      ) : idx === 2 ? (
+                                        <>
+                                          <td className={cellClass}>ESIC</td>
+                                          <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
+                                          <td className={cellClass}>Reimbursement</td>
+                                          <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <td colSpan={2} className={cellClass}></td>
+                                          <td colSpan={2} className={cellClass}></td>
+                                        </>
+                                      )}
+                                    </tr>
+                                  ))}
                                   <tr>
                                     <td className={`${cellClass} font-medium`}>GROSS</td>
                                     <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>

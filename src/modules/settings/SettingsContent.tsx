@@ -1590,6 +1590,45 @@ export function SettingsContent() {
                     </div>
                   </div>
 
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
+                    <h3 className="text-sm font-semibold text-slate-900">Payslip earnings layout (Private)</h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Controls which earning heads are shown on private payslips. Applies only for payslips on/after the effective month.
+                      Existing/older payslips are unchanged.
+                    </p>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                      <label className="text-sm">
+                        <span className="text-slate-600">Layout</span>
+                        <select
+                          className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                          value={payrollCfg.payslipEarningsMode ?? "classic"}
+                          onChange={(e) =>
+                            setPayrollCfg((p) => ({
+                              ...p,
+                              payslipEarningsMode:
+                                e.target.value === "basic_hra_advance_special" ? "basic_hra_advance_special" : "classic",
+                            }))
+                          }
+                        >
+                          <option value="classic">Classic (Basic, HRA, Medical, Trans, LTA, Personal)</option>
+                          <option value="basic_hra_advance_special">Basic+DA, HRA, Advance bonus, Special allowance</option>
+                        </select>
+                      </label>
+                      <label className="text-sm">
+                        <span className="text-slate-600">Effective from (month)</span>
+                        <input
+                          className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                          type="month"
+                          value={payrollCfg.payslipEarningsEffectiveFromYm ?? ""}
+                          onChange={(e) => setPayrollCfg((p) => ({ ...p, payslipEarningsEffectiveFromYm: e.target.value }))}
+                        />
+                      </label>
+                      <div className="text-xs text-slate-500 sm:pt-6">
+                        Tip: set this to the next payroll month before generating payslips.
+                      </div>
+                    </div>
+                  </div>
+
                   <div className="flex items-center gap-2">
                     <button type="submit" className="btn btn-primary" disabled={payrollCfgSaving}>
                       {payrollCfgSaving ? "Saving…" : "Save payroll settings"}

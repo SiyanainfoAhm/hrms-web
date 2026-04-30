@@ -342,9 +342,11 @@ function computeRowStatutory(
     | "lta"
     | "personal"
   >
+  ,
+  cfg: ReturnType<typeof normalizePrivatePayrollConfig>,
 ) {
   const br = breakupIfMatchesGross(row);
-  const calc = computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br);
+  const calc = computePayrollFromGross(row.gross, row.pfEligible, row.esicEligible, row.pt, br, cfg);
   const takeHome = Math.max(0, calc.takeHome - row.tds + row.advanceBonus);
   return {
     ctc: calc.ctc,
@@ -363,7 +365,8 @@ function computeRowStatutory(
   };
 }
 
-function computePreviewPrivateStatutory(row: {
+function computePreviewPrivateStatutory(
+  row: {
   payDays: number;
   grossMonthly?: number;
   grossPay: number;
@@ -375,7 +378,11 @@ function computePreviewPrivateStatutory(row: {
   pfEligible?: boolean;
   esicEligible?: boolean;
   profTaxMonthly?: number;
-} , payDenom: number, companyPt: number) {
+  },
+  payDenom: number,
+  companyPt: number,
+  cfg: ReturnType<typeof normalizePrivatePayrollConfig>,
+) {
   const payPd = Math.max(0, Number(row.payDays) || 0);
   const denom = Math.max(1, Math.floor(Number(payDenom) || 30));
   const ratio = payPd / denom;
@@ -392,7 +399,7 @@ function computePreviewPrivateStatutory(row: {
         ? Math.round((Math.max(0, Number(row.grossPay) || 0) * denom) / Math.max(1, payPd))
         : Math.max(0, Math.round(Number(row.grossPay) || 0));
 
-  const monthlyCalc = computePayrollFromGross(fallbackMonthly, pfEligible, esicEligible, profMonth);
+  const monthlyCalc = computePayrollFromGross(fallbackMonthly, pfEligible, esicEligible, profMonth, undefined, cfg);
 
   const grossMonthly = Math.max(0, Math.round((monthlyCalc as any).gross ?? fallbackMonthly));
   const grossPay = Math.max(0, Math.round(grossMonthly * ratio));
@@ -622,7 +629,7 @@ function buildMasterGridRow(apiRow: any, companyPtFixed: number, privateCfg: Ret
     takeHome: 0,
     ...emptyGovFields(),
   };
-  const stat = computeRowStatutory(base);
+  const stat = computeRowStatutory(base, privateCfg);
   return { ...base, ...stat };
 }
 
@@ -1146,11 +1153,12 @@ function PayrollPageContent() {
         }
 
         const next = { ...row, [field]: value } as typeof row;
+        const privateCfg = normalizePrivatePayrollConfig(privatePayrollCfg);
         if (field === "ctc" || field === "pt" || field === "tds" || field === "advanceBonus" || field === "pfEligible" || field === "esicEligible") {
           // Keep private payroll master row consistent with company policy: CTC → derived gross → take-home.
           // `editableRows` (run preview) doesn't have the same shape as `MasterGridRow`.
           // Recompute statutory + derived fields using monthly calc, then pro-rate by pay-days.
-          Object.assign(next, computePreviewPrivateStatutory(next, payDenom, companyPt));
+          Object.assign(next, computePreviewPrivateStatutory(next, payDenom, companyPt, privateCfg));
           return next;
         }
         const recalcNetPayFromGross = () => {
@@ -1181,6 +1189,7 @@ function PayrollPageContent() {
             row.esicEligible === true,
             profMonth,
             undefined,
+            privateCfg,
           );
           next.pfEmployee = Math.round(calc.pfEmp * ratio);
           next.pfEmployer = Math.round(calc.pfEmpr * ratio);
@@ -1219,6 +1228,7 @@ function PayrollPageContent() {
               row.esicEligible === true,
               profMonth,
               undefined,
+              privateCfg,
             );
             next.pfEmployee = Math.round(calc.pfEmp * ratioPd);
             next.pfEmployer = Math.round(calc.pfEmpr * ratioPd);
@@ -1624,7 +1634,7 @@ function PayrollPageContent() {
           }
           return { ...next, ...computeGovernmentMasterDerived(next) };
         }
-        const stat = computeRowStatutory(next);
+        const stat = computeRowStatutory(next, privatePayrollCfg);
         return { ...next, ...stat };
       })
     );
@@ -1922,6 +1932,7 @@ function PayrollPageContent() {
       const trans = parseFloat(editTrans) || 0;
       const lta = parseFloat(editLta) || 0;
       const personal = parseFloat(editPersonal) || 0;
+      const compactPayslipHeads = (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
 
       const gross = parseFloat(editGross) || 0;
       if (gross <= 0) {
@@ -1939,8 +1950,8 @@ function PayrollPageContent() {
           basic: basic || undefined,
           hra: hra || undefined,
           medical: medical || undefined,
-          trans: trans || undefined,
-          lta: lta || undefined,
+          trans: compactPayslipHeads ? 0 : trans || undefined,
+          lta: compactPayslipHeads ? 0 : lta || undefined,
           personal: personal || undefined,
           pfEligible: editPfEligible,
           esicEligible: editEsicEligible,
@@ -2903,6 +2914,8 @@ function PayrollPageContent() {
                     const trans = parseFloat(editTrans) || 0;
                     const lta = parseFloat(editLta) || 0;
                     const personal = parseFloat(editPersonal) || 0;
+                    const compactPayslipHeads =
+                      (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
                     const sum = basic + hra + medical + trans + lta + personal;
                     setEditGross(v);
                     if (g <= 0) return;
@@ -2915,28 +2928,30 @@ function PayrollPageContent() {
                       setEditBasic(String(s.basic));
                       setEditHra(String(s.hra));
                       setEditMedical(String(s.medical));
-                      setEditTrans(String(s.trans));
-                      setEditLta(String(s.lta));
+                      setEditTrans(compactPayslipHeads ? "0" : String(s.trans));
+                      setEditLta(compactPayslipHeads ? "0" : String(s.lta));
                       setEditPersonal(String(s.personal));
                     }
                   }}
                   onBlur={() => {
                     const g = parseFloat(editGross) || 0;
                     if (g <= 0) return;
+                    const compactPayslipHeads =
+                      (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
                     const sum =
                       (parseFloat(editBasic) || 0) +
                       (parseFloat(editHra) || 0) +
                       (parseFloat(editMedical) || 0) +
-                      (parseFloat(editTrans) || 0) +
-                      (parseFloat(editLta) || 0) +
+                      (compactPayslipHeads ? 0 : (parseFloat(editTrans) || 0)) +
+                      (compactPayslipHeads ? 0 : (parseFloat(editLta) || 0)) +
                       (parseFloat(editPersonal) || 0);
                     if (Math.abs(sum - g) > 2) {
                       const s = defaultSalaryBreakup(g, privatePayrollCfg);
                       setEditBasic(String(s.basic));
                       setEditHra(String(s.hra));
                       setEditMedical(String(s.medical));
-                      setEditTrans(String(s.trans));
-                      setEditLta(String(s.lta));
+                      setEditTrans(compactPayslipHeads ? "0" : String(s.trans));
+                      setEditLta(compactPayslipHeads ? "0" : String(s.lta));
                       setEditPersonal(String(s.personal));
                     }
                   }}
@@ -2946,7 +2961,11 @@ function PayrollPageContent() {
               </div>
               <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
                 <p className="mb-2 text-xs font-medium text-slate-600">Salary breakdown (optional, for payslip)</p>
-                <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                {(() => {
+                  const compactPayslipHeads =
+                    (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
+                  return (
+                    <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
                   <div>
                     <label className="text-slate-600">Basic + DA</label>
                     <input
@@ -2989,34 +3008,38 @@ function PayrollPageContent() {
                       className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
                     />
                   </div>
-                  <div>
-                    <label className="text-slate-600">Trans</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editTrans}
-                      onChange={(e) => {
-                        editMasterBreakupOverrideRef.current = true;
-                        setEditTrans(e.target.value);
-                      }}
-                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-600">LTA</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editLta}
-                      onChange={(e) => {
-                        editMasterBreakupOverrideRef.current = true;
-                        setEditLta(e.target.value);
-                      }}
-                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
+                  {compactPayslipHeads ? null : (
+                    <>
+                      <div>
+                        <label className="text-slate-600">Trans</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={editTrans}
+                          onChange={(e) => {
+                            editMasterBreakupOverrideRef.current = true;
+                            setEditTrans(e.target.value);
+                          }}
+                          className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-slate-600">LTA</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={editLta}
+                          onChange={(e) => {
+                            editMasterBreakupOverrideRef.current = true;
+                            setEditLta(e.target.value);
+                          }}
+                          className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                        />
+                      </div>
+                    </>
+                  )}
                   <div>
                     <label className="text-slate-600">Special allowance</label>
                     <input
@@ -3032,6 +3055,8 @@ function PayrollPageContent() {
                     />
                   </div>
                 </div>
+                  );
+                })()}
                 <p className="mt-2 text-xs text-slate-500">
                   Leave all blank for auto-split from monthly gross (Basic+DA share, HRA threshold rule, remainder). The separate “Advance bonus” below adjusts take-home on top of statutory net.
                 </p>

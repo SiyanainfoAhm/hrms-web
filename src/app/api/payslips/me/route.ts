@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import {
   computeLeaveBalanceRows,
   formatGovernmentLeavePayslipDisplay,
@@ -23,7 +24,7 @@ export async function GET() {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ payslips: [], company: null, user: null });
 
-  const [slipRes, companyRes, userRes] = await Promise.all([
+  const [slipRes, companyRes, userRes, cfgRes] = await Promise.all([
     supabase
       .from("HRMS_payslips")
       .select("id, payroll_period_id, net_pay, gross_pay, pay_days, basic, hra, allowances, medical, trans, lta, personal, deductions, currency, payslip_number, generated_at, bank_name, bank_account_number, bank_ifsc, pf_employee, esic_employee, professional_tax, incentive, pr_bonus, reimbursement, tds, payroll_mode")
@@ -40,6 +41,11 @@ export async function GET() {
       .select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number, department_id, government_pay_level")
       .eq("id", session.id)
       .single(),
+    supabase
+      .from("HRMS_company_payroll_config")
+      .select("private_config")
+      .eq("company_id", me.company_id)
+      .maybeSingle(),
   ]);
 
   const { data: slipData, error } = slipRes;
@@ -68,6 +74,7 @@ export async function GET() {
   };
 
   const company = companyRes.data;
+  const privatePayrollConfig = normalizePrivatePayrollConfig((cfgRes.data as any)?.private_config);
   const addrParts = [
     company?.address_line1,
     company?.address_line2,
@@ -118,6 +125,7 @@ export async function GET() {
 
   return NextResponse.json({
     company: company ? { name: company.name, address: companyAddress, logoUrl } : null,
+    privatePayrollConfig,
     user: user
       ? {
           name: user.name ?? "",
