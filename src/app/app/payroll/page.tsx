@@ -367,17 +367,17 @@ function computeRowStatutory(
 
 function computePreviewPrivateStatutory(
   row: {
-  payDays: number;
-  grossMonthly?: number;
-  grossPay: number;
-  ctc: number;
-  tds: number;
-  incentive: number;
-  prBonus: number;
-  reimbursement: number;
-  pfEligible?: boolean;
-  esicEligible?: boolean;
-  profTaxMonthly?: number;
+    payDays: number;
+    grossMonthly?: number;
+    grossPay: number;
+    ctc: number;
+    tds: number;
+    incentive: number;
+    prBonus: number;
+    reimbursement: number;
+    pfEligible?: boolean;
+    esicEligible?: boolean;
+    profTaxMonthly?: number;
   },
   payDenom: number,
   companyPt: number,
@@ -1660,17 +1660,17 @@ function PayrollPageContent() {
     /** If stored components don’t add up to gross, use policy default (Basic+DA %, HRA threshold rule, remainder). */
     const split =
       gross > 0 &&
-      (componentsSum === 0 || Math.abs(componentsSum - gross) > 2)
+        (componentsSum === 0 || Math.abs(componentsSum - gross) > 2)
         ? defaultSalaryBreakup(gross, privatePayrollCfg)
         : componentsSum > 0
           ? {
-              basic: gridRow.basic,
-              hra: gridRow.hra,
-              medical: gridRow.medical,
-              trans: gridRow.trans,
-              lta: gridRow.lta,
-              personal: gridRow.personal,
-            }
+            basic: gridRow.basic,
+            hra: gridRow.hra,
+            medical: gridRow.medical,
+            trans: gridRow.trans,
+            lta: gridRow.lta,
+            personal: gridRow.personal,
+          }
           : defaultSalaryBreakup(gross, privatePayrollCfg);
     setEditMasterTab("structure");
     setEditBankName(String(apiRow?.bankName ?? ""));
@@ -2002,11 +2002,11 @@ function PayrollPageContent() {
         ctc: r.ctc,
         ...(r.payrollMode === "government" && r.govRecalc
           ? {
-              payrollMode: r.payrollMode,
-              governmentMonthly: r.governmentMonthly,
-              governmentDeductionDefaults: r.govRecalc.deductionDefaults,
-              governmentEarningPaidOverrides: r.govRecalc.earningPaidOverrides,
-            }
+            payrollMode: r.payrollMode,
+            governmentMonthly: r.governmentMonthly,
+            governmentDeductionDefaults: r.govRecalc.deductionDefaults,
+            governmentEarningPaidOverrides: r.govRecalc.earningPaidOverrides,
+          }
           : {}),
       }));
       const res = await fetch("/api/payroll/run", {
@@ -2015,17 +2015,17 @@ function PayrollPageContent() {
         body: JSON.stringify(
           useCompleteMissing
             ? {
-                year: parseInt(runYear, 10),
-                month: parseInt(runMonth, 10),
-                runDay: parseInt(runDay, 10),
-                completeMissingPayslips: true,
-              }
+              year: parseInt(runYear, 10),
+              month: parseInt(runMonth, 10),
+              runDay: parseInt(runDay, 10),
+              completeMissingPayslips: true,
+            }
             : {
-                year: parseInt(runYear, 10),
-                month: parseInt(runMonth, 10),
-                runDay: parseInt(runDay, 10),
-                rows: rowsPayload,
-              },
+              year: parseInt(runYear, 10),
+              month: parseInt(runMonth, 10),
+              runDay: parseInt(runDay, 10),
+              rows: rowsPayload,
+            },
         ),
       });
       const data = await res.json();
@@ -2158,9 +2158,8 @@ function PayrollPageContent() {
                         return (
                           <tr
                             key={row.employeeUserId}
-                            className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${
-                              masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
-                            }`}
+                            className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
+                              }`}
                             onClick={() => setMasterFocusId(row.employeeUserId)}
                           >
                             <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
@@ -2182,9 +2181,8 @@ function PayrollPageContent() {
                             </td>
                             <td className="border border-slate-200 px-1 py-1 text-center align-middle">
                               <span
-                                className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${
-                                  isGov ? "bg-emerald-100 text-emerald-900" : "bg-slate-200 text-slate-800"
-                                }`}
+                                className={`inline-block rounded px-1.5 py-0.5 text-[10px] font-semibold ${isGov ? "bg-emerald-100 text-emerald-900" : "bg-slate-200 text-slate-800"
+                                  }`}
                               >
                                 {isGov ? "Gov" : "Pvt"}
                               </span>
@@ -2542,9 +2540,8 @@ function PayrollPageContent() {
                         return (
                           <tr
                             key={row.employeeUserId}
-                            className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${
-                              masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
-                            }`}
+                            className={`border-t border-slate-200 bg-white hover:bg-slate-50/80 ${masterFocusId === row.employeeUserId ? "ring-2 ring-inset ring-violet-500/55" : ""
+                              }`}
                             onClick={() => setMasterFocusId(row.employeeUserId)}
                           >
                             <td className="border border-slate-200 px-2 py-1.5 whitespace-nowrap">
@@ -2754,18 +2751,16 @@ function PayrollPageContent() {
                 <div className="mt-4 flex gap-1 rounded-lg bg-slate-100 p-1">
                   <button
                     type="button"
-                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${
-                      editMasterTab === "structure" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
-                    }`}
+                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${editMasterTab === "structure" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                      }`}
                     onClick={() => setEditMasterTab("structure")}
                   >
                     Payroll structure
                   </button>
                   <button
                     type="button"
-                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${
-                      editMasterTab === "bank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
-                    }`}
+                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium ${editMasterTab === "bank" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"
+                      }`}
                     onClick={() => setEditMasterTab("bank")}
                   >
                     Bank information
@@ -2773,566 +2768,566 @@ function PayrollPageContent() {
                 </div>
               </div>
               <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-4 sm:px-6">
-              {editMasterTab === "bank" ? (
-                <div className="space-y-4">
-                  <p className="text-sm text-slate-600">
-                    Update salary credit details for this employee. These values are used on payslips and payroll export. Saving here does not create a new payroll master row.
-                  </p>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Account holder name</label>
-                    <input
-                      type="text"
-                      value={editBankAccountHolderName}
-                      onChange={(e) => setEditBankAccountHolderName(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      autoComplete="off"
-                      placeholder="Name as per bank records"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
-                    <input
-                      type="text"
-                      value={editBankName}
-                      onChange={(e) => setEditBankName(e.target.value)}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                      autoComplete="off"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      value={editBankAccountNumber}
-                      onChange={(e) => setEditBankAccountNumber(e.target.value.replace(/\D/g, ""))}
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
-                      autoComplete="off"
-                    />
-                    <p className="mt-1 text-xs text-slate-500">9–34 digits, numbers only.</p>
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
-                    <input
-                      type="text"
-                      value={editBankIfsc}
-                      onChange={(e) =>
-                        setEditBankIfsc(e.target.value.toUpperCase().replace(/\s/g, "").slice(0, 11))
-                      }
-                      className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase"
-                      autoComplete="off"
-                      maxLength={11}
-                    />
-                  </div>
-                </div>
-              ) : (
-              <>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Structure</label>
-                <select
-                  value={companyAllowsGovPayroll ? editPayrollMode : "private"}
-                  onChange={(e) => setEditPayrollMode(e.target.value as "private" | "government")}
-                  disabled={!companyAllowsGovPayroll}
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
-                >
-                  <option value="private">Private (CTC / gross)</option>
-                  {companyAllowsGovPayroll ? <option value="government">Government (gross basic)</option> : null}
-                </select>
-                {companyAllowsGovPayroll && editPayrollMode === "government" ? (
-                  <p className="mt-1 text-xs text-slate-500">
-                    Set Government pay level on the Employees page. Transport slab follows level (1–2, 3–8, 9+).
-                  </p>
-                ) : null}
-              </div>
-              {editPayrollMode === "government" ? (
-                <div className="space-y-3">
-                  <div>
-                    <label className="mb-1 block text-sm font-medium text-slate-700">Gross basic (monthly) *</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editGrossBasic}
-                      onChange={(e) => setEditGrossBasic(e.target.value)}
-                      required
-                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                {editMasterTab === "bank" ? (
+                  <div className="space-y-4">
+                    <p className="text-sm text-slate-600">
+                      Update salary credit details for this employee. These values are used on payslips and payroll export. Saving here does not create a new payroll master row.
+                    </p>
                     <div>
-                      <label className="text-slate-600">DA %</label>
-                      <input type="number" step="0.01" value={editDaPercent} onChange={(e) => setEditDaPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Account holder name</label>
+                      <input
+                        type="text"
+                        value={editBankAccountHolderName}
+                        onChange={(e) => setEditBankAccountHolderName(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        autoComplete="off"
+                        placeholder="Name as per bank records"
+                      />
                     </div>
                     <div>
-                      <label className="text-slate-600">HRA %</label>
-                      <input type="number" step="0.01" value={editHraPercent} onChange={(e) => setEditHraPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Bank name</label>
+                      <input
+                        type="text"
+                        value={editBankName}
+                        onChange={(e) => setEditBankName(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                        autoComplete="off"
+                      />
                     </div>
                     <div>
-                      <label className="text-slate-600">Medical (fixed)</label>
-                      <input type="number" step="1" value={editMedicalFixed} onChange={(e) => setEditMedicalFixed(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Account number</label>
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={editBankAccountNumber}
+                        onChange={(e) => setEditBankAccountNumber(e.target.value.replace(/\D/g, ""))}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono"
+                        autoComplete="off"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">9–34 digits, numbers only.</p>
                     </div>
                     <div>
-                      <label className="text-slate-600">Transport DA %</label>
-                      <input type="number" step="0.01" value={editTransportDaPercent} onChange={(e) => setEditTransportDaPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-slate-600">P. Tax default</label>
-                      <input type="number" step="1" value={editGovPtDefault} onChange={(e) => setEditGovPtDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-slate-600">Income tax</label>
-                      <input type="number" step="1" value={editTds} onChange={(e) => setEditTds(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-slate-600">
-                        CPF (rupees; 0 = auto {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}%)
-                      </label>
-                      <input type="number" step="1" value={editCpfDefault} onChange={(e) => setEditCpfDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
-                    </div>
-                    <div>
-                      <label className="text-slate-600">DA CPF</label>
-                      <input type="number" step="1" value={editDaCpfDefault} onChange={(e) => setEditDaCpfDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                      <label className="mb-1 block text-sm font-medium text-slate-700">IFSC</label>
+                      <input
+                        type="text"
+                        value={editBankIfsc}
+                        onChange={(e) =>
+                          setEditBankIfsc(e.target.value.toUpperCase().replace(/\s/g, "").slice(0, 11))
+                        }
+                        className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm font-mono uppercase"
+                        autoComplete="off"
+                        maxLength={11}
+                      />
                     </div>
                   </div>
-                </div>
-              ) : (
-              <div className="space-y-4">
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly) *</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={editGross}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    const prevGross = parseFloat(editGross) || 0;
-                    const g = parseFloat(v) || 0;
-                    const basic = parseFloat(editBasic) || 0;
-                    const hra = parseFloat(editHra) || 0;
-                    const medical = parseFloat(editMedical) || 0;
-                    const trans = parseFloat(editTrans) || 0;
-                    const lta = parseFloat(editLta) || 0;
-                    const personal = parseFloat(editPersonal) || 0;
-                    const compactPayslipHeads =
-                      (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
-                    const sum = basic + hra + medical + trans + lta + personal;
-                    setEditGross(v);
-                    if (g <= 0) return;
-                    const empty = sum === 0;
-                    const wasDefaultForPrev =
-                      prevGross > 0 &&
-                      isDefaultSalaryBreakupForGross(prevGross, basic, hra, medical, trans, lta, personal, privatePayrollCfg);
-                    if (empty || wasDefaultForPrev) {
-                      const s = defaultSalaryBreakup(g, privatePayrollCfg);
-                      setEditBasic(String(s.basic));
-                      setEditHra(String(s.hra));
-                      setEditMedical(String(s.medical));
-                      setEditTrans(compactPayslipHeads ? "0" : String(s.trans));
-                      setEditLta(compactPayslipHeads ? "0" : String(s.lta));
-                      setEditPersonal(String(s.personal));
-                    }
-                  }}
-                  onBlur={() => {
-                    const g = parseFloat(editGross) || 0;
-                    if (g <= 0) return;
-                    const compactPayslipHeads =
-                      (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
-                    const sum =
-                      (parseFloat(editBasic) || 0) +
-                      (parseFloat(editHra) || 0) +
-                      (parseFloat(editMedical) || 0) +
-                      (compactPayslipHeads ? 0 : (parseFloat(editTrans) || 0)) +
-                      (compactPayslipHeads ? 0 : (parseFloat(editLta) || 0)) +
-                      (parseFloat(editPersonal) || 0);
-                    if (Math.abs(sum - g) > 2) {
-                      const s = defaultSalaryBreakup(g, privatePayrollCfg);
-                      setEditBasic(String(s.basic));
-                      setEditHra(String(s.hra));
-                      setEditMedical(String(s.medical));
-                      setEditTrans(compactPayslipHeads ? "0" : String(s.trans));
-                      setEditLta(compactPayslipHeads ? "0" : String(s.lta));
-                      setEditPersonal(String(s.personal));
-                    }
-                  }}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                />
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                <p className="mb-2 text-xs font-medium text-slate-600">Salary breakdown (optional, for payslip)</p>
-                {(() => {
-                  const compactPayslipHeads =
-                    (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
-                  return (
-                    <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
-                  <div>
-                    <label className="text-slate-600">Basic + DA</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editBasic}
-                      onChange={(e) => {
-                        editMasterBreakupOverrideRef.current = true;
-                        setEditBasic(e.target.value);
-                      }}
-                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-600">HRA</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editHra}
-                      onChange={(e) => {
-                        editMasterBreakupOverrideRef.current = true;
-                        setEditHra(e.target.value);
-                      }}
-                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-slate-600">Advance bonus</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editMedical}
-                      onChange={(e) => {
-                        editMasterBreakupOverrideRef.current = true;
-                        setEditMedical(e.target.value);
-                      }}
-                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                  {compactPayslipHeads ? null : (
-                    <>
+                ) : (
+                  <>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Structure</label>
+                      <select
+                        value={companyAllowsGovPayroll ? editPayrollMode : "private"}
+                        onChange={(e) => setEditPayrollMode(e.target.value as "private" | "government")}
+                        disabled={!companyAllowsGovPayroll}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
+                      >
+                        <option value="private">Private (CTC / gross)</option>
+                        {companyAllowsGovPayroll ? <option value="government">Government (gross basic)</option> : null}
+                      </select>
+                      {companyAllowsGovPayroll && editPayrollMode === "government" ? (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Set Government pay level on the Employees page. Transport slab follows level (1–2, 3–8, 9+).
+                        </p>
+                      ) : null}
+                    </div>
+                    {editPayrollMode === "government" ? (
+                      <div className="space-y-3">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Gross basic (monthly) *</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={editGrossBasic}
+                            onChange={(e) => setEditGrossBasic(e.target.value)}
+                            required
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                          <div>
+                            <label className="text-slate-600">DA %</label>
+                            <input type="number" step="0.01" value={editDaPercent} onChange={(e) => setEditDaPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">HRA %</label>
+                            <input type="number" step="0.01" value={editHraPercent} onChange={(e) => setEditHraPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">Medical (fixed)</label>
+                            <input type="number" step="1" value={editMedicalFixed} onChange={(e) => setEditMedicalFixed(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">Transport DA %</label>
+                            <input type="number" step="0.01" value={editTransportDaPercent} onChange={(e) => setEditTransportDaPercent(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">P. Tax default</label>
+                            <input type="number" step="1" value={editGovPtDefault} onChange={(e) => setEditGovPtDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">Income tax</label>
+                            <input type="number" step="1" value={editTds} onChange={(e) => setEditTds(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">
+                              CPF (rupees; 0 = auto {Math.round(GOVERNMENT_DEFAULT_CPF_RATE_ON_TOTAL_EARNINGS * 100)}%)
+                            </label>
+                            <input type="number" step="1" value={editCpfDefault} onChange={(e) => setEditCpfDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                          <div>
+                            <label className="text-slate-600">DA CPF</label>
+                            <input type="number" step="1" value={editDaCpfDefault} onChange={(e) => setEditDaCpfDefault(e.target.value)} className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm" />
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-slate-700">Gross salary (monthly) *</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="1"
+                            value={editGross}
+                            onChange={(e) => {
+                              const v = e.target.value;
+                              const prevGross = parseFloat(editGross) || 0;
+                              const g = parseFloat(v) || 0;
+                              const basic = parseFloat(editBasic) || 0;
+                              const hra = parseFloat(editHra) || 0;
+                              const medical = parseFloat(editMedical) || 0;
+                              const trans = parseFloat(editTrans) || 0;
+                              const lta = parseFloat(editLta) || 0;
+                              const personal = parseFloat(editPersonal) || 0;
+                              const compactPayslipHeads =
+                                (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
+                              const sum = basic + hra + medical + trans + lta + personal;
+                              setEditGross(v);
+                              if (g <= 0) return;
+                              const empty = sum === 0;
+                              const wasDefaultForPrev =
+                                prevGross > 0 &&
+                                isDefaultSalaryBreakupForGross(prevGross, basic, hra, medical, trans, lta, personal, privatePayrollCfg);
+                              if (empty || wasDefaultForPrev) {
+                                const s = defaultSalaryBreakup(g, privatePayrollCfg);
+                                setEditBasic(String(s.basic));
+                                setEditHra(String(s.hra));
+                                setEditMedical(String(s.medical));
+                                setEditTrans(compactPayslipHeads ? "0" : String(s.trans));
+                                setEditLta(compactPayslipHeads ? "0" : String(s.lta));
+                                setEditPersonal(String(s.personal));
+                              }
+                            }}
+                            onBlur={() => {
+                              const g = parseFloat(editGross) || 0;
+                              if (g <= 0) return;
+                              const compactPayslipHeads =
+                                (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
+                              const sum =
+                                (parseFloat(editBasic) || 0) +
+                                (parseFloat(editHra) || 0) +
+                                (parseFloat(editMedical) || 0) +
+                                (compactPayslipHeads ? 0 : (parseFloat(editTrans) || 0)) +
+                                (compactPayslipHeads ? 0 : (parseFloat(editLta) || 0)) +
+                                (parseFloat(editPersonal) || 0);
+                              if (Math.abs(sum - g) > 2) {
+                                const s = defaultSalaryBreakup(g, privatePayrollCfg);
+                                setEditBasic(String(s.basic));
+                                setEditHra(String(s.hra));
+                                setEditMedical(String(s.medical));
+                                setEditTrans(compactPayslipHeads ? "0" : String(s.trans));
+                                setEditLta(compactPayslipHeads ? "0" : String(s.lta));
+                                setEditPersonal(String(s.personal));
+                              }
+                            }}
+                            required
+                            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                          />
+                        </div>
+                        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                          <p className="mb-2 text-xs font-medium text-slate-600">Salary breakdown (optional, for payslip)</p>
+                          {(() => {
+                            const compactPayslipHeads =
+                              (privatePayrollCfg as any)?.payslipEarningsMode === "basic_hra_advance_special";
+                            return (
+                              <div className="grid grid-cols-2 gap-2 text-sm sm:grid-cols-3">
+                                <div>
+                                  <label className="text-slate-600">Basic + DA</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={editBasic}
+                                    onChange={(e) => {
+                                      editMasterBreakupOverrideRef.current = true;
+                                      setEditBasic(e.target.value);
+                                    }}
+                                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-slate-600">HRA</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={editHra}
+                                    onChange={(e) => {
+                                      editMasterBreakupOverrideRef.current = true;
+                                      setEditHra(e.target.value);
+                                    }}
+                                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-slate-600">Advance bonus</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={editMedical}
+                                    onChange={(e) => {
+                                      editMasterBreakupOverrideRef.current = true;
+                                      setEditMedical(e.target.value);
+                                    }}
+                                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                </div>
+                                {compactPayslipHeads ? null : (
+                                  <>
+                                    <div>
+                                      <label className="text-slate-600">Trans</label>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={editTrans}
+                                        onChange={(e) => {
+                                          editMasterBreakupOverrideRef.current = true;
+                                          setEditTrans(e.target.value);
+                                        }}
+                                        className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      />
+                                    </div>
+                                    <div>
+                                      <label className="text-slate-600">LTA</label>
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={editLta}
+                                        onChange={(e) => {
+                                          editMasterBreakupOverrideRef.current = true;
+                                          setEditLta(e.target.value);
+                                        }}
+                                        className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                      />
+                                    </div>
+                                  </>
+                                )}
+                                <div>
+                                  <label className="text-slate-600">Special allowance</label>
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    value={editPersonal}
+                                    onChange={(e) => {
+                                      editMasterBreakupOverrideRef.current = true;
+                                      setEditPersonal(e.target.value);
+                                    }}
+                                    className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                                  />
+                                </div>
+                              </div>
+                            );
+                          })()}
+                          <p className="mt-2 text-xs text-slate-500">
+                            Leave all blank for auto-split from monthly gross (Basic+DA share, HRA threshold rule, remainder). The separate “Advance bonus” below adjusts take-home on top of statutory net.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                    {editMasterPreview && (
+                      <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <p className="mb-2 text-xs font-medium text-slate-600">Preview (same as server on Save)</p>
+                        {editPayrollMode === "government" && "totalEarnings" in editMasterPreview ? (
+                          <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
+                            <div>
+                              <span className="text-slate-500">Transport slab </span>
+                              <span className="font-medium text-slate-900">
+                                {(editMasterPreview as { transportSlab?: string }).transportSlab ?? "—"}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Transport (₹) </span>
+                              <span className="font-medium tabular-nums text-slate-900">
+                                ₹
+                                {Math.round(
+                                  (editMasterPreview as { transportAmount?: number }).transportAmount ?? 0
+                                ).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Total earnings (full month) </span>
+                              <span className="font-medium tabular-nums text-slate-900">
+                                ₹{Math.round((editMasterPreview as { totalEarnings: number }).totalEarnings).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">CPF (auto core) </span>
+                              <span className="font-medium tabular-nums text-slate-900">
+                                ₹
+                                {Math.round(
+                                  (editMasterPreview as { effectiveCpfCore?: number }).effectiveCpfCore ?? 0
+                                ).toLocaleString("en-IN")}
+                                {(editMasterPreview as { storedCpfDefault?: number }).storedCpfDefault === 0 && (
+                                  <span className="ml-1 text-xs font-normal text-slate-500">(0 stored → auto)</span>
+                                )}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">CPF bundle (same as Run Payroll) </span>
+                              <span className="font-medium tabular-nums text-slate-900">
+                                ₹
+                                {Math.round(
+                                  (editMasterPreview as { statutoryCpf?: number }).statutoryCpf ?? 0
+                                ).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-slate-500">Net (after defaults) </span>
+                              <span className="font-medium tabular-nums text-slate-900">
+                                ₹{Math.round((editMasterPreview as { netSalary: number }).netSalary).toLocaleString("en-IN")}
+                              </span>
+                            </div>
+                          </div>
+                        ) : (
+                          (() => {
+                            const pv = editMasterPreview as {
+                              ctc: number;
+                              takeHome: number;
+                              ptMonthly: number;
+                              pfEmp: number;
+                              esicEmp: number;
+                              tds: number;
+                              advanceBonus: number;
+                            };
+                            const hasPrivateAmount = (parseFloat(editGross) || 0) > 0;
+                            return (
+                              <div className="space-y-2 text-sm">
+                                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                                  <div>
+                                    <span className="text-slate-500">CTC </span>
+                                    <span className="font-medium tabular-nums text-slate-900">
+                                      {pv.ctc > 0
+                                        ? `₹${Math.round(pv.ctc).toLocaleString("en-IN")}`
+                                        : "—"}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-500">Net Salary / Take Home </span>
+                                    <span className="font-medium tabular-nums text-slate-900">
+                                      {hasPrivateAmount
+                                        ? `₹${Math.round(pv.takeHome).toLocaleString("en-IN")}`
+                                        : "—"}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-slate-500 sm:col-span-1">
+                                    {hasPrivateAmount && (
+                                      <>
+                                        PT ₹{Math.round(pv.ptMonthly).toLocaleString("en-IN")}
+                                        {pv.pfEmp > 0 && ` · PF ₹${Math.round(pv.pfEmp).toLocaleString("en-IN")}`}
+                                        {pv.esicEmp > 0 && ` · ESIC ₹${Math.round(pv.esicEmp).toLocaleString("en-IN")}`}
+                                        {pv.tds > 0 && ` · TDS ₹${Math.round(pv.tds).toLocaleString("en-IN")}`}
+                                        {pv.advanceBonus > 0 &&
+                                          ` · Adv +₹${Math.round(pv.advanceBonus).toLocaleString("en-IN")}`}
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
+                    )}
+                    {editPayrollMode === "private" ? (
+                      <>
+                        <div className="flex gap-4">
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={editPfEligible}
+                              onChange={(e) => {
+                                editMasterPfOverrideRef.current = true;
+                                setEditPfEligible(e.target.checked);
+                              }}
+                            />
+                            PF eligible
+                          </label>
+                          <label className="flex items-center gap-2 text-sm">
+                            <input
+                              type="checkbox"
+                              checked={editEsicEligible}
+                              onChange={(e) => {
+                                editMasterEsicOverrideRef.current = true;
+                                setEditEsicEligible(e.target.checked);
+                              }}
+                            />
+                            ESIC eligible
+                          </label>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          ESIC follows policy when Basic+DA is within the ceiling (≤ ₹21,000 by default); change the checkbox to override. Same behaviour as Add employee.
+                        </p>
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">PT (monthly)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={editPt}
+                              onChange={(e) => setEditPt(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">TDS (monthly)</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={editTds}
+                              onChange={(e) => setEditTds(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus</label>
+                            <input
+                              type="number"
+                              min={0}
+                              step={1}
+                              value={editAdvanceBonus}
+                              onChange={(e) => setEditAdvanceBonus(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                            />
+                          </div>
+                        </div>
+                      </>
+                    ) : (
                       <div>
-                        <label className="text-slate-600">Trans</label>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus (variable)</label>
                         <input
                           type="number"
-                          min="0"
-                          step="1"
-                          value={editTrans}
-                          onChange={(e) => {
-                            editMasterBreakupOverrideRef.current = true;
-                            setEditTrans(e.target.value);
-                          }}
-                          className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
+                          min={0}
+                          step={1}
+                          value={editAdvanceBonus}
+                          onChange={(e) => setEditAdvanceBonus(e.target.value)}
+                          className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
                         />
                       </div>
-                      <div>
-                        <label className="text-slate-600">LTA</label>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={editLta}
-                          onChange={(e) => {
-                            editMasterBreakupOverrideRef.current = true;
-                            setEditLta(e.target.value);
-                          }}
-                          className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                        />
-                      </div>
-                    </>
-                  )}
-                  <div>
-                    <label className="text-slate-600">Special allowance</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={editPersonal}
-                      onChange={(e) => {
-                        editMasterBreakupOverrideRef.current = true;
-                        setEditPersonal(e.target.value);
-                      }}
-                      className="mt-0.5 w-full rounded border border-slate-300 px-2 py-1 text-sm"
-                    />
-                  </div>
-                </div>
-                  );
-                })()}
-                <p className="mt-2 text-xs text-slate-500">
-                  Leave all blank for auto-split from monthly gross (Basic+DA share, HRA threshold rule, remainder). The separate “Advance bonus” below adjusts take-home on top of statutory net.
-                </p>
-              </div>
-              </div>
-              )}
-              {editMasterPreview && (
-                <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-                  <p className="mb-2 text-xs font-medium text-slate-600">Preview (same as server on Save)</p>
-                  {editPayrollMode === "government" && "totalEarnings" in editMasterPreview ? (
-                    <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-                      <div>
-                        <span className="text-slate-500">Transport slab </span>
-                        <span className="font-medium text-slate-900">
-                          {(editMasterPreview as { transportSlab?: string }).transportSlab ?? "—"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Transport (₹) </span>
-                        <span className="font-medium tabular-nums text-slate-900">
-                          ₹
-                          {Math.round(
-                            (editMasterPreview as { transportAmount?: number }).transportAmount ?? 0
-                          ).toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Total earnings (full month) </span>
-                        <span className="font-medium tabular-nums text-slate-900">
-                          ₹{Math.round((editMasterPreview as { totalEarnings: number }).totalEarnings).toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">CPF (auto core) </span>
-                        <span className="font-medium tabular-nums text-slate-900">
-                          ₹
-                          {Math.round(
-                            (editMasterPreview as { effectiveCpfCore?: number }).effectiveCpfCore ?? 0
-                          ).toLocaleString("en-IN")}
-                          {(editMasterPreview as { storedCpfDefault?: number }).storedCpfDefault === 0 && (
-                            <span className="ml-1 text-xs font-normal text-slate-500">(0 stored → auto)</span>
-                          )}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">CPF bundle (same as Run Payroll) </span>
-                        <span className="font-medium tabular-nums text-slate-900">
-                          ₹
-                          {Math.round(
-                            (editMasterPreview as { statutoryCpf?: number }).statutoryCpf ?? 0
-                          ).toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-slate-500">Net (after defaults) </span>
-                        <span className="font-medium tabular-nums text-slate-900">
-                          ₹{Math.round((editMasterPreview as { netSalary: number }).netSalary).toLocaleString("en-IN")}
-                        </span>
-                      </div>
-                    </div>
-                  ) : (
-                  (() => {
-                    const pv = editMasterPreview as {
-                      ctc: number;
-                      takeHome: number;
-                      ptMonthly: number;
-                      pfEmp: number;
-                      esicEmp: number;
-                      tds: number;
-                      advanceBonus: number;
-                    };
-                    const hasPrivateAmount = (parseFloat(editGross) || 0) > 0;
-                    return (
-                  <div className="space-y-2 text-sm">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    )}
                     <div>
-                      <span className="text-slate-500">CTC </span>
-                      <span className="font-medium tabular-nums text-slate-900">
-                        {pv.ctc > 0
-                          ? `₹${Math.round(pv.ctc).toLocaleString("en-IN")}`
-                          : "—"}
-                      </span>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">New master effective start *</label>
+                      <DatePickerField
+                        value={editEffectiveDate}
+                        onChange={handleEditEffectiveStartChange}
+                        required
+                        className="w-full"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">
+                        First calendar day the new structure applies (for example 1 June). Run payroll uses the latest applicable row for that salary month once the previous row has an end date.
+                      </p>
                     </div>
                     <div>
-                      <span className="text-slate-500">Net Salary / Take Home </span>
-                      <span className="font-medium tabular-nums text-slate-900">
-                        {hasPrivateAmount
-                          ? `₹${Math.round(pv.takeHome).toLocaleString("en-IN")}`
-                          : "—"}
-                      </span>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Current master effective end *</label>
+                      <DatePickerField value={editPreviousEndDate} onChange={setEditPreviousEndDate} required className="w-full" />
+                      <p className="mt-1 text-xs text-slate-500">
+                        Last day the previous snapshot remains valid (e.g. 31 May). It must be strictly before the new start. The new row is saved with no end date until the next change. Defaults to the day before the new start when you change the start date.
+                      </p>
                     </div>
-                    <div className="text-xs text-slate-500 sm:col-span-1">
-                      {hasPrivateAmount && (
-                        <>
-                          PT ₹{Math.round(pv.ptMonthly).toLocaleString("en-IN")}
-                          {pv.pfEmp > 0 && ` · PF ₹${Math.round(pv.pfEmp).toLocaleString("en-IN")}`}
-                          {pv.esicEmp > 0 && ` · ESIC ₹${Math.round(pv.esicEmp).toLocaleString("en-IN")}`}
-                          {pv.tds > 0 && ` · TDS ₹${Math.round(pv.tds).toLocaleString("en-IN")}`}
-                          {pv.advanceBonus > 0 &&
-                            ` · Adv +₹${Math.round(pv.advanceBonus).toLocaleString("en-IN")}`}
-                        </>
-                      )}
+                    <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payroll master history</p>
+                        {payrollHistoryLoading ? <span className="text-xs text-slate-500">Loading…</span> : null}
+                      </div>
+                      {!payrollHistoryLoading && payrollMasterHistory.length === 0 ? (
+                        <p className="text-xs text-slate-500">No rows yet for this employee.</p>
+                      ) : null}
+                      {payrollMasterHistory.length > 0 ? (
+                        <div className="max-h-40 overflow-auto rounded border border-slate-200 bg-white">
+                          <table className="w-full min-w-[28rem] text-left text-xs">
+                            <thead className="sticky top-0 bg-slate-100 text-slate-600">
+                              <tr>
+                                <th className="px-2 py-1.5 font-medium">Start</th>
+                                <th className="px-2 py-1.5 font-medium">End</th>
+                                <th className="px-2 py-1.5 font-medium">Mode</th>
+                                <th className="px-2 py-1.5 font-medium">Gross / basic</th>
+                                <th className="px-2 py-1.5 font-medium">Reason</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {payrollMasterHistory.map((h) => {
+                                const start = h.effective_start_date ? String(h.effective_start_date).slice(0, 10) : "—";
+                                const end = h.effective_end_date ? String(h.effective_end_date).slice(0, 10) : "Open";
+                                const mode = h.payroll_mode === "government" ? "Gov" : "Pvt";
+                                const amt =
+                                  h.payroll_mode === "government"
+                                    ? h.gross_basic != null
+                                      ? `₹${Math.round(Number(h.gross_basic)).toLocaleString("en-IN")}`
+                                      : "—"
+                                    : h.gross_salary != null
+                                      ? `₹${Math.round(Number(h.gross_salary)).toLocaleString("en-IN")}`
+                                      : "—";
+                                return (
+                                  <tr key={h.id} className="border-t border-slate-100">
+                                    <td className="px-2 py-1.5 tabular-nums text-slate-800">{start}</td>
+                                    <td className="px-2 py-1.5 tabular-nums text-slate-800">{end}</td>
+                                    <td className="px-2 py-1.5 text-slate-700">{mode}</td>
+                                    <td className="px-2 py-1.5 tabular-nums text-slate-800">{amt}</td>
+                                    <td className="max-w-[10rem] truncate px-2 py-1.5 text-slate-600" title={h.reason_for_change ?? ""}>
+                                      {h.reason_for_change || "—"}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      ) : null}
                     </div>
-                  </div>
-                  </div>
-                    );
-                  })()
-                  )}
-                </div>
-              )}
-              {editPayrollMode === "private" ? (
-                <>
-              <div className="flex gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={editPfEligible}
-                    onChange={(e) => {
-                      editMasterPfOverrideRef.current = true;
-                      setEditPfEligible(e.target.checked);
-                    }}
-                  />
-                  PF eligible
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={editEsicEligible}
-                    onChange={(e) => {
-                      editMasterEsicOverrideRef.current = true;
-                      setEditEsicEligible(e.target.checked);
-                    }}
-                  />
-                  ESIC eligible
-                </label>
-              </div>
-              <p className="text-xs text-slate-500">
-                ESIC follows policy when Basic+DA is within the ceiling (≤ ₹21,000 by default); change the checkbox to override. Same behaviour as Add employee.
-              </p>
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">PT (monthly)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={editPt}
-                    onChange={(e) => setEditPt(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">TDS (monthly)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={editTds}
-                    onChange={(e) => setEditTds(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={editAdvanceBonus}
-                    onChange={(e) => setEditAdvanceBonus(e.target.value)}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-              </div>
-                </>
-              ) : (
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Advance bonus (variable)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
-                    value={editAdvanceBonus}
-                    onChange={(e) => setEditAdvanceBonus(e.target.value)}
-                    className="w-full max-w-xs rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                  />
-                </div>
-              )}
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">New master effective start *</label>
-                <DatePickerField
-                  value={editEffectiveDate}
-                  onChange={handleEditEffectiveStartChange}
-                  required
-                  className="w-full"
-                />
-                <p className="mt-1 text-xs text-slate-500">
-                  First calendar day the new structure applies (for example 1 June). Run payroll uses the latest applicable row for that salary month once the previous row has an end date.
-                </p>
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Current master effective end *</label>
-                <DatePickerField value={editPreviousEndDate} onChange={setEditPreviousEndDate} required className="w-full" />
-                <p className="mt-1 text-xs text-slate-500">
-                  Last day the previous snapshot remains valid (e.g. 31 May). It must be strictly before the new start. The new row is saved with no end date until the next change. Defaults to the day before the new start when you change the start date.
-                </p>
-              </div>
-              <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Payroll master history</p>
-                  {payrollHistoryLoading ? <span className="text-xs text-slate-500">Loading…</span> : null}
-                </div>
-                {!payrollHistoryLoading && payrollMasterHistory.length === 0 ? (
-                  <p className="text-xs text-slate-500">No rows yet for this employee.</p>
-                ) : null}
-                {payrollMasterHistory.length > 0 ? (
-                  <div className="max-h-40 overflow-auto rounded border border-slate-200 bg-white">
-                    <table className="w-full min-w-[28rem] text-left text-xs">
-                      <thead className="sticky top-0 bg-slate-100 text-slate-600">
-                        <tr>
-                          <th className="px-2 py-1.5 font-medium">Start</th>
-                          <th className="px-2 py-1.5 font-medium">End</th>
-                          <th className="px-2 py-1.5 font-medium">Mode</th>
-                          <th className="px-2 py-1.5 font-medium">Gross / basic</th>
-                          <th className="px-2 py-1.5 font-medium">Reason</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {payrollMasterHistory.map((h) => {
-                          const start = h.effective_start_date ? String(h.effective_start_date).slice(0, 10) : "—";
-                          const end = h.effective_end_date ? String(h.effective_end_date).slice(0, 10) : "Open";
-                          const mode = h.payroll_mode === "government" ? "Gov" : "Pvt";
-                          const amt =
-                            h.payroll_mode === "government"
-                              ? h.gross_basic != null
-                                ? `₹${Math.round(Number(h.gross_basic)).toLocaleString("en-IN")}`
-                                : "—"
-                              : h.gross_salary != null
-                                ? `₹${Math.round(Number(h.gross_salary)).toLocaleString("en-IN")}`
-                                : "—";
-                          return (
-                            <tr key={h.id} className="border-t border-slate-100">
-                              <td className="px-2 py-1.5 tabular-nums text-slate-800">{start}</td>
-                              <td className="px-2 py-1.5 tabular-nums text-slate-800">{end}</td>
-                              <td className="px-2 py-1.5 text-slate-700">{mode}</td>
-                              <td className="px-2 py-1.5 tabular-nums text-slate-800">{amt}</td>
-                              <td className="max-w-[10rem] truncate px-2 py-1.5 text-slate-600" title={h.reason_for_change ?? ""}>
-                                {h.reason_for_change || "—"}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : null}
-              </div>
-              <div>
-                <label className="mb-1 block text-sm font-medium text-slate-700">Reason for change *</label>
-                <select
-                  value={editReason}
-                  onChange={(e) => setEditReason(e.target.value)}
-                  required
-                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
-                >
-                  <option value="">Select reason</option>
-                  <option value="NewJoin">New Join</option>
-                  <option value="Promotion">Promotion</option>
-                  <option value="Demotion">Demotion</option>
-                  <option value="YearlyAppraisal">Yearly Appraisal</option>
-                  <option value="Increment">Increment</option>
-                  <option value="UpdateOnly">Update Only</option>
-                </select>
-              </div>
-              </>
-              )}
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Reason for change *</label>
+                      <select
+                        value={editReason}
+                        onChange={(e) => setEditReason(e.target.value)}
+                        required
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                      >
+                        <option value="">Select reason</option>
+                        <option value="NewJoin">New Join</option>
+                        <option value="Promotion">Promotion</option>
+                        <option value="Demotion">Demotion</option>
+                        <option value="YearlyAppraisal">Yearly Appraisal</option>
+                        <option value="Increment">Increment</option>
+                        <option value="UpdateOnly">Update Only</option>
+                      </select>
+                    </div>
+                  </>
+                )}
               </div>
               <div className="shrink-0 border-t border-slate-100 bg-slate-50/90 px-5 py-3 sm:px-6">
                 <div className="flex justify-end gap-2">
@@ -3361,7 +3356,7 @@ function PayrollPageContent() {
         <div className="space-y-4">
           <div className="card">
             <h2 className="mb-1 text-lg font-semibold text-slate-900">Run monthly payroll</h2>
-            
+
             <form onSubmit={handleRunPayroll} className="space-y-4">
               <div className="flex flex-wrap items-end gap-4">
                 <div>
@@ -3406,9 +3401,8 @@ function PayrollPageContent() {
                   )}
                   <button
                     type="submit"
-                    className={`btn btn-primary ${
-                      preview?.alreadyRun && preview?.payrollComplete !== false ? "cursor-not-allowed opacity-50" : ""
-                    }`}
+                    className={`btn btn-primary ${preview?.alreadyRun && preview?.payrollComplete !== false ? "cursor-not-allowed opacity-50" : ""
+                      }`}
                     disabled={running || (!!preview?.alreadyRun && preview?.payrollComplete !== false)}
                   >
                     {running
@@ -3738,9 +3732,9 @@ function PayrollPageContent() {
                     </div>
                   )}
                 </div>
-            ) : !preview?.alreadyRun ? (
-              <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
-            ) : null}
+              ) : !preview?.alreadyRun ? (
+                <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
+              ) : null}
             </form>
           </div>
         </div>
@@ -3847,20 +3841,37 @@ function PayrollPageContent() {
               });
               const dojFormatted = user?.dateOfJoining
                 ? new Date(user.dateOfJoining + "T12:00:00").toLocaleDateString("en-IN", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })
+                  day: "numeric",
+                  month: "short",
+                  year: "numeric",
+                })
                 : "—";
 
-              const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
-              const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
-              // Bank credit: salary after statutory deductions, minus TDS, plus variable pay (aligned with payroll preview).
-              // Do not use slip.netPay alone — it may already equal take-home in some runs, which would double-count bonus/reimbursement.
-              const salaryAfterDeductions = slip.grossPay - slip.deductions;
-              const takeHome = Math.round(
-                salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
-              );
+                const n = (x: number | null | undefined) =>
+                  Math.round(Number(x) || 0).toLocaleString("en-IN");
+                
+                const professionalTax = Number(slip.professionalTax || 0);
+                const pfEmployee = Number(slip.pfEmployee || 0);
+                const esicEmployee = Number(slip.esicEmployee || 0);
+                const tds = Number(slip.tds || 0);
+                
+                const incentive = Number(slip.incentive || 0);
+                const prBonus = Number(slip.prBonus || 0);
+                const reimbursement = Number(slip.reimbursement || 0);
+                
+                const totalPerf = incentive + prBonus + reimbursement;
+                
+                const totalEmployeeDeductions =
+                  professionalTax +
+                  pfEmployee +
+                  esicEmployee +
+                  tds;
+                
+                const takeHome = Math.round(
+                  Number(slip.grossPay || 0) -
+                    totalEmployeeDeductions +
+                    totalPerf
+                );
 
               const cellClass = "border border-black px-3 py-2 align-top text-sm";
               const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
@@ -3965,93 +3976,94 @@ function PayrollPageContent() {
                       <tr>
                         <td colSpan={2} className="border border-black p-0">
                           <table className="payslip-financial-table w-full border-collapse text-sm">
-                              <>
-                            <colgroup>
-                              <col /><col /><col /><col /><col /><col /><col />
-                            </colgroup>
-                            <thead>
-                              <tr>
-                                <th className={`${thClass} w-20`}>Earnings</th>
-                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Actual</th>
-                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Paid</th>
-                                <th className={`${thClass} w-24`}>Employee Deductions</th>
-                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
-                                <th className={`${thClass} w-24`}>Performance Earnings</th>
-                                <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              <tr>
-                                <td className={cellClass}>Basic</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
-                                <td className={cellClass}>Professional Tax</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
-                                <td className={cellClass}>Bonus</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
-                              </tr>
-                              <tr>
-                                <td className={cellClass}>HRA</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
-                                <td className={cellClass}>PF</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
-                                <td className={cellClass}>Incentive</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
-                              </tr>
-                              <tr>
-                                <td className={cellClass}>Medical</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
-                                <td className={cellClass}>ESIC</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
-                                <td className={cellClass}>Reimbursement</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
-                              </tr>
-                              <tr>
-                                <td className={cellClass}>Trans</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
-                                <td colSpan={2} className={cellClass}></td>
-                                <td colSpan={2} className={cellClass}></td>
-                              </tr>
-                              <tr>
-                                <td className={cellClass}>LTA</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
-                                <td colSpan={2} className={cellClass}></td>
-                                <td colSpan={2} className={cellClass}></td>
-                              </tr>
-                              <tr>
-                                <td className={cellClass}>Personal</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
-                                <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
-                                <td colSpan={2} className={cellClass}></td>
-                                <td colSpan={2} className={cellClass}></td>
-                              </tr>
-                              <tr>
-                                <td className={`${cellClass} font-medium`}>GROSS</td>
-                                <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
-                                <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
-                                <td className={`${cellClass} font-medium`}>Total Deduction</td>
-                                <td className={`${cellClass} text-right font-medium`}>{n(slip.deductions)}</td>
-                                <td className={`${cellClass} font-medium`}>Total</td>
-                                <td className={`${cellClass} text-right font-medium`}>{n(totalPerf)}</td>
-                              </tr>
-                              <tr>
-                                <td className={`${cellClass} font-medium`}>Net Payable Salary</td>
-                                <td className={`${cellClass} text-right font-medium`}>{n(takeHome)}</td>
-                                <td className={`${cellClass} text-right font-medium`}>{n(takeHome)}</td>
-                                <td colSpan={2} className={cellClass}></td>
-                                <td colSpan={2} className={cellClass}></td>
-                              </tr>
-                              <tr>
-                                <td className={`${cellClass} font-bold`}>Net Pay</td>
-                                <td colSpan={5} className={cellClass}></td>
-                                <td className={`${cellClass} text-right font-bold`}>{n(takeHome)}</td>
-                              </tr>
-                            </tbody>
-                              </>
+                            <>
+                              <colgroup>
+                                <col /><col /><col /><col /><col /><col /><col />
+                              </colgroup>
+                              <thead>
+                                <tr>
+                                  <th className={`${thClass} w-20`}>Earnings</th>
+                                  <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Actual</th>
+                                  <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Paid</th>
+                                  <th className={`${thClass} w-24`}>Employee Deductions</th>
+                                  <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
+                                  <th className={`${thClass} w-24`}>Performance Earnings</th>
+                                  <th className="border border-black px-3 py-2 text-right w-14 font-semibold text-sm">Amount</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                <tr>
+                                  <td className={cellClass}>Basic</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
+                                  <td className={cellClass}>Professional Tax</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
+                                  <td className={cellClass}>Bonus</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
+                                </tr>
+                                <tr>
+                                  <td className={cellClass}>HRA</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
+                                  <td className={cellClass}>PF</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
+                                  <td className={cellClass}>Incentive</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
+                                </tr>
+                                <tr>
+                                  <td className={cellClass}>Medical</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
+                                  <td className={cellClass}>ESIC</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
+                                  <td className={cellClass}>Reimbursement</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
+                                </tr>
+                                <tr>
+                                  <td className={cellClass}>Trans</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
+                                  <td className={cellClass}>TDS</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.tds ?? 0)}</td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                </tr>
+                                <tr>
+                                  <td className={cellClass}>LTA</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                </tr>
+                                <tr>
+                                  <td className={cellClass}>Personal</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
+                                  <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                </tr>
+                                <tr>
+                                  <td className={`${cellClass} font-medium`}>GROSS</td>
+                                  <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
+                                  <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
+                                  <td className={`${cellClass} font-medium`}>Total Deduction</td>
+                                  <td className={`${cellClass} text-right font-medium`}>{n(totalEmployeeDeductions)}</td>
+                                  <td className={`${cellClass} font-medium`}>Total</td>
+                                  <td className={`${cellClass} text-right font-medium`}>{n(totalPerf)}</td>
+                                </tr>
+                                <tr>
+                                  <td className={`${cellClass} font-medium`}>Net Payable Salary</td>
+                                  <td className={`${cellClass} text-right font-medium`}>{n(takeHome)}</td>
+                                  <td className={`${cellClass} text-right font-medium`}>{n(takeHome)}</td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                  <td colSpan={2} className={cellClass}></td>
+                                </tr>
+                                <tr>
+                                  <td className={`${cellClass} font-bold`}>Net Pay</td>
+                                  <td colSpan={5} className={cellClass}></td>
+                                  <td className={`${cellClass} text-right font-bold`}>{n(takeHome)}</td>
+                                </tr>
+                              </tbody>
+                            </>
                           </table>
                         </td>
                       </tr>

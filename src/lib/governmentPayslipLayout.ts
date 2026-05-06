@@ -64,12 +64,18 @@ export function governmentPayslipEarningPairs(gov: GovernmentMonthlySlip): [stri
 }
 
 /** Deduction lines in display order. */
+/** Deduction lines in display order. */
 export function governmentPayslipDeductionPairs(gov: GovernmentMonthlySlip): [string, number][] {
+  const incomeTaxOrTds =
+    gnum(gov, "income_tax_amount") ||
+    gnum(gov, "tds") ||
+    gnum(gov, "tds_amount");
+
   return [
-    ["Income Tax", gnum(gov, "income_tax_amount")],
-    ["P.Tax", gnum(gov, "pt_amount")],
+    ["TDS / Income Tax", incomeTaxOrTds],
+    ["P.Tax", gnum(gov, "pt_amount") || gnum(gov, "professional_tax")],
     ["LIC", gnum(gov, "lic_amount")],
-    ["CPF", gnum(gov, "cpf_amount")],
+    ["CPF", gnum(gov, "cpf_amount") || gnum(gov, "pf_employee")],
     ["DA CPF", gnum(gov, "da_cpf_amount")],
     ["VPF", gnum(gov, "vpf_amount")],
     ["PF Loan", gnum(gov, "pf_loan_amount")],

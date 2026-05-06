@@ -1241,11 +1241,30 @@ export function ProfileContent() {
                   const salaryDate = fmtDmy(slip.generatedAt);
                   const dojFormatted = user?.dateOfJoining ? fmtDmy(user.dateOfJoining) : "";
 
-                  const n = (x: number) => (x ?? 0).toLocaleString("en-IN");
-                  const totalPerf = slip.incentive + slip.prBonus + slip.reimbursement;
-                  const salaryAfterDeductions = slip.grossPay - slip.deductions;
+                  const n = (x: number | null | undefined) =>
+                    Math.round(Number(x) || 0).toLocaleString("en-IN");
+                  
+                  const professionalTax = Number(slip.professionalTax || 0);
+                  const pfEmployee = Number(slip.pfEmployee || 0);
+                  const esicEmployee = Number(slip.esicEmployee || 0);
+                  const tds = Number(slip.tds || 0);
+                  
+                  const incentive = Number(slip.incentive || 0);
+                  const prBonus = Number(slip.prBonus || 0);
+                  const reimbursement = Number(slip.reimbursement || 0);
+                  
+                  const totalPerf = incentive + prBonus + reimbursement;
+                  
+                  const totalEmployeeDeductions =
+                    professionalTax +
+                    pfEmployee +
+                    esicEmployee +
+                    tds;
+                  
                   const takeHome = Math.round(
-                    salaryAfterDeductions - slip.tds + slip.incentive + slip.prBonus + slip.reimbursement
+                    Number(slip.grossPay || 0) -
+                      totalEmployeeDeductions +
+                      totalPerf
                   );
                   const gov = slip.governmentMonthly;
                   if (gov) {
@@ -1427,7 +1446,7 @@ export function ProfileContent() {
                                     <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
                                     <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
                                     <td className={`${cellClass} font-medium`}>Total Deduction</td>
-                                    <td className={`${cellClass} text-right font-medium`}>{n(slip.deductions)}</td>
+                                    <td className={`${cellClass} text-right font-medium`}>{n(totalEmployeeDeductions)}</td>
                                     <td className={`${cellClass} font-medium`}>Total</td>
                                     <td className={`${cellClass} text-right font-medium`}>{n(totalPerf)}</td>
                                   </tr>
