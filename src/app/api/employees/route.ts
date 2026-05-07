@@ -24,6 +24,7 @@ import {
   validatePanNormalized,
 } from "@/lib/employeeValidators";
 import { getRequestAppBaseUrl, sendInviteEmail } from "@/lib/inviteEmail";
+import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import bcrypt from "bcryptjs";
 
 function isManagerial(role: string): boolean {
@@ -699,7 +700,7 @@ export async function POST(request: NextRequest) {
         email,
         name: name ?? null,
         role: finalRole,
-        // Always start in preboarding. They become "current" only after completing invite + mandatory documents.
+        // Start in preboarding; admin/HR/super_admin sets "current" (e.g. after invite + checks, or via employee edit / convert).
         employment_status: requestedStatus === "past" ? "past" : "preboarding",
         employee_code: finalEmployeeCode || null,
         phone: phoneDigits,
@@ -1151,6 +1152,16 @@ export async function PUT(request: NextRequest) {
     ...(cpfNumberPut !== undefined ? { cpf_number: cpfNumberPut } : {}),
   };
 
+  if (finalStatus === "current") {
+    const mirror = await ensureEmployeeMirrorForUser(supabase, companyId, userId);
+    if (!mirror.ok) {
+      return NextResponse.json(
+        { error: mirror.error || "Could not sync employee directory record before marking as current." },
+        { status: 400 },
+      );
+    }
+  }
+
   const { data: updated, error: upErr } = await supabase
     .from("HRMS_users")
     .update(payload)
@@ -1179,6 +1190,8 @@ export async function PUT(request: NextRequest) {
         bank_ifsc: bankIfsc || null,
         emergency_contact_name: emergencyContactName || null,
         emergency_contact_phone: emergencyContactPhone || null,
+        ...(finalStatus === "current" ? { is_active: true } : {}),
+        ...(finalStatus === "past" ? { is_active: false } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq("company_id", companyId)
@@ -1434,6 +1447,14 @@ export async function PATCH(request: NextRequest) {
 
     const tdsBase = u.tds_monthly != null ? Math.max(0, Number(u.tds_monthly)) : 0;
 
+    const mirror = await ensureEmployeeMirrorForUser(supabase, me.company_id, userId);
+    if (!mirror.ok) {
+      return NextResponse.json(
+        { error: mirror.error || "Could not sync employee directory record before marking as current." },
+        { status: 400 },
+      );
+    }
+
     const { error: updErr } = await supabase
       .from("HRMS_users")
       .update({
@@ -1649,6 +1670,14 @@ export async function PATCH(request: NextRequest) {
   }
 
   if (action === "revoke_notice") {
+    const mirror = await ensureEmployeeMirrorForUser(supabase, me.company_id, userId);
+    if (!mirror.ok) {
+      return NextResponse.json(
+        { error: mirror.error || "Could not sync employee directory record before revoking notice." },
+        { status: 400 },
+      );
+    }
+
     const { error: revErr } = await supabase
       .from("HRMS_users")
       .update({ employment_status: "current", date_of_leaving: null, updated_at: new Date().toISOString() })
@@ -1669,6 +1698,15 @@ export async function PATCH(request: NextRequest) {
   const dol = lastWorkingDate || todayYmd();
   const today = todayYmd();
   const nextStatus = dol <= today ? "past" : "current";
+  if (nextStatus === "current") {
+    const mirror = await ensureEmployeeMirrorForUser(supabase, me.company_id, userId);
+    if (!mirror.ok) {
+      return NextResponse.json(
+        { error: mirror.error || "Could not sync employee directory record before updating notice status." },
+        { status: 400 },
+      );
+    }
+  }
   const { error: pastErr } = await supabase
     .from("HRMS_users")
     .update({ employment_status: nextStatus, date_of_leaving: dol, updated_at: new Date().toISOString() })

@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
-import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
+import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
 
@@ -87,6 +87,52 @@ function asSegments(raw: unknown): { out: string; in: string }[] {
     }
   }
   return [];
+}
+
+async function upsertAttendanceState(args: {
+  companyId: string;
+  employeeId: string;
+  attendanceLogId: string | null;
+  workDate: string;
+  status: "ACTIVE" | "LUNCH" | "BREAK" | "INACTIVE";
+  updatedAtIso: string;
+}) {
+  try {
+    await supabase.from("HRMS_attendance_state").upsert(
+      {
+        company_id: args.companyId,
+        employee_id: args.employeeId,
+        attendance_log_id: args.attendanceLogId,
+        work_date: args.workDate,
+        status: args.status,
+        updated_at: args.updatedAtIso,
+      } as any,
+      { onConflict: "company_id,employee_id" },
+    );
+  } catch {
+    // best-effort: do not block attendance actions
+  }
+}
+async function closeOpenActivitySessions(args: {
+  companyId: string;
+  employeeId: string;
+  attendanceLogId: string;
+  endedAtIso: string;
+}) {
+  const { error } = await supabase
+    .from("HRMS_activity_sessions")
+    .update({
+      ended_at: args.endedAtIso,
+      last_heartbeat_at: args.endedAtIso,
+    } as any)
+    .eq("company_id", args.companyId)
+    .eq("employee_id", args.employeeId)
+    .eq("attendance_log_id", args.attendanceLogId)
+    .is("ended_at", null);
+
+  if (error) {
+    throw new Error(`Failed to close activity session: ${error.message}`);
+  }
 }
 
 export async function GET() {
@@ -263,6 +309,24 @@ export async function POST(request: NextRequest) {
       )
       .single();
     if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+
+    const nextStatus =
+      (updated as any).check_out_at
+        ? "INACTIVE"
+        : (updated as any).lunch_break_started_at
+          ? "LUNCH"
+          : (updated as any).tea_break_started_at
+            ? "BREAK"
+            : "ACTIVE";
+    await upsertAttendanceState({
+      companyId: meCompanyId,
+      employeeId: attendanceEmployeeId,
+      attendanceLogId: String((updated as any).id ?? row.id),
+      workDate: wd,
+      status: nextStatus,
+      updatedAtIso: nowIso,
+    });
+
     return NextResponse.json({ ok: true, log: updated });
   }
 
@@ -326,6 +390,15 @@ export async function POST(request: NextRequest) {
       )
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
+
+    await upsertAttendanceState({
+      companyId: meCompanyId,
+      employeeId: attendanceEmployeeId,
+      attendanceLogId: String((inserted as any).id ?? ""),
+      workDate: wd,
+      status: "ACTIVE",
+      updatedAtIso: nowIso,
+    });
     return NextResponse.json({ ok: true, log: inserted, warning: warn });
   }
 
@@ -334,8 +407,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Punch in first before punching out." }, { status: 400 });
   }
   if (existing?.check_out_at && !allowRepunchOut) {
+    await upsertAttendanceState({
+      companyId: meCompanyId,
+      employeeId: attendanceEmployeeId,
+      attendanceLogId: String(existing.id),
+      workDate: wd,
+      status: "INACTIVE",
+      updatedAtIso: nowIso,
+    });
+
+    await closeOpenActivitySessions({
+      companyId: meCompanyId,
+      employeeId: attendanceEmployeeId,
+      attendanceLogId: String(existing.id),
+      endedAtIso: nowIso,
+    });
+
     return NextResponse.json(
-      { error: "You have already punched out for today. Use update punch-out to correct it." },
+      { error: "You have already punched out for today. Tracking has been stopped." },
       { status: 400 }
     );
   }
@@ -359,9 +448,8 @@ export async function POST(request: NextRequest) {
   const outInOffice = distanceOutM != null ? distanceOutM <= officeRadiusM : null;
   const warnOut =
     outInOffice === false ? "Outside office: punch-out recorded. This will be marked as outside office in attendance logs." : null;
-  const noteOut = `Punch out: ${
-    outInOffice === false ? "Outside office." : outInOffice === true ? "Inside office." : "Unknown (office not configured)."
-  }`;
+  const noteOut = `Punch out: ${outInOffice === false ? "Outside office." : outInOffice === true ? "Inside office." : "Unknown (office not configured)."
+    }`;
 
   const inMs = new Date(String(existing.check_in_at)).getTime();
   const outMs = new Date(nowIso).getTime();
@@ -384,11 +472,12 @@ export async function POST(request: NextRequest) {
   const grossMinutes = Math.round((outMs - inMs) / 60000);
   const totalHours = Math.round((grossMinutes / 60) * 100) / 100;
 
-  const mergedLunchRecorded = Math.max(finalLunchMin, lunchBreakMinutes);
-  const lunchMinutesStored = effectiveLunchBreakMinutes({
-    recordedLunchMinutes: mergedLunchRecorded,
-    lunchCheckOutAt: row.lunch_check_out_at,
-    lunchCheckInAt: row.lunch_check_in_at,
+  const actualLunchMinutes = Math.max(finalLunchMin, lunchBreakMinutes);
+  const actualTeaMinutes = Math.max(finalTeaMin, teaBreakMinutes);
+
+  const effectiveBreak = effectiveCombinedBreakBreakdown({
+    lunchMinutes: actualLunchMinutes,
+    teaMinutes: actualTeaMinutes,
     grossWorkMinutes: grossMinutes,
   });
 
@@ -396,8 +485,8 @@ export async function POST(request: NextRequest) {
     .from("HRMS_attendance_logs")
     .update({
       check_out_at: nowIso,
-      lunch_break_minutes: lunchMinutesStored,
-      tea_break_minutes: Math.max(finalTeaMin, teaBreakMinutes),
+      lunch_break_minutes: effectiveBreak.lunchBreakMinutes,
+      tea_break_minutes: effectiveBreak.teaBreakMinutes,
       lunch_break_started_at: null,
       tea_break_started_at: null,
       tea_check_in_at: row.tea_break_started_at ? nowIso : (row as AttendanceRow).tea_check_in_at ?? null,
@@ -421,5 +510,24 @@ export async function POST(request: NextRequest) {
     )
     .single();
   if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+
+  const finalAttendanceLogId = String((updated as any).id ?? existing.id);
+
+  await upsertAttendanceState({
+    companyId: meCompanyId,
+    employeeId: attendanceEmployeeId,
+    attendanceLogId: finalAttendanceLogId,
+    workDate: wd,
+    status: "INACTIVE",
+    updatedAtIso: nowIso,
+  });
+
+  await closeOpenActivitySessions({
+    companyId: meCompanyId,
+    employeeId: attendanceEmployeeId,
+    attendanceLogId: finalAttendanceLogId,
+    endedAtIso: nowIso,
+  });
+
   return NextResponse.json({ ok: true, log: updated, warning: warnOut });
 }

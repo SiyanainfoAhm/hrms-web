@@ -1,12 +1,73 @@
+export const MIN_COMBINED_BREAK_MINUTES = 60;
+
+function clampMinutes(n: number): number {
+  return Math.min(24 * 60, Math.max(0, Math.round(Number(n) || 0)));
+}
+
+/**
+ * Old helper kept for backward compatibility.
+ * It still returns actual lunch minutes only.
+ */
 export function effectiveLunchBreakMinutes(args: {
   recordedLunchMinutes: number;
   lunchCheckOutAt: string | null | undefined;
   lunchCheckInAt: string | null | undefined;
-  /** First check-in to final check-out span in minutes (caps lunch so active time ≥ 0). */
+  /** First check-in to final check-out span in minutes. */
   grossWorkMinutes: number;
 }): number {
-  // Lunch should be deducted only when it is actually recorded (minutes or punches).
-  // If employee did not take lunch, they won't punch lunch and lunch minutes stay 0.
-  const m = Math.min(24 * 60, Math.max(0, Math.round(args.recordedLunchMinutes)));
+  const m = clampMinutes(args.recordedLunchMinutes);
   return Math.min(m, Math.max(0, args.grossWorkMinutes));
+}
+
+/**
+ * New policy:
+ * Combine lunch + tea break.
+ *
+ * If lunch + tea < 60 minutes:
+ *   Count break as 60 minutes.
+ *
+ * If lunch + tea >= 60 minutes:
+ *   Count actual break time.
+ *
+ * We add the shortfall to lunchBreakMinutes so the existing DB/UI/payroll
+ * can continue using lunch_break_minutes + tea_break_minutes.
+ *
+ * Actual JSON segments are not changed, so HR can still see real break punches.
+ */
+export function effectiveCombinedBreakBreakdown(args: {
+  lunchMinutes: number;
+  teaMinutes: number;
+  grossWorkMinutes: number;
+  minimumBreakMinutes?: number;
+}): {
+  lunchBreakMinutes: number;
+  teaBreakMinutes: number;
+  actualBreakMinutes: number;
+  countedBreakMinutes: number;
+  policyShortfallMinutes: number;
+} {
+  const lunch = clampMinutes(args.lunchMinutes);
+  const tea = clampMinutes(args.teaMinutes);
+  const gross = clampMinutes(args.grossWorkMinutes);
+  const minimum = clampMinutes(args.minimumBreakMinutes ?? MIN_COMBINED_BREAK_MINUTES);
+
+  const actualBreakMinutes = lunch + tea;
+
+  const countedBreakMinutes = Math.min(
+    gross,
+    Math.max(minimum, actualBreakMinutes),
+  );
+
+  const policyShortfallMinutes = Math.max(
+    0,
+    countedBreakMinutes - actualBreakMinutes,
+  );
+
+  return {
+    lunchBreakMinutes: lunch + policyShortfallMinutes,
+    teaBreakMinutes: tea,
+    actualBreakMinutes,
+    countedBreakMinutes,
+    policyShortfallMinutes,
+  };
 }

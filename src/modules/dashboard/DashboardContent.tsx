@@ -12,6 +12,7 @@ import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
 
 const PRIMARY = "var(--primary)";
+const AGENT_DOWNLOAD_URL = process.env.NEXT_PUBLIC_AGENT_DOWNLOAD_URL || "";
 
 function getGreeting(): string {
   const h = new Date().getHours();
@@ -39,6 +40,12 @@ type AttendanceLog = {
   check_in_at: string | null;
   check_out_at: string | null;
   total_hours: number | null;
+  grossMinutes?: number | null;
+  activeMinutes?: number | null;
+  idleMinutes?: number | null;
+  agentActiveMinutes?: number | null;
+  agentIdleMinutes?: number | null;
+  manualBreakIdleMinutes?: number | null;
   lunch_break_minutes: number | null;
   tea_break_minutes: number | null;
   lunch_break_started_at?: string | null;
@@ -145,19 +152,72 @@ export function DashboardContent() {
   const [punching, setPunching] = useState(false);
   /** Drives live HH:MM:SS / counters while punched in */
   const [tick, setTick] = useState(() => Date.now());
+  const [agent, setAgent] = useState<{
+    connected: boolean;
+    lastSeenAt: string | null;
+    appVersion: string | null;
+    deviceName: string | null;
+  } | null>(null);
 
   async function refreshAttendance() {
-    const res = await fetch("/api/attendance");
+    const res = await fetch("/api/attendance/me");
     const data = await res.json().catch(() => ({}));
+
     if (!res.ok) {
       setAttendance(null);
       return;
     }
+
+    const todayRow = Array.isArray(data.rows) && data.rows.length > 0 ? data.rows[0] : null;
+
     setAttendance({
       hasEmployee: data.hasEmployee === true,
-      workDate: String(data.workDate ?? ""),
+      workDate: String(data.workDate ?? data.startDate ?? ""),
       timeZone: (data.timeZone as AttendanceTimeZoneId) || IST_TZ,
-      log: (data.log as AttendanceLog) ?? null,
+      log: todayRow
+        ? ({
+          id: todayRow.logId,
+          work_date: todayRow.workDate,
+          check_in_at: todayRow.checkInAt,
+          check_out_at: todayRow.checkOutAt,
+          total_hours: todayRow.totalHours,
+
+          grossMinutes: todayRow.grossMinutes,
+          activeMinutes: todayRow.activeMinutes,
+          idleMinutes: todayRow.idleMinutes,
+          agentActiveMinutes: todayRow.agentActiveMinutes,
+          agentIdleMinutes: todayRow.agentIdleMinutes,
+          manualBreakIdleMinutes: todayRow.manualBreakIdleMinutes,
+
+          lunch_break_minutes: todayRow.lunchBreakMinutes,
+          tea_break_minutes: todayRow.teaBreakMinutes,
+          lunch_check_out_at: todayRow.lunchCheckOutAt,
+          lunch_check_in_at: todayRow.lunchCheckInAt,
+          tea_check_out_at: todayRow.teaCheckOutAt,
+          tea_check_in_at: todayRow.teaCheckInAt,
+          lunch_break_started_at: todayRow.lunchBreakOpen ? todayRow.lunchBreakStartedAt ?? null : null,
+          tea_break_started_at: todayRow.teaBreakOpen ? todayRow.teaBreakStartedAt ?? null : null,
+          status: todayRow.status,
+        } as AttendanceLog)
+        : null,
+    });
+  }
+
+  async function refreshAgentHeartbeat() {
+    const res = await fetch("/api/agent/heartbeat");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setAgent(null);
+      return;
+    }
+    const last = (data as any)?.heartbeat?.lastSeenAt ? String((data as any).heartbeat.lastSeenAt) : null;
+    const lastMs = last ? new Date(last).getTime() : NaN;
+    const connected = Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000;
+    setAgent({
+      connected,
+      lastSeenAt: last,
+      appVersion: (data as any)?.heartbeat?.appVersion ?? null,
+      deviceName: (data as any)?.heartbeat?.deviceName ?? null,
     });
   }
 
@@ -191,12 +251,13 @@ export function DashboardContent() {
     let cancelled = false;
     (async () => {
       try {
-        const [meRes, balanceRes, payslipRes, holidaysRes, attRes] = await Promise.all([
+        const [meRes, balanceRes, payslipRes, holidaysRes, attRes, hbRes] = await Promise.all([
           fetch("/api/me"),
           fetch("/api/leave/balance"),
           fetch("/api/payslips/me"),
           fetch("/api/holidays"),
-          fetch("/api/attendance"),
+          fetch("/api/attendance/me"),
+          fetch("/api/agent/heartbeat"),
         ]);
         if (!cancelled && meRes.ok) {
           const d = await meRes.json();
@@ -236,14 +297,55 @@ export function DashboardContent() {
         }
         if (!cancelled && attRes.ok) {
           const d = await attRes.json();
+          const todayRow = Array.isArray(d.rows) && d.rows.length > 0 ? d.rows[0] : null;
+
           setAttendance({
             hasEmployee: d.hasEmployee === true,
-            workDate: String(d.workDate ?? ""),
+            workDate: String(d.workDate ?? d.startDate ?? ""),
             timeZone: (d.timeZone as AttendanceTimeZoneId) || IST_TZ,
-            log: (d.log as AttendanceLog) ?? null,
+            log: todayRow
+              ? ({
+                id: todayRow.logId,
+                work_date: todayRow.workDate,
+                check_in_at: todayRow.checkInAt,
+                check_out_at: todayRow.checkOutAt,
+                total_hours: todayRow.totalHours,
+
+                grossMinutes: todayRow.grossMinutes,
+                activeMinutes: todayRow.activeMinutes,
+                idleMinutes: todayRow.idleMinutes,
+                agentActiveMinutes: todayRow.agentActiveMinutes,
+                agentIdleMinutes: todayRow.agentIdleMinutes,
+                manualBreakIdleMinutes: todayRow.manualBreakIdleMinutes,
+
+                lunch_break_minutes: todayRow.lunchBreakMinutes,
+                tea_break_minutes: todayRow.teaBreakMinutes,
+                lunch_check_out_at: todayRow.lunchCheckOutAt,
+                lunch_check_in_at: todayRow.lunchCheckInAt,
+                tea_check_out_at: todayRow.teaCheckOutAt,
+                tea_check_in_at: todayRow.teaCheckInAt,
+                lunch_break_started_at: todayRow.lunchBreakOpen ? todayRow.lunchBreakStartedAt ?? null : null,
+                tea_break_started_at: todayRow.teaBreakOpen ? todayRow.teaBreakStartedAt ?? null : null,
+                status: todayRow.status,
+              } as AttendanceLog)
+              : null,
           });
         } else if (!cancelled) {
           setAttendance(null);
+        }
+        if (!cancelled && hbRes.ok) {
+          const d = await hbRes.json().catch(() => ({}));
+          const last = (d as any)?.heartbeat?.lastSeenAt ? String((d as any).heartbeat.lastSeenAt) : null;
+          const lastMs = last ? new Date(last).getTime() : NaN;
+          const connected = Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000;
+          setAgent({
+            connected,
+            lastSeenAt: last,
+            appVersion: (d as any)?.heartbeat?.appVersion ?? null,
+            deviceName: (d as any)?.heartbeat?.deviceName ?? null,
+          });
+        } else if (!cancelled) {
+          setAgent(null);
         }
       } catch {
         // ignore
@@ -256,6 +358,15 @@ export function DashboardContent() {
     })();
     return () => { cancelled = true; };
   }, []);
+
+  // Poll agent heartbeat while attendance is active (simple for now).
+  useEffect(() => {
+    const log = attendance?.log;
+    if (!log?.check_in_at || log.check_out_at) return;
+    void refreshAgentHeartbeat();
+    const t = setInterval(() => void refreshAgentHeartbeat(), 20_000);
+    return () => clearInterval(t);
+  }, [attendance?.log?.check_in_at, attendance?.log?.check_out_at]);
 
   /** 1s clock while punched in (for live elapsed + break counters) */
   useEffect(() => {
@@ -313,17 +424,17 @@ export function DashboardContent() {
       const location =
         typeof navigator !== "undefined" && navigator.geolocation
           ? await new Promise<{ lat: number; lng: number; accuracyM: number }>((resolve, reject) => {
-              navigator.geolocation.getCurrentPosition(
-                (pos) =>
-                  resolve({
-                    lat: pos.coords.latitude,
-                    lng: pos.coords.longitude,
-                    accuracyM: Math.round(pos.coords.accuracy),
-                  }),
-                (err) => reject(err),
-                { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
-              );
-            }).catch(() => null)
+            navigator.geolocation.getCurrentPosition(
+              (pos) =>
+                resolve({
+                  lat: pos.coords.latitude,
+                  lng: pos.coords.longitude,
+                  accuracyM: Math.round(pos.coords.accuracy),
+                }),
+              (err) => reject(err),
+              { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 },
+            );
+          }).catch(() => null)
           : null;
       if ((action === "in" || action === "out") && !location) {
         throw new Error(action === "in" ? "Location permission is required to punch in." : "Location permission is required to punch out.");
@@ -371,11 +482,11 @@ export function DashboardContent() {
     const tz = (attendance?.timeZone as AttendanceTimeZoneId) || IST_TZ;
     const attDateLabel = attendance?.workDate
       ? new Date(attendance.workDate + "T12:00:00Z").toLocaleDateString("en-IN", {
-          weekday: "short",
-          day: "numeric",
-          month: "short",
-          year: "numeric",
-        })
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        year: "numeric",
+      })
       : "";
 
     const nowMs = tick;
@@ -401,7 +512,22 @@ export function DashboardContent() {
         ? teaIdleBaseMs + Math.max(0, nowMs - teaRunningSinceMs)
         : teaIdleBaseMs;
     const elapsedMs = punchInMs ? nowMs - punchInMs : 0;
-    const activeMs = punchedInOpen ? Math.max(0, elapsedMs - lunchTotalMs - teaTotalMs) : 0;
+
+    const apiGrossMs =
+      attLog?.grossMinutes != null ? Number(attLog.grossMinutes) * 60 * 1000 : null;
+
+    const apiActiveMs =
+      attLog?.activeMinutes != null ? Number(attLog.activeMinutes) * 60 * 1000 : null;
+
+    const apiIdleMs =
+      attLog?.idleMinutes != null ? Number(attLog.idleMinutes) * 60 * 1000 : null;
+
+    const grossMs = apiGrossMs ?? elapsedMs;
+    const activeMs =
+      apiActiveMs ??
+      (punchedInOpen ? Math.max(0, elapsedMs - lunchTotalMs - teaTotalMs) : 0);
+
+    const totalIdleMs = apiIdleMs ?? lunchTotalMs + teaTotalMs;
     const activeMeetsPresent = activeMs >= 8 * 60 * 60 * 1000;
     const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
     const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
@@ -431,381 +557,424 @@ export function DashboardContent() {
               </Link>
             }
           />
-        {/* Top greeting banner */}
-        <div className="mb-6 rounded-xl bg-[var(--primary)] px-4 py-4 text-center text-white sm:px-6">
-          <h1 className="text-lg font-semibold sm:text-xl">
-            {greeting} {displayName}
-          </h1>
-        </div>
+          {/* Top greeting banner */}
+          <div className="mb-6 rounded-xl bg-[var(--primary)] px-4 py-4 text-center text-white sm:px-6">
+            <h1 className="text-lg font-semibold sm:text-xl">
+              {greeting} {displayName}
+            </h1>
+          </div>
 
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-          {/* Left: Profile + Leave summary */}
-          <div className="lg:col-span-1">
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-              <div className="mb-6 flex items-center gap-4">
-                <Image
-                  unoptimized
-                  src={AvatarUrl({ userId: id, gender: user?.gender ?? null })}
-                  alt=""
-                  width={80}
-                  height={80}
-                  className="h-20 w-20 rounded-full object-cover ring-2 ring-slate-200"
-                />
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">{displayName}</h2>
-                  <p className="text-sm text-slate-500">Employee</p>
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            {/* Left: Profile + Leave summary */}
+            <div className="lg:col-span-1">
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                <div className="mb-6 flex items-center gap-4">
+                  <Image
+                    unoptimized
+                    src={AvatarUrl({ userId: id, gender: user?.gender ?? null })}
+                    alt=""
+                    width={80}
+                    height={80}
+                    className="h-20 w-20 rounded-full object-cover ring-2 ring-slate-200"
+                  />
+                  <div>
+                    <h2 className="text-lg font-bold text-slate-900">{displayName}</h2>
+                    <p className="text-sm text-slate-500">Employee</p>
+                  </div>
                 </div>
-              </div>
 
-              <div className="space-y-4">
-                {loading ? (
-                  <div className="space-y-3" aria-busy="true" aria-label="Loading leave balances">
-                    {[1, 2, 3].map((i) => (
+                <div className="space-y-4">
+                  {loading ? (
+                    <div className="space-y-3" aria-busy="true" aria-label="Loading leave balances">
+                      {[1, 2, 3].map((i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
+                        >
+                          <div className="flex items-center gap-3">
+                            <SkeletonBar className="h-10 w-10 shrink-0 rounded-lg" />
+                            <SkeletonBar className="h-4 w-32" />
+                          </div>
+                          <SkeletonBar className="h-8 w-12" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : leaveBalances.length > 0 ? (
+                    leaveBalances.map((b) => (
                       <div
-                        key={i}
+                        key={b.leaveTypeName}
                         className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
                       >
                         <div className="flex items-center gap-3">
-                          <SkeletonBar className="h-10 w-10 shrink-0 rounded-lg" />
-                          <SkeletonBar className="h-4 w-32" />
-                        </div>
-                        <SkeletonBar className="h-8 w-12" />
-                      </div>
-                    ))}
-                  </div>
-                ) : leaveBalances.length > 0 ? (
-                  leaveBalances.map((b) => (
-                    <div
-                      key={b.leaveTypeName}
-                      className="flex items-center justify-between rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div
-                          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
-                          style={{ backgroundColor: "var(--primary-soft)" }}
-                        >
-                          {b.isPaid ? (
-                            <svg className="h-5 w-5" style={{ color: PRIMARY }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
-                            </svg>
-                          ) : (
-                            <svg className="h-5 w-5" style={{ color: PRIMARY }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                              <line x1="16" y1="2" x2="16" y2="6" />
-                              <line x1="8" y1="2" x2="8" y2="6" />
-                              <line x1="3" y1="10" x2="21" y2="10" />
-                            </svg>
-                          )}
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium" style={{ color: PRIMARY }}>
-                            {b.leaveTypeName}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-xl font-bold" style={{ color: PRIMARY }}>
-                          {b.remaining != null ? b.remaining : "∞"}
-                        </p>
-                        <p className="text-xs font-medium text-slate-500">Available</p>
-                      </div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3 text-sm text-slate-500">
-                    No leave policies configured.
-                  </div>
-                )}
-              </div>
-
-              <Link
-                href="/app/approvals?tab=leave"
-                className="mt-4 block w-full rounded-lg bg-[var(--primary)] py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-95"
-              >
-                Go to Leave module
-              </Link>
-            </div>
-          </div>
-
-          {/* Right: Attendance + My Pay + holidays */}
-          <div className="lg:col-span-2 space-y-6">
-            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-3 text-lg font-semibold text-white bg-[var(--primary)]">
-                Today&apos;s attendance
-              </div>
-              <div className="p-6">
-                {attendanceLoading ? (
-                  <div className="flex gap-4" aria-busy="true" aria-label="Loading attendance">
-                    <SkeletonBar className="h-12 flex-1 rounded-xl" />
-                    <SkeletonBar className="h-12 flex-1 rounded-xl" />
-                  </div>
-                ) : !attendance?.hasEmployee ? (
-                  <p className="text-sm text-slate-600">
-                    Your account is not linked to an employee profile yet. Ask HR to complete your employee record, then you can punch in and out here.
-                  </p>
-                ) : (
-                  <div className="space-y-4">
-                    <p className="text-xs text-slate-500">
-                      {attDateLabel}
-                      {attendance?.timeZone ? (
-                        <span className="text-slate-400">{` · ${timeZoneLabel(tz)}`}</span>
-                      ) : null}
-                    </p>
-                    {attLog?.check_in_at && attLog?.check_out_at ? (
-                      <div className="grid gap-3 sm:grid-cols-2">
-                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
-                          <p className="text-xs font-medium text-slate-500">1. First check in</p>
-                          <p className="text-lg font-semibold text-slate-900">{formatTimeTz(attLog.check_in_at, tz)}</p>
-                        </div>
-                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
-                          <p className="text-xs font-medium text-slate-500">4. Final check out</p>
-                          <p className="text-lg font-semibold text-slate-900">{formatTimeTz(attLog.check_out_at, tz)}</p>
-                        </div>
-                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
-                          <p className="text-xs font-medium text-slate-500">2. Lunch check out</p>
-                          <p className="text-lg font-semibold text-slate-900">
-                            {formatTimeTz(attLog.lunch_check_out_at, tz)}
-                          </p>
-                        </div>
-                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
-                          <p className="text-xs font-medium text-slate-500">3. Lunch check in</p>
-                          <p className="text-lg font-semibold text-slate-900">
-                            {formatTimeTz(attLog.lunch_check_in_at, tz)}
-                          </p>
-                        </div>
-                        <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3 sm:col-span-2">
-                          <p className="text-xs font-medium text-slate-500">Gross hours · Lunch · Tea (min)</p>
-                          <p className="text-sm text-slate-800">
-                            {attLog.total_hours != null ? `${Number(attLog.total_hours).toFixed(2)} h` : "—"}
-                            <span className="text-slate-400"> · </span>
-                            {attLog.lunch_break_minutes ?? 0}
-                            <span className="text-slate-400"> · </span>
-                            {attLog.tea_break_minutes ?? 0}
-                          </p>
-                          <p className="mt-1 text-sm text-slate-800">
-                            <span className="text-xs font-medium text-slate-500">Active work hours: </span>
-                            {(() => {
-                              const grossMin = Math.round((Number(attLog.total_hours) || 0) * 60);
-                              const breaks = (Number(attLog.lunch_break_minutes) || 0) + (Number(attLog.tea_break_minutes) || 0);
-                              const activeMin = Math.max(0, grossMin - breaks);
-                              return `${(activeMin / 60).toFixed(2)} h`;
-                            })()}
-                          </p>
-                          <p className="mt-2 text-xs text-slate-500">
-                            Target ~9h on premises including lunch; payroll counts present when active work (after breaks) is
-                            at least 8 hours. If you skip lunch punches, 1 hour lunch is applied automatically when you check
-                            out.
-                          </p>
-                          <div className="mt-3">
-                            <p className="text-[11px] text-slate-500">
-                              Today’s attendance is completed after final punch out. Contact HR/Admin if you need corrections.
+                          <div
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg"
+                            style={{ backgroundColor: "var(--primary-soft)" }}
+                          >
+                            {b.isPaid ? (
+                              <svg className="h-5 w-5" style={{ color: PRIMARY }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" />
+                              </svg>
+                            ) : (
+                              <svg className="h-5 w-5" style={{ color: PRIMARY }} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                                <line x1="16" y1="2" x2="16" y2="6" />
+                                <line x1="8" y1="2" x2="8" y2="6" />
+                                <line x1="3" y1="10" x2="21" y2="10" />
+                              </svg>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-sm font-medium" style={{ color: PRIMARY }}>
+                              {b.leaveTypeName}
                             </p>
                           </div>
                         </div>
-                      </div>
-                    ) : attLog?.check_in_at && !attLog?.check_out_at ? (
-                      <div className="space-y-4">
-                        <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-4">
-                          <p className="text-xs font-medium text-emerald-800">
-                            Step 1 done — First check in at {formatTimeTz(attLog.check_in_at, tz)}
+                        <div className="text-right">
+                          <p className="text-xl font-bold" style={{ color: PRIMARY }}>
+                            {b.remaining != null ? b.remaining : "∞"}
                           </p>
-                          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                            <div>
-                              <p className="text-xs font-medium text-emerald-700/90">Time on premises (since first in)</p>
-                              <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
-                                {formatDurationMs(elapsedMs)}
-                              </p>
-                              <p className="mt-1 text-[11px] text-emerald-800/70">Typical full day ~9h including lunch</p>
-                            </div>
-                            <div>
-                              <p className="text-xs font-medium text-emerald-700/90">Active work (after breaks)</p>
-                              <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
-                                {formatDurationMs(activeMs)}
-                              </p>
-                              <p className="mt-1 text-[11px] text-emerald-800/80">
-                                {activeMeetsPresent ? (
-                                  <span className="font-medium">≥ 8h active — present for payroll</span>
-                                ) : (
-                                  <span>Need 8h active work for payroll present</span>
-                                )}
+                          <p className="text-xs font-medium text-slate-500">Available</p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded-lg border border-slate-100 bg-slate-50/50 px-4 py-3 text-sm text-slate-500">
+                      No leave policies configured.
+                    </div>
+                  )}
+                </div>
+
+                <Link
+                  href="/app/approvals?tab=leave"
+                  className="mt-4 block w-full rounded-lg bg-[var(--primary)] py-2.5 text-center text-sm font-semibold text-white transition hover:brightness-95"
+                >
+                  Go to Leave module
+                </Link>
+              </div>
+            </div>
+
+            {/* Right: Attendance + My Pay + holidays */}
+            <div className="lg:col-span-2 space-y-6">
+              <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="px-6 py-3 text-lg font-semibold text-white bg-[var(--primary)]">
+                  Today&apos;s attendance
+                </div>
+                <div className="p-6">
+                  {attendanceLoading ? (
+                    <div className="flex gap-4" aria-busy="true" aria-label="Loading attendance">
+                      <SkeletonBar className="h-12 flex-1 rounded-xl" />
+                      <SkeletonBar className="h-12 flex-1 rounded-xl" />
+                    </div>
+                  ) : !attendance?.hasEmployee ? (
+                    <p className="text-sm text-slate-600">
+                      Your account is not linked to an employee profile yet. Ask HR to complete your employee record, then you can punch in and out here.
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      <p className="text-xs text-slate-500">
+                        {attDateLabel}
+                        {attendance?.timeZone ? (
+                          <span className="text-slate-400">{` · ${timeZoneLabel(tz)}`}</span>
+                        ) : null}
+                      </p>
+                      {attLog?.check_in_at && attLog?.check_out_at ? (
+                        <div className="grid gap-3 sm:grid-cols-2">
+                          <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                            <p className="text-xs font-medium text-slate-500">1. First check in</p>
+                            <p className="text-lg font-semibold text-slate-900">{formatTimeTz(attLog.check_in_at, tz)}</p>
+                          </div>
+                          <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                            <p className="text-xs font-medium text-slate-500">4. Final check out</p>
+                            <p className="text-lg font-semibold text-slate-900">{formatTimeTz(attLog.check_out_at, tz)}</p>
+                          </div>
+                          <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                            <p className="text-xs font-medium text-slate-500">2. Lunch check out</p>
+                            <p className="text-lg font-semibold text-slate-900">
+                              {formatTimeTz(attLog.lunch_check_out_at, tz)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3">
+                            <p className="text-xs font-medium text-slate-500">3. Lunch check in</p>
+                            <p className="text-lg font-semibold text-slate-900">
+                              {formatTimeTz(attLog.lunch_check_in_at, tz)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-slate-100 bg-slate-50/80 px-4 py-3 sm:col-span-2">
+                            <p className="text-xs font-medium text-slate-500">Gross hours · Lunch · Tea (min)</p>
+                            <p className="text-sm text-slate-800">
+                              {attLog.total_hours != null ? `${Number(attLog.total_hours).toFixed(2)} h` : "—"}
+                              <span className="text-slate-400"> · </span>
+                              {attLog.lunch_break_minutes ?? 0}
+                              <span className="text-slate-400"> · </span>
+                              {attLog.tea_break_minutes ?? 0}
+                            </p>
+                            <p className="mt-1 text-sm text-slate-800">
+                              <span className="text-xs font-medium text-slate-500">Active work hours: </span>
+                              {(() => {
+                                const grossMin = Math.round((Number(attLog.total_hours) || 0) * 60);
+                                const breaks = (Number(attLog.lunch_break_minutes) || 0) + (Number(attLog.tea_break_minutes) || 0);
+                                const activeMin = Math.max(0, grossMin - breaks);
+                                return `${(activeMin / 60).toFixed(2)} h`;
+                              })()}
+                            </p>
+                            <p className="mt-2 text-xs text-slate-500">
+                              Target ~9h on premises including lunch; payroll counts present when active work (after breaks) is
+                              at least 8 hours. If you skip lunch punches, 1 hour lunch is applied automatically when you check
+                              out.
+                            </p>
+                            <div className="mt-3">
+                              <p className="text-[11px] text-slate-500">
+                                Today’s attendance is completed after final punch out. Contact HR/Admin if you need corrections.
                               </p>
                             </div>
                           </div>
                         </div>
-
-                        <ol className="list-decimal space-y-3 pl-5 text-sm text-slate-700">
-                          <li className="font-medium text-emerald-800">First check in — completed</li>
-                          <li>
-                            <span className="font-medium text-slate-800">Check out for lunch</span>
-                            <span className="block text-xs font-normal text-slate-500">
-                              Records lunch start; end lunch before final check out.
-                            </span>
-                            <button
-                              type="button"
-                              disabled={punching || lunchRunning}
-                              onClick={() => handleBreakToggle("lunch")}
-                              className="mt-2 w-full rounded-xl border-2 border-amber-200 bg-amber-50/80 px-4 py-3 text-center text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
-                            >
-                              {punching ? "Saving…" : "2. Check out for lunch"}
-                            </button>
-                          </li>
-                          <li>
-                            <span className="font-medium text-slate-800">Check in after lunch</span>
-                            <span className="block text-xs font-normal text-slate-500">Return from lunch before leaving for the day.</span>
-                            <button
-                              type="button"
-                              disabled={punching || !lunchRunning}
-                              onClick={() => handleBreakToggle("lunch")}
-                              className="mt-2 w-full rounded-xl border-2 border-emerald-200 bg-emerald-50/80 px-4 py-3 text-center text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
-                            >
-                              {punching ? "Saving…" : "3. Check in after lunch"}
-                            </button>
-                            {lunchSegLabel && (
-                              <p className="mt-2 text-[11px] text-slate-600">
-                                Lunch breaks: <span className="font-medium">{lunchSegLabel}</span>
-                              </p>
-                            )}
-                          </li>
-                          <li>
-                            <span className="font-medium text-slate-800">Final check out</span>
-                            <span className="block text-xs font-normal text-slate-500">
-                              Ends the day; close lunch first if still on break.
-                            </span>
-                          </li>
-                        </ol>
-
-                        <details className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm">
-                          <summary className="cursor-pointer font-medium text-slate-700">Optional: tea break</summary>
-                          <div
-                            className={`mt-3 rounded-xl border-2 px-4 py-3 ${
-                              teaRunning ? "border-sky-400 bg-sky-50/80" : "border-slate-200 bg-white"
-                            }`}
-                          >
-                            <div className="flex items-start justify-between gap-2">
+                      ) : attLog?.check_in_at && !attLog?.check_out_at ? (
+                        <div className="space-y-4">
+                          <div className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-4 py-4">
+                            <p className="text-xs font-medium text-emerald-800">
+                              Step 1 done — First check in at {formatTimeTz(attLog.check_in_at, tz)}
+                            </p>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-2">
                               <div>
-                                <p className="text-xs font-semibold text-slate-700">Tea</p>
-                                <p className="mt-1 font-mono text-lg tabular-nums text-slate-900">
-                                  {formatDurationMs(teaTotalMs)}
+                                <p className="text-xs font-medium text-emerald-700/90">Time on premises (since first in)</p>
+                                <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
+                                  {formatDurationMs(elapsedMs)}
                                 </p>
-                                <p className="text-[11px] text-slate-500">
-                                  {teaRunning ? "On tea — tap to end" : "Separate from lunch flow"}
+                                <p className="mt-1 text-[11px] text-emerald-800/70">Typical full day ~9h including lunch</p>
+                              </div>
+                              <div>
+                                <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
+                                  {formatDurationMs(activeMs)}
+                                </p>
+                                <p className="mt-1 text-[11px] text-emerald-800/80">
+                                  {activeMeetsPresent ? (
+                                    <span className="font-medium">≥ 8h active — present for payroll</span>
+                                  ) : (
+                                    <span>Need 8h active work for payroll present</span>
+                                  )}
                                 </p>
                               </div>
-                              <button
-                                type="button"
-                                disabled={punching}
-                                onClick={() => handleBreakToggle("tea")}
-                                className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${
-                                  teaRunning
-                                    ? "bg-sky-600 text-white hover:bg-sky-700"
-                                    : "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100"
-                                }`}
-                              >
-                                {teaRunning ? "End tea" : "Start tea"}
-                              </button>
                             </div>
                           </div>
-                        </details>
+                          <div
+                            className={`rounded-lg border px-4 py-3 ${agent?.connected
+                                ? "border-sky-200 bg-sky-50/60"
+                                : "border-amber-200 bg-amber-50/70"
+                              }`}
+                          >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                                HRMS Agent status
+                              </p>
+                              <span
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${agent?.connected
+                                    ? "bg-sky-100 text-sky-900"
+                                    : "bg-amber-100 text-amber-900"
+                                  }`}
+                              >
+                                {agent?.connected ? "Agent Connected" : "Agent Disconnected"}
+                              </span>
+                            </div>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {agent?.connected ? (
+                                <>
+                                  Last seen{" "}
+                                  <span className="font-medium">
+                                    {agent.lastSeenAt ? new Date(agent.lastSeenAt).toLocaleTimeString() : "—"}
+                                  </span>
+                                  {agent.deviceName ? <> · {agent.deviceName}</> : null}
+                                  {agent.appVersion ? <> · v{agent.appVersion}</> : null}
+                                </>
+                              ) : (
+                                <>
+                                  HRMS Agent is not connected. Please open HRMS Attendance Agent on your system.
+                                  {AGENT_DOWNLOAD_URL ? (
+                                    <a
+                                      href={AGENT_DOWNLOAD_URL}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="ml-2 inline-flex rounded-md bg-amber-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-amber-700"
+                                    >
+                                      Download Agent
+                                    </a>
+                                  ) : null}
+                                </>
+                              )}
+                            </p>
+                          </div>
 
-                        <button
-                          type="button"
-                          disabled={punching || lunchRunning || teaRunning}
-                          onClick={() => handleAttendancePunch("out")}
-                          title={
-                            lunchRunning || teaRunning
-                              ? "End lunch or tea before final check out"
-                              : undefined
-                          }
-                          className="w-full rounded-xl border-2 border-slate-800 bg-slate-900 px-4 py-3 text-center text-base font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
-                        >
-                          {punching ? "Saving…" : "4. Final check out (total hours)"}
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <p className="text-xs text-slate-500">
-                          Start with first check in, then lunch out → lunch in → final check out (~9h on site including lunch,
-                          8h active for present).
-                        </p>
-                        <button
-                          type="button"
-                          disabled={punching}
-                          onClick={() => handleAttendancePunch("in")}
-                          className="w-full rounded-xl bg-[var(--primary)] px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:brightness-95 disabled:opacity-50"
-                        >
-                          {punching ? "Saving…" : "1. First check in"}
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            </div>
+                          <ol className="list-decimal space-y-3 pl-5 text-sm text-slate-700">
+                            <li className="font-medium text-emerald-800">First check in — completed</li>
+                            <li>
+                              <span className="font-medium text-slate-800">Check out for lunch</span>
+                              <span className="block text-xs font-normal text-slate-500">
+                                Records lunch start; end lunch before final check out.
+                              </span>
+                              <button
+                                type="button"
+                                disabled={punching || lunchRunning}
+                                onClick={() => handleBreakToggle("lunch")}
+                                className="mt-2 w-full rounded-xl border-2 border-amber-200 bg-amber-50/80 px-4 py-3 text-center text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
+                              >
+                                {punching ? "Saving…" : "2. Check out for lunch"}
+                              </button>
+                            </li>
+                            <li>
+                              <span className="font-medium text-slate-800">Check in after lunch</span>
+                              <span className="block text-xs font-normal text-slate-500">Return from lunch before leaving for the day.</span>
+                              <button
+                                type="button"
+                                disabled={punching || !lunchRunning}
+                                onClick={() => handleBreakToggle("lunch")}
+                                className="mt-2 w-full rounded-xl border-2 border-emerald-200 bg-emerald-50/80 px-4 py-3 text-center text-sm font-semibold text-emerald-900 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:px-6"
+                              >
+                                {punching ? "Saving…" : "3. Check in after lunch"}
+                              </button>
+                              {lunchSegLabel && (
+                                <p className="mt-2 text-[11px] text-slate-600">
+                                  Lunch breaks: <span className="font-medium">{lunchSegLabel}</span>
+                                </p>
+                              )}
+                            </li>
+                            <li>
+                              <span className="font-medium text-slate-800">Final check out</span>
+                              <span className="block text-xs font-normal text-slate-500">
+                                Ends the day; close lunch first if still on break.
+                              </span>
+                            </li>
+                          </ol>
 
-            <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
-              <div className="px-6 py-3 text-lg font-semibold text-white bg-[var(--primary)]">
-                My Pay
+                          <details className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-sm">
+                            <summary className="cursor-pointer font-medium text-slate-700">Optional: tea break</summary>
+                            <div
+                              className={`mt-3 rounded-xl border-2 px-4 py-3 ${teaRunning ? "border-sky-400 bg-sky-50/80" : "border-slate-200 bg-white"
+                                }`}
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-xs font-semibold text-slate-700">Tea</p>
+                                  <p className="mt-1 font-mono text-lg tabular-nums text-slate-900">
+                                    {formatDurationMs(teaTotalMs)}
+                                  </p>
+                                  <p className="text-[11px] text-slate-500">
+                                    {teaRunning ? "On tea — tap to end" : "Separate from lunch flow"}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  disabled={punching}
+                                  onClick={() => handleBreakToggle("tea")}
+                                  className={`shrink-0 rounded-lg px-3 py-2 text-xs font-semibold ${teaRunning
+                                      ? "bg-sky-600 text-white hover:bg-sky-700"
+                                      : "bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-100"
+                                    }`}
+                                >
+                                  {teaRunning ? "End tea" : "Start tea"}
+                                </button>
+                              </div>
+                            </div>
+                          </details>
+
+                          <button
+                            type="button"
+                            disabled={punching || lunchRunning || teaRunning}
+                            onClick={() => handleAttendancePunch("out")}
+                            title={
+                              lunchRunning || teaRunning
+                                ? "End lunch or tea before final check out"
+                                : undefined
+                            }
+                            className="w-full rounded-xl border-2 border-slate-800 bg-slate-900 px-4 py-3 text-center text-base font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            {punching ? "Saving…" : "4. Final check out (total hours)"}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <p className="text-xs text-slate-500">
+                            Start with first check in, then lunch out → lunch in → final check out (~9h on site including lunch,
+                            8h active for present).
+                          </p>
+                          <button
+                            type="button"
+                            disabled={punching}
+                            onClick={() => handleAttendancePunch("in")}
+                            className="w-full rounded-xl bg-[var(--primary)] px-4 py-4 text-center text-base font-semibold text-white shadow-md transition hover:brightness-95 disabled:opacity-50"
+                          >
+                            {punching ? "Saving…" : "1. First check in"}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="p-6">
-                <div className="space-y-4">
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                    <span className="text-sm text-slate-600">Last Pay Period</span>
-                    <span className="font-medium text-slate-900">
-                      {lastPay?.periodFormatted || "—"}
-                    </span>
-                  </div>
-                  <div className="flex justify-between items-center border-b border-slate-100 pb-3">
-                    <span className="text-sm text-slate-600">Last Pay Date</span>
-                    <span className="font-medium text-slate-900">{lastPayDate}</span>
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <span className="text-sm text-slate-600">No. Of Pay Days</span>
-                    <span className="font-medium text-slate-900">
-                      {lastPay?.payDays != null ? lastPay.payDays : "—"}
-                    </span>
+
+              <div className="rounded-xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+                <div className="px-6 py-3 text-lg font-semibold text-white bg-[var(--primary)]">
+                  My Pay
+                </div>
+                <div className="p-6">
+                  <div className="space-y-4">
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                      <span className="text-sm text-slate-600">Last Pay Period</span>
+                      <span className="font-medium text-slate-900">
+                        {lastPay?.periodFormatted || "—"}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                      <span className="text-sm text-slate-600">Last Pay Date</span>
+                      <span className="font-medium text-slate-900">{lastPayDate}</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-sm text-slate-600">No. Of Pay Days</span>
+                      <span className="font-medium text-slate-900">
+                        {lastPay?.payDays != null ? lastPay.payDays : "—"}
+                      </span>
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-                <h3 className="text-sm font-semibold text-slate-700">Upcoming holidays</h3>
-                <Link href="/app/holidays" className="text-xs font-semibold text-[var(--primary)] hover:opacity-80 transition">
-                  View all
-                </Link>
+              <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold text-slate-700">Upcoming holidays</h3>
+                  <Link href="/app/holidays" className="text-xs font-semibold text-[var(--primary)] hover:opacity-80 transition">
+                    View all
+                  </Link>
+                </div>
+                {upcomingHolidays.length > 0 ? (
+                  <ul className="space-y-3">
+                    {upcomingHolidays.map((h) => {
+                      const fmtYmd = (ymd: string) => {
+                        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
+                        if (!m) return ymd;
+                        const dt = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
+                        return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
+                      };
+                      const end = h.holiday_end_date;
+                      const fmt =
+                        end && end !== h.holiday_date
+                          ? `${fmtYmd(h.holiday_date)} – ${fmtYmd(end)}`
+                          : fmtYmd(h.holiday_date);
+                      return (
+                        <li
+                          key={h.id || h.holiday_date + (end ?? "")}
+                          className="flex items-center justify-between border-b border-slate-100 pb-2 last:border-0 last:pb-0"
+                        >
+                          <span className="text-sm font-medium text-slate-900">{h.name}</span>
+                          <span className="text-sm text-slate-600">{fmt}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-slate-500">No upcoming holidays.</p>
+                )}
               </div>
-              {upcomingHolidays.length > 0 ? (
-                <ul className="space-y-3">
-                  {upcomingHolidays.map((h) => {
-                    const fmtYmd = (ymd: string) => {
-                      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(ymd);
-                      if (!m) return ymd;
-                      const dt = new Date(parseInt(m[1], 10), parseInt(m[2], 10) - 1, parseInt(m[3], 10));
-                      return dt.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" });
-                    };
-                    const end = h.holiday_end_date;
-                    const fmt =
-                      end && end !== h.holiday_date
-                        ? `${fmtYmd(h.holiday_date)} – ${fmtYmd(end)}`
-                        : fmtYmd(h.holiday_date);
-                    return (
-                      <li
-                        key={h.id || h.holiday_date + (end ?? "")}
-                        className="flex items-center justify-between border-b border-slate-100 pb-2 last:border-0 last:pb-0"
-                      >
-                        <span className="text-sm font-medium text-slate-900">{h.name}</span>
-                        <span className="text-sm text-slate-600">{fmt}</span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="text-sm text-slate-500">No upcoming holidays.</p>
-              )}
             </div>
           </div>
-        </div>
         </div>
       </section>
     );

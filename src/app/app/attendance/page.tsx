@@ -86,29 +86,43 @@ function AttendanceRow({
   const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
   const idleTotal = r.idleMinutes ?? (r.grossMinutes != null ? Math.max(0, idleLunch + idleTea) : null);
   return (
-    <tr className="bg-white transition-colors hover:bg-[var(--primary-soft)]/40">
+    <tr className="group">
       {showDateCol && (
-        <td className="whitespace-nowrap px-4 py-3 text-xs font-medium text-slate-600">{formatShortYmd(r.workDate)}</td>
+        <td className="bg-white whitespace-nowrap px-4 py-3 text-xs font-medium text-slate-600 group-hover:bg-[var(--primary-soft)]/40">
+          {formatShortYmd(r.workDate)}
+        </td>
       )}
       {showEmployeeCols && (
-        <td className="px-4 py-3">
+        <td className="bg-white px-4 py-3 group-hover:bg-[var(--primary-soft)]/40">
           <div className="font-medium text-slate-900">{r.employeeName || "—"}</div>
           <div className="text-xs text-slate-500">{r.employeeEmail}</div>
         </td>
       )}
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.checkInAt, tz)}</td>
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.lunchCheckOutAt, tz)}</td>
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.lunchCheckInAt, tz)}</td>
-      <td className="px-3 py-3 tabular-nums text-slate-800">{formatTimeTz(r.checkOutAt, tz)}</td>
-      <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.grossMinutes)}</td>
-      <td className="px-3 py-3 font-medium text-slate-800">{fmtHoursMin(r.activeMinutes)}</td>
-      <td className="px-3 py-3 text-xs text-slate-600">
+      <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
+        {formatTimeTz(r.checkInAt, tz)}
+      </td>
+      <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
+        {formatTimeTz(r.lunchCheckOutAt, tz)}
+      </td>
+      <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
+        {formatTimeTz(r.lunchCheckInAt, tz)}
+      </td>
+      <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
+        {formatTimeTz(r.checkOutAt, tz)}
+      </td>
+      <td className="bg-white px-3 py-3 font-medium text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
+        {fmtHoursMin(r.grossMinutes)}
+      </td>
+      <td className="bg-white px-3 py-3 font-medium text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
+        {fmtHoursMin(r.activeMinutes)}
+      </td>
+      <td className="bg-white px-3 py-3 text-xs text-slate-600 group-hover:bg-[var(--primary-soft)]/40">
         {fmtHoursMin(idleLunch)} / {fmtHoursMin(idleTea)}
       </td>
-      <td className="px-3 py-3 text-xs text-slate-600">
+      <td className="bg-white px-3 py-3 text-xs text-slate-600 group-hover:bg-[var(--primary-soft)]/40">
         {fmtHoursMin(idleTotal)}
       </td>
-      <td className="px-3 py-3">
+      <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">
         {r.checkOutAt ? (
           r.meetsEightHourWork ? (
             <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
@@ -121,7 +135,7 @@ function AttendanceRow({
           <span className="text-slate-400">—</span>
         )}
       </td>
-      <td className="px-3 py-3">
+      <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">
         {r.inOffice ? (
           <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
             Inside
@@ -132,7 +146,7 @@ function AttendanceRow({
           </span>
         )}
       </td>
-      <td className="max-w-[320px] px-3 py-3 text-xs text-slate-600">
+      <td className="bg-white max-w-[320px] px-3 py-3 text-xs text-slate-600 group-hover:bg-[var(--primary-soft)]/40">
         {r.notes ? <span className="line-clamp-2">{r.notes}</span> : <span className="text-slate-400">—</span>}
       </td>
     </tr>
@@ -484,52 +498,52 @@ export default function AttendancePage() {
             </div>
           ) : (
             <>
-            <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm md:block">
+            <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm lg:block">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[720px] text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-gray-200 bg-[var(--primary-soft)]/40">
+                <table className="w-full min-w-[980px] text-left text-sm">
+                  <thead className="bg-[var(--primary-soft)]/40">
+                    <tr className="border-b border-gray-200">
                       {showDateCol && (
-                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                        <th className="w-[120px] whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                           Date
                         </th>
                       )}
                       {showEmployeeCols && (
-                        <th className="whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                        <th className="min-w-[220px] whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                           Employee
                         </th>
                       )}
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         1. First in
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         2. Lunch out
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         3. Lunch in
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         4. Final out
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[110px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Gross
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[110px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Active
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[130px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Lunch / Tea
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Total idle
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[80px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         ≥8h
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="w-[90px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Office
                       </th>
-                      <th className="whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                      <th className="min-w-[220px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Notes
                       </th>
                     </tr>
@@ -540,40 +554,21 @@ export default function AttendancePage() {
                         <AttendanceRow key={r.logId} r={r} showDateCol={false} showEmployeeCols={showEmployeeCols} tz={viewTz} />
                       ))}
                     {showDateCol &&
-                      grouped?.map(([date, dayRows]) => (
-                        <Fragment key={date}>
-                          <tr className="bg-slate-100/90">
-                            <td
-                              colSpan={colCount}
-                              className="px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-600"
-                            >
-                              {formatDayHeading(date)}
-                            </td>
-                          </tr>
-                          {dayRows.map((r) => (
-                            <AttendanceRow key={r.logId} r={r} showDateCol={true} showEmployeeCols={showEmployeeCols} tz={viewTz} />
-                          ))}
-                        </Fragment>
+                      orderedRows.map((r) => (
+                        <AttendanceRow key={r.logId} r={r} showDateCol={true} showEmployeeCols={showEmployeeCols} tz={viewTz} />
                       ))}
                   </tbody>
                 </table>
               </div>
             </div>
 
-            <div className="space-y-3 md:hidden">
+            <div className="space-y-3 lg:hidden">
               {pagedMobileRows.map((r, i) => (
                 <Fragment key={r.logId}>
-                  {showDateCol &&
-                    (i === 0 ||
-                      String(pagedMobileRows[i - 1]?.workDate).slice(0, 10) !== String(r.workDate).slice(0, 10)) && (
-                    <p className="px-1 py-1 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      {formatDayHeading(String(r.workDate).slice(0, 10))}
-                    </p>
-                  )}
                   <AttendanceMobileCard
                     r={r}
                     showEmployeeCols={showEmployeeCols}
-                    showDateLine={!showDateCol}
+                    showDateLine={showDateCol ? true : !showDateCol}
                     tz={viewTz}
                   />
                 </Fragment>

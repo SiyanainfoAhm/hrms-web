@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { getLocalStorageItem, setLocalStorageItem } from "../../lib/storage";
 
 export type SidebarMode = "expanded" | "collapsed" | "hover";
@@ -25,21 +25,31 @@ export function SidebarStateProvider({
   storageKey?: string;
   modeStorageKey?: string;
 }) {
-  const [explicitExpanded, setExplicitExpanded] = useState(() => {
-    const stored = getLocalStorageItem(storageKey);
-    if (stored === "false") return false;
-    if (stored === "true") return true;
-    return true;
-  });
-  const [mode, setModeState] = useState<SidebarMode>(() => {
-    const storedMode = getLocalStorageItem(modeStorageKey);
-    if (storedMode === "expanded" || storedMode === "collapsed" || storedMode === "hover") return storedMode;
-    const stored = getLocalStorageItem(storageKey);
-    return stored === "false" ? "collapsed" : "expanded";
-  });
+  // IMPORTANT: Keep SSR/first-client-render deterministic to avoid hydration mismatches.
+  // We'll sync stored preferences after mount.
+  const [explicitExpanded, setExplicitExpanded] = useState(true);
+  const [mode, setModeState] = useState<SidebarMode>("expanded");
   const [hovering, setHoveringState] = useState(false);
 
   const expanded = mode === "expanded" ? true : mode === "collapsed" ? false : hovering;
+
+  useEffect(() => {
+    const storedMode = getLocalStorageItem(modeStorageKey);
+    if (storedMode === "expanded" || storedMode === "collapsed" || storedMode === "hover") {
+      setModeState(storedMode);
+      setExplicitExpanded(storedMode === "expanded");
+      return;
+    }
+
+    const stored = getLocalStorageItem(storageKey);
+    if (stored === "false") {
+      setModeState("collapsed");
+      setExplicitExpanded(false);
+    } else if (stored === "true") {
+      setModeState("expanded");
+      setExplicitExpanded(true);
+    }
+  }, [modeStorageKey, storageKey]);
 
   const api = useMemo<SidebarState>(() => {
     function setExpanded(value: boolean) {
