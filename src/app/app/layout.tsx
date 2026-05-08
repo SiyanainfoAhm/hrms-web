@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { ToastProvider } from "../../components/common/ToastProvider";
 import { DeviceGate } from "../../components/common/DeviceGate";
+import { HrmsAgentWidget } from "../../components/hrms-agent/HrmsAgentWidget";
 
 export default function AppSectionLayout({ children }: { children: ReactNode }) {
   const blocked = (
@@ -18,7 +19,12 @@ export default function AppSectionLayout({ children }: { children: ReactNode }) 
       {/* Block mobile/tablet web usage (incl. iPad desktop mode). */}
       <DeviceGate blocked={blocked}>
         <div className="lg:hidden">{blocked}</div>
-        <div className="hidden lg:block">{children}</div>
+        <div className="hidden lg:block">
+          {children}
+          {/* Floating HRMS chatbot — only renders for authenticated users
+           * (the widget itself reads the demo session and bails when empty). */}
+          <HrmsAgentWidget />
+        </div>
       </DeviceGate>
     </ToastProvider>
   );
