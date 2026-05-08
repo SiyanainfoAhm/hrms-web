@@ -91,7 +91,7 @@ function segmentsLabelTz(
   return segs.map((s) => `${fmtTimeShortTz(s.out, tz)}–${fmtTimeShortTz(s.in, tz)}`).join(", ");
 }
 
-/** Display ms as H:MM:SS or M:SS for live counters */
+/** Display ms as H:MM:SS or M:SS for live counters (lunch/tea timers) */
 function formatDurationMs(ms: number): string {
   const x = Math.max(0, Math.floor(ms / 1000));
   const h = Math.floor(x / 3600);
@@ -99,6 +99,15 @@ function formatDurationMs(ms: number): string {
   const s = x % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/** Display whole minutes as "Xh Ym" — matches the attendance page exactly. */
+function fmtHoursMin(min: number | null | undefined): string {
+  if (min == null || !Number.isFinite(Number(min))) return "—";
+  const total = Math.max(0, Math.round(Number(min)));
+  const h = Math.floor(total / 60);
+  const m = total % 60;
+  return `${h}h ${m}m`;
 }
 
 function AvatarUrl({ userId, gender }: { userId: string; gender: string | null }) {
@@ -368,6 +377,24 @@ export function DashboardContent() {
     return () => clearInterval(t);
   }, [attendance?.log?.check_in_at, attendance?.log?.check_out_at]);
 
+  // While punched-in, refresh attendance periodically so agent-driven counters
+  // (HRMS_activity_sessions active/idle/disconnected) update on the dashboard.
+  useEffect(() => {
+    const log = attendance?.log;
+    if (!log?.check_in_at || log.check_out_at) return;
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled) return;
+      await refreshAttendance().catch(() => null);
+    };
+    void tick();
+    const t = setInterval(() => void tick(), 20_000);
+    return () => {
+      cancelled = true;
+      clearInterval(t);
+    };
+  }, [attendance?.log?.check_in_at, attendance?.log?.check_out_at]);
+
   /** 1s clock while punched in (for live elapsed + break counters) */
   useEffect(() => {
     const log = attendance?.log;
@@ -513,22 +540,25 @@ export function DashboardContent() {
         : teaIdleBaseMs;
     const elapsedMs = punchInMs ? nowMs - punchInMs : 0;
 
-    const apiGrossMs =
-      attLog?.grossMinutes != null ? Number(attLog.grossMinutes) * 60 * 1000 : null;
-
-    const apiActiveMs =
-      attLog?.activeMinutes != null ? Number(attLog.activeMinutes) * 60 * 1000 : null;
-
-    const apiIdleMs =
-      attLog?.idleMinutes != null ? Number(attLog.idleMinutes) * 60 * 1000 : null;
-
-    const grossMs = apiGrossMs ?? elapsedMs;
-    const activeMs =
-      apiActiveMs ??
-      (punchedInOpen ? Math.max(0, elapsedMs - lunchTotalMs - teaTotalMs) : 0);
-
-    const totalIdleMs = apiIdleMs ?? lunchTotalMs + teaTotalMs;
-    const activeMeetsPresent = activeMs >= 8 * 60 * 60 * 1000;
+    // Show real values from the API (gross from check-in→now, active from
+    // the HRMS agent's activity sessions) as whole minutes — same source
+    // and format as the Attendance page, so the two screens always agree.
+    // The client elapsed value is only a fallback for the brief moment
+    // before the first API response arrives.
+    const grossMin =
+      attLog?.grossMinutes != null
+        ? Number(attLog.grossMinutes)
+        : Math.max(0, Math.round(elapsedMs / 60000));
+    const rawActiveMin =
+      attLog?.activeMinutes != null
+        ? Number(attLog.activeMinutes)
+        : punchedInOpen
+          ? Math.max(0, Math.round((elapsedMs - lunchTotalMs - teaTotalMs) / 60000))
+          : 0;
+    // Defensive cap: gross and active are minute-rounded from independent
+    // sources and can drift by ~1 minute, so guarantee active ≤ gross.
+    const activeMin = Math.min(rawActiveMin, grossMin);
+    const activeMeetsPresent = activeMin >= 8 * 60;
     const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
     const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
     const lunchSegLabel = segmentsLabelTz(attLog?.lunch_break_segments, tz);
@@ -739,13 +769,14 @@ export function DashboardContent() {
                               <div>
                                 <p className="text-xs font-medium text-emerald-700/90">Time on premises (since first in)</p>
                                 <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
-                                  {formatDurationMs(elapsedMs)}
+                                  {fmtHoursMin(grossMin)}
                                 </p>
                                 <p className="mt-1 text-[11px] text-emerald-800/70">Typical full day ~9h including lunch</p>
                               </div>
                               <div>
+                                <p className="text-xs font-medium text-emerald-700/90">Active work</p>
                                 <p className="font-mono text-2xl font-semibold tabular-nums text-emerald-900">
-                                  {formatDurationMs(activeMs)}
+                                  {fmtHoursMin(activeMin)}
                                 </p>
                                 <p className="mt-1 text-[11px] text-emerald-800/80">
                                   {activeMeetsPresent ? (

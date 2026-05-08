@@ -708,7 +708,6 @@ export function ProfileContent() {
               {success && <p className="text-sm text-emerald-700">{success}</p>}
 
               <div className={`grid grid-cols-1 gap-4 ${isSuperAdmin ? "md:grid-cols-3" : "md:grid-cols-3"}`}>
-                {isSuperAdmin && (
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Email</label>
                   <input
@@ -718,8 +717,12 @@ export function ProfileContent() {
                     disabled
                     className="w-full rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600"
                   />
+                  {!isSuperAdmin && (
+                    <p className="mt-1 text-xs text-slate-500">
+                      View only. Contact HR/Admin if your email needs to be changed.
+                    </p>
+                  )}
                 </div>
-                )}
                 <div>
                   <label className="mb-1 block text-sm font-medium text-slate-700">Full name</label>
                   <input
