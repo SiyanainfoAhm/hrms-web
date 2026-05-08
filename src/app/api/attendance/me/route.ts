@@ -316,7 +316,11 @@ export async function GET(request: NextRequest) {
       check_in_lng,
       check_out_lat,
       check_out_lng,
-      notes
+      notes,
+      agent_active_minutes,
+      agent_idle_minutes,
+      agent_disconnected_minutes,
+      activity_purged_at
       `,
     )
     .eq("company_id", gate.companyId)
@@ -461,12 +465,19 @@ export async function GET(request: NextRequest) {
 
     const logSessions = sessionsByLog.get(String(log.id)) ?? [];
 
-    const agentActiveSeconds = logSessions.reduce(
+    /**
+     * After the 90-day retention purge runs the raw activity sessions
+     * for this log are gone; switch to the persisted summary columns
+     * stamped at freeze-time so the active-time figure stays stable.
+     */
+    const isPurged = log.activity_purged_at != null;
+
+    const agentActiveSecondsLive = logSessions.reduce(
       (sum, s) => sum + (Number((s as any).active_seconds) || 0),
       0,
     );
 
-    const agentIdleSeconds = logSessions.reduce(
+    const agentIdleSecondsLive = logSessions.reduce(
       (sum, s) => sum + (Number((s as any).idle_seconds) || 0),
       0,
     );
@@ -478,13 +489,15 @@ export async function GET(request: NextRequest) {
 
     const breakWindows = breakWindowsFromLog(log, nowMs);
 
-    const calculatedDisconnectedSeconds = disconnectedSecondsFromSessions(
-      logSessions,
-      log.check_in_at,
-      log.check_out_at,
-      nowMs,
-      breakWindows,
-    );
+    const calculatedDisconnectedSeconds = isPurged
+      ? Math.max(0, Number(log.agent_disconnected_minutes) || 0) * 60
+      : disconnectedSecondsFromSessions(
+          logSessions,
+          log.check_in_at,
+          log.check_out_at,
+          nowMs,
+          breakWindows,
+        );
 
     /**
      * Use calculated disconnected seconds because it excludes lunch/tea windows.
@@ -492,13 +505,16 @@ export async function GET(request: NextRequest) {
      */
     const disconnectedSeconds = calculatedDisconnectedSeconds;
 
-    const agentActiveMinutes = Math.max(0, Math.round(agentActiveSeconds / 60));
-    const agentIdleMinutes = Math.max(0, Math.round(agentIdleSeconds / 60));
+    const agentActiveMinutes = isPurged
+      ? Math.max(0, Number(log.agent_active_minutes) || 0)
+      : Math.max(0, Math.round(agentActiveSecondsLive / 60));
+    const agentIdleMinutes = isPurged
+      ? Math.max(0, Number(log.agent_idle_minutes) || 0)
+      : Math.max(0, Math.round(agentIdleSecondsLive / 60));
     const disconnectedMinutes = Math.max(0, Math.round(disconnectedSeconds / 60));
-    const storedDisconnectedMinutes = Math.max(
-      0,
-      Math.round(storedDisconnectedSeconds / 60),
-    );
+    const storedDisconnectedMinutes = isPurged
+      ? Math.max(0, Number(log.agent_disconnected_minutes) || 0)
+      : Math.max(0, Math.round(storedDisconnectedSeconds / 60));
 
     const idleMinutes =
       grossMin != null
