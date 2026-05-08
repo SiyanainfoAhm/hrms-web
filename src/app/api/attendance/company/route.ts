@@ -425,6 +425,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: sessionErr.message }, { status: 400 });
   }
 
+  /**
+   * Fetch screenshot counts per attendance log so the table can show a
+   * "Screenshots (N)" trigger only when there's something to view. We use
+   * a lightweight `id, attendance_log_id` projection here and tally on the
+   * server. The actual signed URLs are loaded on demand from the
+   * `/api/attendance/screenshots` endpoint when the dialog opens.
+   */
+  const { data: screenshotRefs, error: screenshotRefsErr } = logIds.length
+    ? await supabase
+        .from("HRMS_activity_screenshots")
+        .select("id, attendance_log_id")
+        .eq("company_id", me.company_id)
+        .in("attendance_log_id", logIds)
+    : { data: [], error: null };
+
+  if (screenshotRefsErr) {
+    return NextResponse.json({ error: screenshotRefsErr.message }, { status: 400 });
+  }
+
+  const screenshotCountByLog = new Map<string, number>();
+  for (const s of screenshotRefs ?? []) {
+    const k = String((s as any).attendance_log_id ?? "");
+    if (!k) continue;
+    screenshotCountByLog.set(k, (screenshotCountByLog.get(k) ?? 0) + 1);
+  }
+
   const sessionsByLog = new Map<string, any[]>();
 
   for (const s of sessions ?? []) {
@@ -711,6 +737,7 @@ export async function GET(request: NextRequest) {
         checkOutLat: log.check_out_lat ?? null,
         checkOutLng: log.check_out_lng ?? null,
         notes: log.notes ?? null,
+        screenshotCount: screenshotCountByLog.get(String(log.id)) ?? 0,
       };
     })
     .filter(Boolean);

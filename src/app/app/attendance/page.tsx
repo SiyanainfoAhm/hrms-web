@@ -2,6 +2,7 @@
 
 import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { AttendanceDateFilter, type AttendancePreset } from "@/components/attendance/AttendanceDateFilter";
+import { AttendanceScreenshotsDialog } from "@/components/attendance/AttendanceScreenshotsDialog";
 import { PaginationBar } from "@/components/common/PaginationBar";
 import { SkeletonTable } from "@/components/common/Skeleton";
 import { HrmsShellPage } from "@/components/layout/HrmsShellPage";
@@ -40,6 +41,13 @@ type Row = {
   checkOutLat?: number | null;
   checkOutLng?: number | null;
   notes?: string | null;
+  screenshotCount?: number | null;
+};
+
+type ScreenshotsTarget = {
+  logId: string;
+  employeeName: string | null;
+  workDate: string | null;
 };
 
 function formatTimeTz(iso: string | null | undefined, tz: AttendanceTimeZoneId): string {
@@ -75,12 +83,16 @@ function AttendanceRow({
   r,
   showDateCol,
   showEmployeeCols,
+  showScreenshotsCol,
   tz,
+  onOpenScreenshots,
 }: {
   r: Row;
   showDateCol: boolean;
   showEmployeeCols: boolean;
+  showScreenshotsCol: boolean;
   tz: AttendanceTimeZoneId;
+  onOpenScreenshots?: (target: ScreenshotsTarget) => void;
 }) {
   const idleLunch = r.idleLunchMinutes ?? r.lunchBreakMinutes ?? 0;
   const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
@@ -149,6 +161,32 @@ function AttendanceRow({
       <td className="bg-white max-w-[320px] px-3 py-3 text-xs text-slate-600 group-hover:bg-[var(--primary-soft)]/40">
         {r.notes ? <span className="line-clamp-2">{r.notes}</span> : <span className="text-slate-400">—</span>}
       </td>
+      {showScreenshotsCol && (
+        <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">
+          {r.screenshotCount && r.screenshotCount > 0 ? (
+            <button
+              type="button"
+              onClick={() =>
+                onOpenScreenshots?.({
+                  logId: r.logId,
+                  employeeName: r.employeeName ?? r.employeeEmail,
+                  workDate: r.workDate,
+                })
+              }
+              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--primary)]/40 bg-[var(--primary-soft)]/60 px-2.5 py-1 text-[11px] font-semibold text-[var(--primary)] transition hover:bg-[var(--primary-soft)]"
+              title={`View ${r.screenshotCount} activity screenshot${r.screenshotCount === 1 ? "" : "s"}`}
+            >
+              <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 7h4l2-3h6l2 3h4v13H3z" />
+                <circle cx="12" cy="13" r="4" />
+              </svg>
+              View ({r.screenshotCount})
+            </button>
+          ) : (
+            <span className="text-slate-400">—</span>
+          )}
+        </td>
+      )}
     </tr>
   );
 }
@@ -157,12 +195,16 @@ function AttendanceMobileCard({
   r,
   showEmployeeCols,
   showDateLine,
+  showScreenshots,
   tz,
+  onOpenScreenshots,
 }: {
   r: Row;
   showEmployeeCols: boolean;
   showDateLine: boolean;
+  showScreenshots: boolean;
   tz: AttendanceTimeZoneId;
+  onOpenScreenshots?: (target: ScreenshotsTarget) => void;
 }) {
   const idleLunch = r.idleLunchMinutes ?? r.lunchBreakMinutes ?? 0;
   const idleTea = r.idleTeaMinutes ?? r.teaBreakMinutes ?? 0;
@@ -230,6 +272,25 @@ function AttendanceMobileCard({
           </dd>
         </div>
       </dl>
+      {showScreenshots && r.screenshotCount && r.screenshotCount > 0 ? (
+        <button
+          type="button"
+          onClick={() =>
+            onOpenScreenshots?.({
+              logId: r.logId,
+              employeeName: r.employeeName ?? r.employeeEmail,
+              workDate: r.workDate,
+            })
+          }
+          className="mt-3 inline-flex items-center gap-1.5 rounded-full border border-[var(--primary)]/40 bg-[var(--primary-soft)]/60 px-3 py-1.5 text-xs font-semibold text-[var(--primary)] transition hover:bg-[var(--primary-soft)]"
+        >
+          <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M3 7h4l2-3h6l2 3h4v13H3z" />
+            <circle cx="12" cy="13" r="4" />
+          </svg>
+          View screenshots ({r.screenshotCount})
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -237,6 +298,11 @@ function AttendanceMobileCard({
 export default function AttendancePage() {
   const { role } = useHrmsSession();
   const isManagerial = role === "super_admin" || role === "admin" || role === "hr";
+
+  const [screenshotsTarget, setScreenshotsTarget] = useState<ScreenshotsTarget | null>(null);
+  const openScreenshots = useCallback((target: ScreenshotsTarget) => {
+    setScreenshotsTarget(target);
+  }, []);
 
   const [viewTz, setViewTz] = useState<AttendanceTimeZoneId>(IST_TZ);
   const [startDate, setStartDate] = useState(() =>
@@ -352,6 +418,8 @@ export default function AttendancePage() {
 
   const showDateCol = startDate !== endDate;
   const showEmployeeCols = isManagerial && !employeeFilterUserId;
+  /** Activity screenshots are sensitive — only managerial roles see the trigger column. */
+  const showScreenshotsCol = isManagerial;
 
   const grouped = useMemo(() => {
     if (!showDateCol) return null;
@@ -383,7 +451,7 @@ export default function AttendancePage() {
     setMobilePage(1);
   }, [mobilePageSize]);
 
-  const baseCols = showEmployeeCols ? 11 : 10;
+  const baseCols = (showEmployeeCols ? 11 : 10) + (showScreenshotsCol ? 1 : 0);
   const colCount = showDateCol ? baseCols + 1 : baseCols;
 
   const filteredEmployeeLabel = useMemo(() => {
@@ -546,16 +614,37 @@ export default function AttendancePage() {
                       <th className="min-w-[220px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Notes
                       </th>
+                      {showScreenshotsCol && (
+                        <th className="w-[140px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
+                          Screenshots
+                        </th>
+                      )}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
                     {!showDateCol &&
                       rows.map((r) => (
-                        <AttendanceRow key={r.logId} r={r} showDateCol={false} showEmployeeCols={showEmployeeCols} tz={viewTz} />
+                        <AttendanceRow
+                          key={r.logId}
+                          r={r}
+                          showDateCol={false}
+                          showEmployeeCols={showEmployeeCols}
+                          showScreenshotsCol={showScreenshotsCol}
+                          tz={viewTz}
+                          onOpenScreenshots={openScreenshots}
+                        />
                       ))}
                     {showDateCol &&
                       orderedRows.map((r) => (
-                        <AttendanceRow key={r.logId} r={r} showDateCol={true} showEmployeeCols={showEmployeeCols} tz={viewTz} />
+                        <AttendanceRow
+                          key={r.logId}
+                          r={r}
+                          showDateCol={true}
+                          showEmployeeCols={showEmployeeCols}
+                          showScreenshotsCol={showScreenshotsCol}
+                          tz={viewTz}
+                          onOpenScreenshots={openScreenshots}
+                        />
                       ))}
                   </tbody>
                 </table>
@@ -563,13 +652,15 @@ export default function AttendancePage() {
             </div>
 
             <div className="space-y-3 lg:hidden">
-              {pagedMobileRows.map((r, i) => (
+              {pagedMobileRows.map((r) => (
                 <Fragment key={r.logId}>
                   <AttendanceMobileCard
                     r={r}
                     showEmployeeCols={showEmployeeCols}
                     showDateLine={showDateCol ? true : !showDateCol}
+                    showScreenshots={showScreenshotsCol}
                     tz={viewTz}
+                    onOpenScreenshots={openScreenshots}
                   />
                 </Fragment>
               ))}
@@ -578,7 +669,16 @@ export default function AttendancePage() {
           )}
         </div>
       )}
-    </section>
+      </section>
+      {showScreenshotsCol && (
+        <AttendanceScreenshotsDialog
+          open={!!screenshotsTarget}
+          onClose={() => setScreenshotsTarget(null)}
+          logId={screenshotsTarget?.logId ?? null}
+          employeeName={screenshotsTarget?.employeeName ?? null}
+          workDate={screenshotsTarget?.workDate ? fmtDmy(screenshotsTarget.workDate) : null}
+        />
+      )}
     </HrmsShellPage>
   );
 }
