@@ -313,7 +313,8 @@ export async function POST(request: NextRequest) {
           reason: reason || null,
           status: "approved",
         });
-        await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
+        const res = await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
+        if (!res.ok) throw new Error(res.error);
       }
     } else {
       // Employee requested leave — notify HR.
@@ -332,7 +333,8 @@ export async function POST(request: NextRequest) {
         reason: reason || null,
         status: "pending",
       });
-      await sendPowerAutomateEmail({ toEmail: hrEmail, subject, body });
+      const res = await sendPowerAutomateEmail({ toEmail: hrEmail, subject, body });
+      if (!res.ok) throw new Error(res.error);
     }
   } catch (e) {
     console.warn("[leave-email] notify failed", e);
@@ -425,7 +427,8 @@ export async function PATCH(request: NextRequest) {
         rejectionReason,
       });
 
-      await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
+      const res = await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
+      if (!res.ok) throw new Error(res.error);
     }
   } catch (e) {
     console.warn("[leave-email] decision notify failed", e);
