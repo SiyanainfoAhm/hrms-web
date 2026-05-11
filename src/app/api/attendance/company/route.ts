@@ -5,11 +5,10 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
 import { attendanceEmployeeIdForUser } from "@/lib/attendanceEmployee";
+import { disconnectedSecondsFromSessions } from "@/lib/attendanceDisconnectedSeconds";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-
-const HEARTBEAT_GRACE_SECONDS = 60;
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -139,93 +138,6 @@ function breakWindowsFromLog(log: any, nowMs: number): BreakWindow[] {
   }
 
   return mergeBreakWindows(windows);
-}
-
-function overlapMs(
-  aStart: number,
-  aEnd: number,
-  bStart: number,
-  bEnd: number,
-): number {
-  return Math.max(0, Math.min(aEnd, bEnd) - Math.max(aStart, bStart));
-}
-
-function breakOverlapMs(
-  startMs: number,
-  endMs: number,
-  breakWindows: BreakWindow[],
-): number {
-  return breakWindows.reduce(
-    (sum, w) => sum + overlapMs(startMs, endMs, w.startMs, w.endMs),
-    0,
-  );
-}
-
-function disconnectedSecondsFromSessions(
-  rawSessions: any[],
-  checkInAt: string | null,
-  checkOutAt: string | null,
-  nowMs: number,
-  breakWindows: BreakWindow[] = [],
-): number {
-  if (!checkInAt) return 0;
-
-  const graceMs = HEARTBEAT_GRACE_SECONDS * 1000;
-  const startMs = new Date(checkInAt).getTime();
-  const endMs = checkOutAt ? new Date(checkOutAt).getTime() : nowMs;
-
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    return 0;
-  }
-
-  const sessions = rawSessions
-    .map((s) => {
-      const startedAt = s.started_at
-        ? new Date(String(s.started_at)).getTime()
-        : null;
-
-      const endedAtRaw = s.ended_at ?? s.last_heartbeat_at;
-      const endedAt = endedAtRaw
-        ? new Date(String(endedAtRaw)).getTime()
-        : null;
-
-      return {
-        start: startedAt,
-        end: endedAt,
-      };
-    })
-    .filter((s) => s.start != null && s.end != null)
-    .sort((a, b) => Number(a.start) - Number(b.start));
-
-  let disconnectedSeconds = 0;
-  let cursorMs = startMs;
-
-  for (const s of sessions) {
-    const sessionStartMs = Number(s.start);
-    const sessionEndMs = Number(s.end);
-
-    if (sessionStartMs > cursorMs + graceMs) {
-      const gapStartMs = cursorMs + graceMs;
-      const gapEndMs = sessionStartMs;
-      const gapMs = Math.max(0, gapEndMs - gapStartMs);
-      const breakMs = breakOverlapMs(gapStartMs, gapEndMs, breakWindows);
-
-      disconnectedSeconds += Math.floor(Math.max(0, gapMs - breakMs) / 1000);
-    }
-
-    cursorMs = Math.max(cursorMs, sessionEndMs);
-  }
-
-  if (endMs > cursorMs + graceMs) {
-    const gapStartMs = cursorMs + graceMs;
-    const gapEndMs = endMs;
-    const gapMs = Math.max(0, gapEndMs - gapStartMs);
-    const breakMs = breakOverlapMs(gapStartMs, gapEndMs, breakWindows);
-
-    disconnectedSeconds += Math.floor(Math.max(0, gapMs - breakMs) / 1000);
-  }
-
-  return Math.max(0, disconnectedSeconds);
 }
 
 type ShiftKind = "all" | "day" | "night";
@@ -661,11 +573,13 @@ export async function GET(request: NextRequest) {
       const agentIdleMinutes = isPurged
         ? Math.max(0, Number(log.agent_idle_minutes) || 0)
         : Math.max(0, Math.round(agentIdleSecondsLive / 60));
-      const disconnectedMinutes = Math.max(0, Math.round(disconnectedSeconds / 60));
+      // Floor: short post-punch-in gaps (common before the first session heartbeat)
+      // must not round up to a full minute of "idle" in the first few gross minutes.
+      const disconnectedMinutes = Math.max(0, Math.floor(disconnectedSeconds / 60));
 
       const storedDisconnectedMinutes = isPurged
         ? Math.max(0, Number(log.agent_disconnected_minutes) || 0)
-        : Math.max(0, Math.round(storedDisconnectedSeconds / 60));
+        : Math.max(0, Math.floor(storedDisconnectedSeconds / 60));
 
       const idleMinutes =
         grossMin != null
