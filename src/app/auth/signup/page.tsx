@@ -14,9 +14,8 @@ export default function SignupPage() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Start with a clean, reusable app shell"
+      subtitle="Use your work email to get started. You can complete your profile after signing in."
       variant="signup"
-      illustrationUrl="https://images.unsplash.com/photo-1521737604893-d14cc237f11d?auto=format&fit=crop&w=1200&q=60"
     >
       <SignupTemplate
         loading={loading}

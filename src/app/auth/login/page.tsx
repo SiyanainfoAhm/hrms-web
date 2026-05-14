@@ -15,7 +15,7 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Sign in to continue"
+      subtitle="Sign in with your work email and password to access the app."
       variant="login"
     >
       <LoginTemplate

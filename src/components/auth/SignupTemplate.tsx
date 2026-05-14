@@ -8,7 +8,7 @@ import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { PasswordField } from "@/components/auth/PasswordField";
 
 const AUTH_PASSWORD_INPUT_CLASS =
-  "border border-gray-300 rounded-lg py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
+  "border border-gray-200 rounded-lg bg-[var(--primary-soft)]/45 py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
 
 export function SignupTemplate({
   config = authConfig,
@@ -96,7 +96,7 @@ function SignupEmailPasswordForm({
         name="name"
         type="text"
         placeholder="Name (optional)"
-        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
       />
       <input
@@ -104,7 +104,7 @@ function SignupEmailPasswordForm({
         type="email"
         required
         placeholder="Email"
-        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
       />
       <PasswordField

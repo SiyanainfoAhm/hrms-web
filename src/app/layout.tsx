@@ -3,7 +3,7 @@ import "./globals.css";
 import { ThemeProvider } from "../components/common/ThemeProvider";
 
 export const metadata: Metadata = {
-  title: "HRMS Web",
+  title: "HR Management System",
   description: "Human resources management system"
 };
 

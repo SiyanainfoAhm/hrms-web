@@ -1,73 +1,52 @@
 "use client";
 
-import Image from "next/image";
 import { cn } from "../../lib/cn";
 import { appConfig } from "../../config/appConfig";
+import { BrandedMarketingAside, type BrandVariant } from "../branding/BrandedMarketingAside";
 
 export function AuthLayout({
   title,
   subtitle,
   children,
   variant = "login",
-  branding = appConfig,
-  illustrationUrl
+  branding = appConfig
 }: {
   title: string;
   subtitle?: string;
   children: React.ReactNode;
-  variant?: "login" | "signup" | "neutral";
+  variant?: BrandVariant;
   branding?: typeof appConfig;
-  illustrationUrl?: string;
 }) {
-  const bg =
-    variant === "login"
-      ? "bg-gradient-to-br from-teal-400 to-blue-500"
-      : variant === "signup"
-        ? "bg-gradient-to-b from-purple-200 to-teal-200"
-        : "bg-[var(--bg)]";
-
   return (
-    <div className={cn("min-h-screen flex items-center justify-center p-6", bg)}>
-      <div className="w-full max-w-md bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100 animate-fade-in">
-        {illustrationUrl && (
-          <div className="relative h-44 bg-gradient-to-r from-purple-400 via-pink-400 to-purple-500 overflow-hidden">
-            <div className="absolute inset-0 bg-gradient-to-br from-purple-500/20 to-pink-500/20" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Image
-                src={illustrationUrl}
-                alt=""
-                width={800}
-                height={400}
-                className="w-full h-full object-cover opacity-90"
-                priority
-              />
-            </div>
-          </div>
-        )}
+    <div className="flex min-h-screen flex-col bg-[var(--bg)] lg:flex-row">
+      <BrandedMarketingAside variant={variant} branding={branding} />
 
-        <div className="p-8 flex flex-col items-center">
-          <div className="mb-6 flex flex-col items-center">
-            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-green-400 to-purple-500 flex items-center justify-center mb-3">
-              <span className="text-white font-bold text-xl">{branding.logoText ?? branding.appShortName.slice(0, 1)}</span>
-            </div>
-            <h1 className="text-2xl font-bold text-center">{title}</h1>
-            {subtitle && <p className="text-center text-gray-500 mt-1">{subtitle}</p>}
-          </div>
+      <main className="flex flex-1 flex-col items-center justify-start px-4 py-8 sm:px-8 lg:justify-center lg:py-12">
+        <div
+          className={cn(
+            "w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-md)] sm:p-8",
+            "animate-fade-in"
+          )}
+        >
+          <header className="mb-6">
+            <h1 className="text-2xl font-bold tracking-tight text-[var(--text)]">{title}</h1>
+            {subtitle ? <p className="mt-1.5 text-sm leading-relaxed text-[var(--muted)]">{subtitle}</p> : null}
+          </header>
 
-          <div className="w-full">{children}</div>
+          {children}
 
-          <div className="flex justify-center gap-4 mt-6 text-xs text-gray-400">
+          <div className="mt-8 flex flex-wrap justify-center gap-x-4 gap-y-1 border-t border-[var(--border)] pt-6 text-xs text-[var(--muted)]">
             <a href="#" className="hover:underline">
               Privacy
             </a>
-            <span>·</span>
+            <span className="hidden sm:inline">·</span>
             <a href="#" className="hover:underline">
               Terms
             </a>
           </div>
         </div>
-      </div>
+        <p className="mt-6 max-w-md text-center text-xs text-[var(--muted)]">Secure access for authorised users only.</p>
+      </main>
     </div>
   );
 }
-
