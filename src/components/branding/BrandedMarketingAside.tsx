@@ -32,8 +32,8 @@ export function BrandedMarketingAside({
   return (
     <aside
       className={cn(
-        "relative flex shrink-0 flex-col justify-center overflow-hidden px-8 py-10 sm:px-12",
-        "min-h-[220px] lg:min-h-screen lg:w-[min(44vw,520px)] lg:flex-none xl:w-[min(40vw,560px)]"
+        "relative flex w-full flex-col justify-center overflow-hidden px-8 py-10 sm:px-12",
+        "min-h-[220px] min-w-0 lg:min-h-screen lg:w-1/2"
       )}
     >
       <div className={cn("pointer-events-none absolute inset-0 bg-gradient-to-br", brandGradient(variant))} />

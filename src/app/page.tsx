@@ -10,7 +10,7 @@ export default function HomePage() {
     <div className="flex min-h-screen flex-col bg-[var(--bg)] lg:flex-row">
       <BrandedMarketingAside variant="landing" branding={appConfig} />
 
-      <main className="flex flex-1 flex-col items-center justify-start px-4 py-8 sm:px-8 lg:justify-center lg:py-12">
+      <main className="flex min-h-0 w-full flex-1 flex-col items-center justify-start px-4 py-8 sm:px-8 lg:w-1/2 lg:flex-none lg:justify-center lg:py-12">
         <div
           className={cn(
             "w-full max-w-md rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-6 shadow-[var(--shadow-md)] sm:p-8",
