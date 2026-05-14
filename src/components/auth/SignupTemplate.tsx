@@ -110,6 +110,7 @@ function SignupEmailPasswordForm({
       <PasswordField
         label="Password"
         hideLabel
+        name="new-password"
         value={password}
         onChange={setPassword}
         required

@@ -1,5 +1,7 @@
 "use client";
 
+import { useState } from "react";
+import { PasswordField } from "@/components/auth/PasswordField";
 import { cn } from "../../lib/cn";
 
 export function ResetPasswordTemplate({
@@ -11,24 +13,29 @@ export function ResetPasswordTemplate({
   error?: string;
   onSubmit?: (payload: { password: string }) => void | Promise<void>;
 }) {
+  const [password, setPassword] = useState("");
+
   return (
     <form
       className="space-y-3"
       onSubmit={(e) => {
         e.preventDefault();
         if (!onSubmit) return;
-        const fd = new FormData(e.currentTarget);
-        const password = String(fd.get("password") ?? "");
         void onSubmit({ password });
       }}
     >
-      <input
-        name="password"
-        type="password"
+      <PasswordField
+        label="New password"
+        hideLabel
+        name="new-password"
+        value={password}
+        onChange={setPassword}
         required
-        placeholder="New password"
-        className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        minLength={8}
+        placeholder="New password (min 8 characters)"
+        autoComplete="new-password"
         disabled={loading}
+        inputClassName="border border-gray-300 rounded-lg py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20"
       />
       {error && <div className="text-sm text-red-600">{error}</div>}
       <button

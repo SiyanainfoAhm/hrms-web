@@ -12,8 +12,8 @@ import {
   leaveYearStart,
   type LeavePolicy,
 } from "@/lib/leavePolicy";
-import { buildLeaveEmailHtml } from "@/lib/leaveEmail";
-import { sendPowerAutomateEmail } from "@/lib/powerAutomateEmail";
+import { notifyLeaveRequestCreated, notifyLeaveRequestDecided } from "@/lib/hrmsTransactionNotify";
+import { computeLeaveBookingSummary, type HolidayRow } from "@/lib/leaveBookingDays";
 
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -79,6 +79,44 @@ export async function GET(request: NextRequest) {
   if (!me?.company_id) return NextResponse.json({ requests: [], total: 0 });
 
   const { searchParams } = new URL(request.url);
+  const overlapFor = (searchParams.get("overlapFor") || "").trim();
+  if (overlapFor) {
+    if (isApprover(session.role)) {
+      const { data: emp, error: empErr } = await supabase
+        .from("HRMS_users")
+        .select("id, company_id")
+        .eq("id", overlapFor)
+        .maybeSingle();
+      if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
+      if (!emp || emp.company_id !== me.company_id) {
+        return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
+      }
+    } else if (overlapFor !== session.id) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+    const { data: rows, error: ovErr } = await supabase
+      .from("HRMS_leave_requests")
+      .select("start_date, end_date, status, employee_user_id")
+      .eq("company_id", me.company_id)
+      .eq("employee_user_id", overlapFor)
+      .in("status", ["pending", "approved"]);
+    if (ovErr) return NextResponse.json({ error: ovErr.message }, { status: 400 });
+    const { data: empDivForOverlap } = await supabase
+      .from("HRMS_employees")
+      .select("division_id")
+      .eq("company_id", me.company_id)
+      .eq("user_id", overlapFor)
+      .maybeSingle();
+    return NextResponse.json({
+      requests: (rows ?? []).map((r: any) => ({
+        startDate: String(r.start_date).slice(0, 10),
+        endDate: String(r.end_date).slice(0, 10),
+        status: String(r.status),
+      })),
+      employeeDivisionId: (empDivForOverlap as any)?.division_id ? String((empDivForOverlap as any).division_id) : null,
+    });
+  }
+
   const page = Math.max(1, parseInt(searchParams.get("page") || "1", 10) || 1);
   const rawSize = parseInt(searchParams.get("pageSize") || "0", 10);
   const paginated = rawSize > 0;
@@ -143,8 +181,8 @@ export async function POST(request: NextRequest) {
   if (!leaveTypeId || !startDate || !endDate) {
     return NextResponse.json({ error: "Leave type, start date and end date are required" }, { status: 400 });
   }
-  let totalDays = diffDaysInclusive(startDate, endDate);
-  if (!totalDays) return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
+  const calendarSpan = diffDaysInclusive(startDate, endDate);
+  if (!calendarSpan) return NextResponse.json({ error: "Invalid date range" }, { status: 400 });
 
   const { data: me, error: meErr } = await supabase
     .from("HRMS_users")
@@ -191,18 +229,67 @@ export async function POST(request: NextRequest) {
 
   const codeUpper = String((lt as any)?.code ?? "").toUpperCase();
 
-  // Half Leave (HL): each calendar day counts as 0.5
-  if (codeUpper === "HL") {
-    totalDays = totalDays * 0.5;
-  } else if (isHalfDay) {
+  const { data: empDivRow } = await supabase
+    .from("HRMS_employees")
+    .select("division_id")
+    .eq("company_id", me.company_id)
+    .eq("user_id", targetEmployeeUserId)
+    .maybeSingle();
+  const employeeDivisionId = (empDivRow as any)?.division_id ? String((empDivRow as any).division_id) : null;
+
+  let holidayQuery = supabase
+    .from("HRMS_holidays")
+    .select("holiday_date, holiday_end_date, division_id")
+    .eq("company_id", me.company_id);
+  if (employeeDivisionId) {
+    holidayQuery = holidayQuery.or(`division_id.is.null,division_id.eq.${employeeDivisionId}`);
+  }
+  const { data: holidayRows, error: holErr } = await holidayQuery;
+  if (holErr) return NextResponse.json({ error: holErr.message }, { status: 400 });
+
+  const { data: blockLeaves, error: blErr } = await supabase
+    .from("HRMS_leave_requests")
+    .select("start_date, end_date, status")
+    .eq("company_id", me.company_id)
+    .eq("employee_user_id", targetEmployeeUserId)
+    .in("status", ["pending", "approved"]);
+  if (blErr) return NextResponse.json({ error: blErr.message }, { status: 400 });
+
+  if (isHalfDay && codeUpper === "HL") {
+    return NextResponse.json({ error: "Half-day checkbox does not apply to Half Leave (HL) type" }, { status: 400 });
+  }
+  if (isHalfDay) {
     if (startDate !== endDate) {
       return NextResponse.json({ error: "Half day is only allowed when start and end date are the same" }, { status: 400 });
     }
-    if (totalDays !== 1) {
+    if (calendarSpan !== 1) {
       return NextResponse.json({ error: "Half day applies to a single calendar day only" }, { status: 400 });
     }
-    totalDays = 0.5;
   }
+
+  const booking = computeLeaveBookingSummary({
+    startYmd: startDate,
+    endYmd: endDate,
+    holidays: (holidayRows ?? []) as HolidayRow[],
+    employeeDivisionId,
+    existingLeaves: (blockLeaves ?? []).map((r: any) => ({
+      startDate: String(r.start_date).slice(0, 10),
+      endDate: String(r.end_date).slice(0, 10),
+      status: String(r.status),
+    })),
+    leaveTypeCodeUpper: codeUpper,
+    isHalfDay: Boolean(isHalfDay && codeUpper !== "HL"),
+  });
+  if (booking.overlapError) {
+    return NextResponse.json({ error: booking.overlapError }, { status: 400 });
+  }
+  if (booking.chargeableDays <= 0) {
+    return NextResponse.json(
+      { error: "No chargeable leave days in this range (weekends and holidays are excluded)." },
+      { status: 400 },
+    );
+  }
+  const totalDays = booking.chargeableDays;
 
   if (!isApprover(session.role) && lt.is_paid === false) {
     return NextResponse.json({ error: "You are not allowed to request unpaid leave" }, { status: 403 });
@@ -279,63 +366,7 @@ export async function POST(request: NextRequest) {
 
   // Email notifications via Power Automate (best-effort; do not block leave creation).
   try {
-    const hrEmail = "hr@siyanainfo.com";
-    const { data: empRow } = await supabase
-      .from("HRMS_users")
-      .select("name, email")
-      .eq("id", targetEmployeeUserId)
-      .maybeSingle();
-    const employeeName = (empRow as any)?.name ? String((empRow as any).name) : null;
-    const employeeEmail = (empRow as any)?.email ? String((empRow as any).email) : null;
-    const { data: companyRow } = await supabase
-      .from("HRMS_companies")
-      .select("name")
-      .eq("id", me.company_id)
-      .maybeSingle();
-    const companyName = (companyRow as any)?.name ? String((companyRow as any).name) : null;
-    const leaveTypeName = (lt as any)?.name ? String((lt as any).name) : "Leave";
-
-    if (autoApprove) {
-      // Approver-created leave is saved as approved — notify employee.
-      if (employeeEmail) {
-        const subject = `${companyName ? `${companyName} — ` : ""}Leave approved: ${startDate} to ${endDate}`;
-        const body = buildLeaveEmailHtml({
-          title: "Your leave has been approved",
-          companyName,
-          employeeName,
-          employeeEmail,
-          leaveTypeName,
-          startDate,
-          endDate,
-          totalDays,
-          paidDays,
-          unpaidDays,
-          reason: reason || null,
-          status: "approved",
-        });
-        const res = await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
-        if (!res.ok) throw new Error(res.error);
-      }
-    } else {
-      // Employee requested leave — notify HR.
-      const subject = `${companyName ? `${companyName} — ` : ""}Leave request: ${employeeName || employeeEmail || "Employee"} (${startDate} to ${endDate})`;
-      const body = buildLeaveEmailHtml({
-        title: "New leave request",
-        companyName,
-        employeeName,
-        employeeEmail,
-        leaveTypeName,
-        startDate,
-        endDate,
-        totalDays,
-        paidDays,
-        unpaidDays,
-        reason: reason || null,
-        status: "pending",
-      });
-      const res = await sendPowerAutomateEmail({ toEmail: hrEmail, subject, body });
-      if (!res.ok) throw new Error(res.error);
-    }
+    await notifyLeaveRequestCreated(String((data as any).id));
   } catch (e) {
     console.warn("[leave-email] notify failed", e);
   }
@@ -381,55 +412,7 @@ export async function PATCH(request: NextRequest) {
 
   // Email employee on approve/reject (best-effort).
   try {
-    const employeeUserId = String((data as any)?.employee_user_id ?? "");
-    const leaveTypeId = String((data as any)?.leave_type_id ?? "");
-    const { data: empRow } = employeeUserId
-      ? await supabase.from("HRMS_users").select("name, email").eq("id", employeeUserId).maybeSingle()
-      : { data: null };
-    const employeeEmail = (empRow as any)?.email ? String((empRow as any).email) : "";
-    if (employeeEmail) {
-      const employeeName = (empRow as any)?.name ? String((empRow as any).name) : null;
-      const { data: companyRow } = await supabase
-        .from("HRMS_companies")
-        .select("name")
-        .eq("id", me.company_id)
-        .maybeSingle();
-      const companyName = (companyRow as any)?.name ? String((companyRow as any).name) : null;
-      const { data: ltRow } = leaveTypeId
-        ? await supabase.from("HRMS_leave_types").select("name").eq("id", leaveTypeId).maybeSingle()
-        : { data: null };
-      const leaveTypeName = (ltRow as any)?.name ? String((ltRow as any).name) : "Leave";
-
-      const startDate = String((data as any)?.start_date ?? "");
-      const endDate = String((data as any)?.end_date ?? "");
-      const totalDays = Number((data as any)?.total_days ?? 0) || 0;
-      const paidDays = Number((data as any)?.paid_days ?? 0) || 0;
-      const unpaidDays = Number((data as any)?.unpaid_days ?? 0) || 0;
-      const status = String((data as any)?.status ?? "");
-      const rejectionReason = (data as any)?.rejection_reason ? String((data as any).rejection_reason) : null;
-      const reason = (data as any)?.reason ? String((data as any).reason) : null;
-
-      const isApproved = status === "approved";
-      const subject = `${companyName ? `${companyName} — ` : ""}Leave ${isApproved ? "approved" : "rejected"}: ${startDate} to ${endDate}`;
-      const body = buildLeaveEmailHtml({
-        title: isApproved ? "Your leave has been approved" : "Your leave has been rejected",
-        companyName,
-        employeeName,
-        employeeEmail,
-        leaveTypeName,
-        startDate,
-        endDate,
-        totalDays,
-        paidDays,
-        unpaidDays,
-        reason,
-        status,
-        rejectionReason,
-      });
-
-      const res = await sendPowerAutomateEmail({ toEmail: employeeEmail, subject, body });
-      if (!res.ok) throw new Error(res.error);
-    }
+    await notifyLeaveRequestDecided(String((data as any).id));
   } catch (e) {
     console.warn("[leave-email] decision notify failed", e);
   }

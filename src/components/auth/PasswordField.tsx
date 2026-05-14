@@ -28,6 +28,8 @@ export type PasswordFieldProps = {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** Optional `name` for forms / autofill (defaults from autoComplete when possible). */
+  name?: string;
   autoComplete?: string;
   required?: boolean;
   minLength?: number;
@@ -46,6 +48,7 @@ export function PasswordField({
   label,
   value,
   onChange,
+  name: nameProp,
   autoComplete,
   required,
   minLength,
@@ -59,6 +62,13 @@ export function PasswordField({
   const reactId = useId();
   const id = idProp ?? `password-${reactId}`;
   const [visible, setVisible] = useState(false);
+  const name =
+    nameProp ??
+    (autoComplete === "current-password"
+      ? "current-password"
+      : autoComplete === "new-password"
+        ? "new-password"
+        : "password");
 
   return (
     <div className={className}>
@@ -71,8 +81,12 @@ export function PasswordField({
       <div className="relative">
         <input
           id={id}
+          name={name}
           type={visible ? "text" : "password"}
           autoComplete={autoComplete}
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
           required={required}
           minLength={minLength}
           placeholder={placeholder}

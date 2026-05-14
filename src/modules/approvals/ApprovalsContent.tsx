@@ -10,6 +10,7 @@ import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
 import { fmtDmy } from "@/lib/dateFormat";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { validateIsoDateRequired, validatePositiveNumber, validateRequired } from "@/lib/validationMaster";
+import { computeLeaveBookingSummary, type HolidayRow, type ExistingLeaveRow } from "@/lib/leaveBookingDays";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -38,7 +39,7 @@ import { useToast } from "@/components/common/ToastProvider";
 const REIMB_MAX_BYTES = 8 * 1024 * 1024;
 
 export function ApprovalsContent() {
-  const { role } = useHrmsSession();
+  const { role, id: sessionUserId } = useHrmsSession();
   const { showToast } = useToast();
   const params = useSearchParams();
   const tab = params.get("tab") || "leave";
@@ -72,7 +73,9 @@ export function ApprovalsContent() {
 
   const [leaveTypeId, setLeaveTypeId] = useState("");
   const [selectedEmployeeId, setSelectedEmployeeId] = useState("");
-  const [currentEmployees, setCurrentEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
+  const [currentEmployees, setCurrentEmployees] = useState<
+    { id: string; name: string | null; email: string; divisionId: string | null }[]
+  >([]);
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   /** Single calendar day (non–Half-Leave type): user can request 0.5 instead of 1. */
@@ -83,6 +86,11 @@ export function ApprovalsContent() {
   const [rejectDialog, setRejectDialog] = useState<null | { id: string; reason: string }>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [balancePreview, setBalancePreview] = useState<{ paidDays: number; unpaidDays: number } | null>(null);
+  const [leaveHolidays, setLeaveHolidays] = useState<HolidayRow[]>([]);
+  const [leaveOverlapState, setLeaveOverlapState] = useState<{
+    rows: ExistingLeaveRow[];
+    employeeDivisionId: string | null;
+  }>({ rows: [], employeeDivisionId: null });
 
   const [manageTypesOpen, setManageTypesOpen] = useState(false);
   const [newTypeName, setNewTypeName] = useState("");
@@ -147,13 +155,43 @@ export function ApprovalsContent() {
   }
 
   const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
-  const baseDays = diffDaysInclusive(startDate, endDate);
+  const calendarSpanDays = diffDaysInclusive(startDate, endDate);
   const isHalfLeave = String(selectedLeaveType?.code ?? "").toUpperCase() === "HL";
-  const isSingleCalendarDay =
-    Boolean(startDate && endDate && startDate === endDate && baseDays === 1);
+  const isSingleCalendarDay = Boolean(startDate && endDate && startDate === endDate && calendarSpanDays === 1);
   const singleDayHalfDayEligible = Boolean(selectedLeaveType && isSingleCalendarDay && !isHalfLeave);
-  const totalDays =
-    isHalfLeave ? baseDays * 0.5 : singleDayHalfDayEligible && singleDayHalfDay ? 0.5 : baseDays;
+
+  const leaveBookingSummary = useMemo(() => {
+    if (!startDate || !endDate) {
+      return {
+        calendarSpanDays: 0,
+        weekendDaysExcluded: 0,
+        holidayDaysExcluded: 0,
+        workingDaysInRange: 0,
+        chargeableDays: 0,
+        overlapError: null as string | null,
+      };
+    }
+    const codeUpper = String(selectedLeaveType?.code ?? "").toUpperCase();
+    return computeLeaveBookingSummary({
+      startYmd: startDate,
+      endYmd: endDate,
+      holidays: leaveHolidays,
+      employeeDivisionId: leaveOverlapState.employeeDivisionId,
+      existingLeaves: leaveOverlapState.rows,
+      leaveTypeCodeUpper: codeUpper,
+      isHalfDay: Boolean(singleDayHalfDayEligible && singleDayHalfDay && codeUpper !== "HL"),
+    });
+  }, [
+    startDate,
+    endDate,
+    leaveHolidays,
+    leaveOverlapState,
+    selectedLeaveType,
+    singleDayHalfDayEligible,
+    singleDayHalfDay,
+  ]);
+
+  const totalDays = leaveBookingSummary.chargeableDays;
   const reimbPayrollHint = useMemo(() => payrollHintFromClaimDate(reimbClaimDate), [reimbClaimDate]);
 
   function markTouched(setter: (fn: any) => void, key: string) {
@@ -169,11 +207,29 @@ export function ApprovalsContent() {
     if (!errs.startDate && !errs.endDate && startDate && endDate && endDate < startDate) {
       errs.endDate = "End date must be on/after start date";
     }
-    if (!errs.startDate && !errs.endDate && totalDays <= 0) {
+    if (!errs.startDate && !errs.endDate && calendarSpanDays <= 0) {
       errs.endDate = "Select valid dates";
     }
+    if (!errs.employee && !errs.type && !errs.startDate && !errs.endDate && startDate && endDate && (canApprove ? selectedEmployeeId : true)) {
+      if (leaveBookingSummary.overlapError) errs.booking = leaveBookingSummary.overlapError;
+      else if (leaveBookingSummary.calendarSpanDays > 0 && leaveBookingSummary.workingDaysInRange <= 0) {
+        errs.booking = "No chargeable leave days in this range (weekends and holidays are excluded).";
+      } else if (singleDayHalfDayEligible && singleDayHalfDay && leaveBookingSummary.workingDaysInRange !== 1) {
+        errs.booking = "Half day is only available on a single working day (not on a weekend or holiday).";
+      }
+    }
     return errs;
-  }, [canApprove, selectedEmployeeId, leaveTypeId, startDate, endDate, totalDays]);
+  }, [
+    canApprove,
+    selectedEmployeeId,
+    leaveTypeId,
+    startDate,
+    endDate,
+    calendarSpanDays,
+    leaveBookingSummary,
+    singleDayHalfDayEligible,
+    singleDayHalfDay,
+  ]);
 
   const leaveHasErrors = useMemo(() => Object.values(leaveErrors).some(Boolean), [leaveErrors]);
 
@@ -305,7 +361,14 @@ export function ApprovalsContent() {
         if (!res.ok) throw new Error(data?.error || "Failed to load employees");
         if (cancelled) return;
         const current = (data.employees || []).filter((e: any) => e.employmentStatus === "current");
-        setCurrentEmployees(current.map((e: any) => ({ id: e.id, name: e.name, email: e.email })));
+        setCurrentEmployees(
+          current.map((e: any) => ({
+            id: e.id,
+            name: e.name,
+            email: e.email,
+            divisionId: e.divisionId ?? null,
+          })),
+        );
         if (!selectedEmployeeId && current.length) setSelectedEmployeeId(current[0].id);
       } catch {
         if (!cancelled) setCurrentEmployees([]);
@@ -357,6 +420,54 @@ export function ApprovalsContent() {
       cancelled = true;
     };
   }, [leaveDialogOpen, totalDays, leaveTypeId, startDate, selectedEmployeeId, canApprove, selectedLeaveType]);
+
+  useEffect(() => {
+    if (!leaveDialogOpen) {
+      setLeaveHolidays([]);
+      setLeaveOverlapState({ rows: [], employeeDivisionId: null });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const hRes = await fetch("/api/holidays");
+        const hData = await hRes.json();
+        if (!hRes.ok || cancelled) return;
+        setLeaveHolidays(hData.holidays || []);
+      } catch {
+        if (!cancelled) setLeaveHolidays([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leaveDialogOpen]);
+
+  useEffect(() => {
+    if (!leaveDialogOpen) return;
+    const uid = canApprove ? selectedEmployeeId : sessionUserId;
+    if (!uid) {
+      setLeaveOverlapState({ rows: [], employeeDivisionId: null });
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/leave/requests?overlapFor=${encodeURIComponent(uid)}`);
+        const data = await res.json();
+        if (!res.ok || cancelled) return;
+        setLeaveOverlapState({
+          rows: (data.requests || []) as ExistingLeaveRow[],
+          employeeDivisionId: typeof data.employeeDivisionId === "string" ? data.employeeDivisionId : null,
+        });
+      } catch {
+        if (!cancelled) setLeaveOverlapState({ rows: [], employeeDivisionId: null });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [leaveDialogOpen, canApprove, selectedEmployeeId, sessionUserId]);
 
   useEffect(() => {
     if (!singleDayHalfDayEligible && singleDayHalfDay) setSingleDayHalfDay(false);
@@ -432,6 +543,7 @@ export function ApprovalsContent() {
         leaveErrors.type ||
         leaveErrors.startDate ||
         leaveErrors.endDate ||
+        leaveErrors.booking ||
         "Fix validation errors";
       setError(msg);
       showToast("error", msg);
@@ -1223,24 +1335,38 @@ export function ApprovalsContent() {
 
                     {totalDays > 0 && (
                       <div className="rounded-lg bg-slate-50 px-4 py-2 text-sm text-slate-700">
-                        <span className="font-medium">
-                          Total: {fmtDays(totalDays)}{" "}
-                          {totalDays === 1 || totalDays === 0.5 ? "day" : "days"}
-                        </span>
-                        {balancePreview ? (
-                          <>
-                            {balancePreview.paidDays > 0 && (
-                              <span className="ml-2 text-emerald-700">{fmtDays(balancePreview.paidDays)} paid</span>
-                            )}
-                            {balancePreview.unpaidDays > 0 && (
-                              <span className="ml-2 text-amber-700">{fmtDays(balancePreview.unpaidDays)} unpaid</span>
-                            )}
-                          </>
-                        ) : selectedLeaveType?.is_paid === false ? (
-                          <span className="ml-2 text-amber-700">{fmtDays(totalDays)} unpaid</span>
-                        ) : (
-                          <span className="ml-2 text-slate-500">Calculating...</span>
-                        )}
+                        <div className="font-medium text-slate-800">Leave calculation</div>
+                        <p className="mt-1 text-xs text-slate-600">
+                          Calendar span: {leaveBookingSummary.calendarSpanDays}{" "}
+                          {leaveBookingSummary.calendarSpanDays === 1 ? "day" : "days"} · Excludes{" "}
+                          {leaveBookingSummary.weekendDaysExcluded} weekend ·{" "}
+                          {leaveBookingSummary.holidayDaysExcluded} holiday
+                        </p>
+                        <p className="mt-1 text-sm">
+                          <span className="font-semibold text-slate-900">
+                            Charged leave: {fmtDays(totalDays)}{" "}
+                            {totalDays === 1 || totalDays === 0.5 ? "day" : "days"}
+                          </span>
+                          {balancePreview ? (
+                            <>
+                              {balancePreview.paidDays > 0 && (
+                                <span className="ml-2 text-emerald-700">{fmtDays(balancePreview.paidDays)} paid</span>
+                              )}
+                              {balancePreview.unpaidDays > 0 && (
+                                <span className="ml-2 text-amber-700">{fmtDays(balancePreview.unpaidDays)} unpaid</span>
+                              )}
+                            </>
+                          ) : selectedLeaveType?.is_paid === false ? (
+                            <span className="ml-2 text-amber-700">{fmtDays(totalDays)} unpaid</span>
+                          ) : (
+                            <span className="ml-2 text-slate-500">Calculating...</span>
+                          )}
+                        </p>
+                      </div>
+                    )}
+                    {leaveErrors.booking && (leaveSubmitted || leaveTouched.startDate || leaveTouched.endDate) && (
+                      <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-800">
+                        {leaveErrors.booking}
                       </div>
                     )}
 

@@ -3,6 +3,11 @@ import type { NextRequest } from "next/server";
 export function getRequestAppBaseUrl(request: NextRequest): string {
   const envBase = (process.env.NEXT_PUBLIC_APP_URL || process.env.NEXT_PUBLIC_SITE_URL || "").replace(/\/$/, "");
   if (envBase) return envBase;
+  const vercel = process.env.VERCEL_URL?.trim();
+  if (vercel) {
+    const host = vercel.replace(/^https?:\/\//, "").replace(/\/$/, "");
+    if (host) return `https://${host}`;
+  }
   return new URL(request.url).origin;
 }
 

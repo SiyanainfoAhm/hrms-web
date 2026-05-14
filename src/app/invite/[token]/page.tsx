@@ -834,6 +834,7 @@ function InvitePageInner() {
                 {(authProvider !== "google" || showSetPassword) && (
                   <PasswordField
                     label="Password"
+                    name="new-password"
                     required={authProvider !== "google"}
                     minLength={8}
                     autoComplete="new-password"

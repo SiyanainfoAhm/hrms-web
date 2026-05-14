@@ -1148,18 +1148,21 @@ export function ProfileContent() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <PasswordField
                 label="Current password"
+                name="current-password"
                 autoComplete="current-password"
                 value={currentPassword}
                 onChange={setCurrentPassword}
               />
               <PasswordField
                 label="New password"
+                name="new-password"
                 autoComplete="new-password"
                 value={newPassword}
                 onChange={setNewPassword}
               />
               <PasswordField
                 label="Confirm new password"
+                name="new-password-confirm"
                 autoComplete="new-password"
                 value={confirmPassword}
                 onChange={setConfirmPassword}

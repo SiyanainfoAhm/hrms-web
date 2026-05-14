@@ -1,3 +1,5 @@
+import { getPublicAppUrl } from "@/lib/publicAppUrl";
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, "&amp;")
@@ -7,13 +9,6 @@ function escapeHtml(s: string): string {
 }
 
 // Keep this file focused on leave-specific HTML body building.
-
-function getAppUrl(): string {
-  const u = (process.env.NEXT_PUBLIC_APP_URL ||
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    "https://hrms-web-rage.vercel.app/").trim();
-  return u.replace(/\/$/, "");
-}
 
 export function buildLeaveEmailHtml(args: {
   title: string;
@@ -40,7 +35,7 @@ export function buildLeaveEmailHtml(args: {
 
   const paid = typeof args.paidDays === "number" ? args.paidDays : null;
   const unpaid = typeof args.unpaidDays === "number" ? args.unpaidDays : null;
-  const appUrl = escapeHtml(getAppUrl());
+  const appUrl = escapeHtml(getPublicAppUrl());
 
   return `<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"></head>
