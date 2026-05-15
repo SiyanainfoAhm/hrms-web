@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     if (existErr) throw existErr;
 
+    const hadExistingUserBeforeRequest = existing != null;
     let userRow = existing as any;
 
     if (!userRow) {
@@ -106,6 +107,14 @@ export async function POST(request: NextRequest) {
           { status: 404 }
         );
       }
+    }
+
+    // Signup must create a new account; do not silently sign in an existing user (matches `hrms_signup` / email-password flow).
+    if (mode === "signup" && hadExistingUserBeforeRequest) {
+      return NextResponse.json(
+        { error: "User already exists. Sign in instead or use a different email." },
+        { status: 400 }
+      );
     }
 
     if (String(userRow.employment_status || "").toLowerCase() === "past") {
