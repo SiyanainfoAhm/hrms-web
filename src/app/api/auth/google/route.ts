@@ -1,7 +1,9 @@
+import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { OAuth2Client } from "google-auth-library";
 import { createSessionCookie, getCookieOptions, COOKIE_NAME, type SessionUser } from "@/lib/auth";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { generateUniqueEmployeeCode } from "@/lib/users";
 
 /**
  * Must match the OAuth **Web** client id used by `GoogleAuthButton` (GIS).
@@ -26,6 +28,10 @@ export async function POST(request: NextRequest) {
     const body = await request.json().catch(() => ({}));
     const idToken = typeof body?.idToken === "string" ? body.idToken : "";
     if (!idToken) return NextResponse.json({ error: "idToken is required" }, { status: 400 });
+    const mode = body?.mode === "signup" ? "signup" : "login";
+    const companyName =
+      typeof body?.companyName === "string" ? String(body.companyName).trim() : "";
+
     const clientId = getGoogleClientId();
     if (!clientId) {
       return NextResponse.json(
@@ -41,6 +47,7 @@ export async function POST(request: NextRequest) {
     });
     const payload = ticket.getPayload();
     const email = payload?.email ? String(payload.email).trim().toLowerCase() : "";
+    const name = payload?.name ? String(payload.name).trim() : "";
     const emailVerified = isGoogleEmailVerified(payload);
 
     if (!email) return NextResponse.json({ error: "Google token missing email" }, { status: 400 });
@@ -53,14 +60,53 @@ export async function POST(request: NextRequest) {
       .maybeSingle();
     if (existErr) throw existErr;
 
-    if (!existing) {
-      return NextResponse.json(
-        { error: "User does not exist. Ask your Super Admin to add you in HRMS before signing in with Google." },
-        { status: 404 }
-      );
-    }
+    let userRow = existing as any;
 
-    const userRow = existing as any;
+    if (!userRow) {
+      if (mode === "signup" && companyName) {
+        const orgCode = `ORG-${randomUUID().replace(/-/g, "").slice(0, 10).toUpperCase()}`;
+        const { data: comp, error: cInsErr } = await supabaseAdmin
+          .from("HRMS_companies")
+          .insert([{ name: companyName, code: orgCode }])
+          .select("id")
+          .single();
+        if (cInsErr) throw cInsErr;
+        const companyId = (comp as { id: string }).id;
+        const employee_code = await generateUniqueEmployeeCode();
+        const { data: inserted, error: insErr } = await supabaseAdmin
+          .from("HRMS_users")
+          .insert([
+            {
+              email,
+              password_hash: null,
+              auth_provider: "google",
+              name: name || null,
+              role: "super_admin",
+              employment_status: "current",
+              employee_code,
+              company_id: companyId,
+            },
+          ])
+          .select("id, email, name, role, auth_session_version, employment_status")
+          .single();
+        if (insErr) {
+          const msg = typeof insErr.message === "string" ? insErr.message.toLowerCase() : "";
+          if (msg.includes("duplicate") || msg.includes("unique")) {
+            return NextResponse.json({ error: "User already exists. Sign in instead or use a different email." }, { status: 400 });
+          }
+          throw insErr;
+        }
+        userRow = inserted;
+      } else {
+        return NextResponse.json(
+          {
+            error:
+              "User does not exist. Ask your Super Admin to add you in HRMS, or use mobile signup with your company name to create an account with Google.",
+          },
+          { status: 404 }
+        );
+      }
+    }
 
     if (String(userRow.employment_status || "").toLowerCase() === "past") {
       return NextResponse.json({ error: "This user is offboarded and cannot sign in." }, { status: 403 });
@@ -87,4 +133,3 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: msg }, { status: 400 });
   }
 }
-

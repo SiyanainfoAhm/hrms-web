@@ -32,12 +32,17 @@ export function GoogleAuthButton(props: {
   label?: string;
   onSuccessRedirect?: string;
   mode?: "login" | "signup";
+  /** When false, omits the leading "or" row (use when Google is the first sign-in option). Default true. */
+  showOrDivider?: boolean;
+  /** Called when a Google credential is received (clears email/password errors on the parent screen). */
+  onAuthStart?: () => void;
   /** Optional: used on signup screen to prefill form values. */
   onPrefill?: (data: { email: string; name?: string }) => void;
 }) {
   const label = props.label ?? "Continue with Google";
   const redirectTo = props.onSuccessRedirect ?? "/app/dashboard";
   const mode = props.mode ?? "login";
+  const showOrDivider = props.showOrDivider !== false;
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
 
   const reactId = useId();
@@ -48,9 +53,15 @@ export function GoogleAuthButton(props: {
   const renderedRef = useRef(false);
   const onPrefillRef = useRef(props.onPrefill);
 
+  const onAuthStartRef = useRef(props.onAuthStart);
+
   useEffect(() => {
     onPrefillRef.current = props.onPrefill;
   }, [props.onPrefill]);
+
+  useEffect(() => {
+    onAuthStartRef.current = props.onAuthStart;
+  }, [props.onAuthStart]);
 
   useEffect(() => {
     let cancelled = false;
@@ -65,12 +76,15 @@ export function GoogleAuthButton(props: {
 
         window.google.accounts.id.initialize({
           client_id: clientId,
+          /** Avoid silently picking an account; user should explicitly choose when multiple exist. */
+          auto_select: false,
           callback: async (resp: { credential?: string }) => {
             const token = resp?.credential;
             if (!token) {
               setError("Google sign-in failed");
               return;
             }
+            onAuthStartRef.current?.();
             setLoading(true);
             setError(null);
             try {
@@ -140,11 +154,13 @@ export function GoogleAuthButton(props: {
 
   return (
     <div className="space-y-2">
-      <div className="flex items-center gap-3">
-        <div className="h-px flex-1 bg-slate-200" />
-        <span className="text-xs text-slate-500">or</span>
-        <div className="h-px flex-1 bg-slate-200" />
-      </div>
+      {showOrDivider && (
+        <div className="flex items-center gap-3">
+          <div className="h-px flex-1 bg-slate-200" />
+          <span className="text-xs text-slate-500">or</span>
+          <div className="h-px flex-1 bg-slate-200" />
+        </div>
+      )}
       <div className="flex justify-center">
         <div className={loading ? "pointer-events-none opacity-70" : ""}>
           <div id={containerId} aria-label={label} />

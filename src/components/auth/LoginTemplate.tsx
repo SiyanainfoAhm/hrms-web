@@ -10,22 +10,33 @@ import { PasswordField } from "@/components/auth/PasswordField";
 const AUTH_PASSWORD_INPUT_CLASS =
   "border border-gray-200 rounded-lg bg-[var(--primary-soft)]/45 py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
 
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="h-px flex-1 bg-slate-200" />
+      <span className="text-xs text-slate-500">or</span>
+      <div className="h-px flex-1 bg-slate-200" />
+    </div>
+  );
+}
+
 export function LoginTemplate({
   config = authConfig,
   loading = false,
   error,
   onEmailPasswordLogin,
-  onGoogleLogin,
   onFacebookLogin,
-  onNavigateForgot
+  onNavigateForgot,
+  onClearError,
 }: {
   config?: AuthConfig;
   loading?: boolean;
   error?: string;
   onEmailPasswordLogin?: (payload: { email: string; password: string }) => void | Promise<void>;
-  onGoogleLogin?: () => void | Promise<void>;
   onFacebookLogin?: () => void | Promise<void>;
   onNavigateForgot?: () => void;
+  /** Clears email/password login errors when the user switches method or edits fields. */
+  onClearError?: () => void;
 }) {
   const methods = config.methods;
 
@@ -45,6 +56,17 @@ export function LoginTemplate({
         </button>
       )}
 
+      {methods.google && (
+        <GoogleAuthButton
+          mode="login"
+          onSuccessRedirect="/app/dashboard"
+          showOrDivider={false}
+          onAuthStart={onClearError}
+        />
+      )}
+
+      {methods.google && methods.emailPassword && <OrDivider />}
+
       {methods.emailPassword && (
         <EmailPasswordForm
           loading={loading}
@@ -52,10 +74,9 @@ export function LoginTemplate({
           onSubmit={onEmailPasswordLogin}
           showForgot={methods.forgotPassword}
           onNavigateForgot={onNavigateForgot}
+          onFieldInteract={onClearError}
         />
       )}
-
-      {methods.google && <GoogleAuthButton mode="login" onSuccessRedirect="/app/dashboard" />}
 
       {!methods.emailPassword && !methods.google && !methods.facebook && (
         <div className="text-sm text-gray-500 text-center">
@@ -78,13 +99,15 @@ function EmailPasswordForm({
   error,
   onSubmit,
   showForgot,
-  onNavigateForgot
+  onNavigateForgot,
+  onFieldInteract,
 }: {
   loading: boolean;
   error?: string;
   onSubmit?: (payload: { email: string; password: string }) => void | Promise<void>;
   showForgot: boolean;
   onNavigateForgot?: () => void;
+  onFieldInteract?: () => void;
 }) {
   const [password, setPassword] = useState("");
 
@@ -106,13 +129,18 @@ function EmailPasswordForm({
         placeholder="Email"
         className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
+        onChange={() => onFieldInteract?.()}
+        onFocus={() => onFieldInteract?.()}
       />
       <PasswordField
         label="Password"
         hideLabel
         name="password"
         value={password}
-        onChange={setPassword}
+        onChange={(v) => {
+          onFieldInteract?.();
+          setPassword(v);
+        }}
         required
         placeholder="Password"
         autoComplete="current-password"
@@ -137,7 +165,10 @@ function EmailPasswordForm({
         <button
           type="button"
           className="w-full text-sm text-gray-500 hover:underline"
-          onClick={onNavigateForgot}
+          onClick={() => {
+            onFieldInteract?.();
+            onNavigateForgot?.();
+          }}
         >
           Forgot password?
         </button>
@@ -145,4 +176,3 @@ function EmailPasswordForm({
     </form>
   );
 }
-

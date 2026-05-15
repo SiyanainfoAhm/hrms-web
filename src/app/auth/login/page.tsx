@@ -15,12 +15,13 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Sign in with your work email and password to access the app."
+      subtitle="Pick your Google work account first if your admin added you, or sign in with email and password."
       variant="login"
     >
       <LoginTemplate
         loading={loading}
         error={error}
+        onClearError={() => setError(undefined)}
         onEmailPasswordLogin={async ({ email, password }) => {
           setError(undefined);
           setLoading(true);
