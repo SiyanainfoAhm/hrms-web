@@ -7,6 +7,7 @@ import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
 import Image from "next/image";
+import { AccountDeletionRequestsPanel } from "@/components/settings/AccountDeletionRequestsPanel";
 
 export function SettingsContent() {
   const { role } = useHrmsSession();
@@ -21,9 +22,9 @@ export function SettingsContent() {
     [role]
   );
 
-  const [activeTab, setActiveTab] = useState<"company" | "shifts" | "roles" | "org" | "designations" | "payroll">(
-    "company",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "company" | "shifts" | "roles" | "org" | "designations" | "payroll" | "deletion"
+  >("company");
 
   const [company, setCompany] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1148,6 +1149,15 @@ export function SettingsContent() {
                 Payroll
               </button>
             )}
+            {isSuperAdmin && (
+              <button
+                type="button"
+                onClick={() => setActiveTab("deletion")}
+                className={`btn ${activeTab === "deletion" ? "btn-primary" : "btn-outline"}`}
+              >
+                Account deletion
+              </button>
+            )}
           </div>
 
           {moduleError && <p className="text-sm text-red-600">{moduleError}</p>}
@@ -1641,6 +1651,8 @@ export function SettingsContent() {
               )}
             </div>
           )}
+
+          {activeTab === "deletion" && isSuperAdmin && <AccountDeletionRequestsPanel />}
 
           {activeTab === "shifts" && (
             <div className="card space-y-3">

@@ -8,4 +8,6 @@ export const legalConfig = {
   privacyPolicyEffectiveDate: "15 May 2026",
   termsEffectiveDate: "15 May 2026",
   governingLawRegion: "India",
+  /** Public account-deletion request page (Play Console). Append to web app base URL if needed. */
+  accountDeletionPath: "/account-deletion",
 } as const;
