@@ -6,6 +6,7 @@ import { authConfig, type AuthConfig } from "../../config/authConfig";
 import { cn } from "../../lib/cn";
 import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { PasswordField } from "@/components/auth/PasswordField";
+import { LegalLinksRow } from "@/components/auth/LegalLinksRow";
 
 const AUTH_PASSWORD_INPUT_CLASS =
   "border border-gray-200 rounded-lg bg-[var(--primary-soft)]/45 py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
@@ -165,6 +166,8 @@ function SignupEmailPasswordForm({
       />
 
       {error && <div className="text-sm text-red-600">{error}</div>}
+
+      <LegalLinksRow showAgreementLine className="pt-1" />
 
       <button
         type="submit"

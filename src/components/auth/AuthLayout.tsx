@@ -3,6 +3,7 @@
 import { cn } from "../../lib/cn";
 import { appConfig } from "../../config/appConfig";
 import { BrandedMarketingAside, type BrandVariant } from "../branding/BrandedMarketingAside";
+import { LegalLinksRow } from "./LegalLinksRow";
 
 export function AuthLayout({
   title,
@@ -35,15 +36,7 @@ export function AuthLayout({
 
           {children}
 
-          <div className="mt-8 flex flex-wrap justify-center gap-x-4 gap-y-1 border-t border-[var(--border)] pt-6 text-xs text-[var(--muted)]">
-            <a href="#" className="hover:underline">
-              Privacy
-            </a>
-            <span className="hidden sm:inline">·</span>
-            <a href="#" className="hover:underline">
-              Terms
-            </a>
-          </div>
+          <LegalLinksRow className="mt-8 border-t border-[var(--border)] pt-6" />
         </div>
         <p className="mt-6 max-w-md text-center text-xs text-[var(--muted)]">Secure access for authorised users only.</p>
       </main>
