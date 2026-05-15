@@ -1,3 +1,9 @@
+import {
+  asBreakSegments,
+  breakMinutesForKind,
+  type BreakSegment,
+} from "@/lib/attendanceBreakUtils";
+
 export const MIN_COMBINED_BREAK_MINUTES = 60;
 
 function clampMinutes(n: number): number {
@@ -5,17 +11,30 @@ function clampMinutes(n: number): number {
 }
 
 /**
- * Old helper kept for backward compatibility.
- * It still returns actual lunch minutes only.
+ * Lunch break minutes for payroll — uses segment sums when available.
  */
+
 export function effectiveLunchBreakMinutes(args: {
   recordedLunchMinutes: number;
   lunchCheckOutAt: string | null | undefined;
   lunchCheckInAt: string | null | undefined;
+  lunchBreakSegments?: unknown;
+  lunchBreakStartedAt?: string | null;
+  nowIso?: string;
   /** First check-in to final check-out span in minutes. */
   grossWorkMinutes: number;
 }): number {
-  const m = clampMinutes(args.recordedLunchMinutes);
+  const segments: BreakSegment[] = args.lunchBreakSegments
+    ? asBreakSegments(args.lunchBreakSegments)
+    : [];
+  const m = breakMinutesForKind({
+    recordedMinutes: args.recordedLunchMinutes,
+    segments,
+    legacyOut: args.lunchCheckOutAt,
+    legacyIn: args.lunchCheckInAt,
+    runningStart: args.lunchBreakStartedAt,
+    nowIso: args.nowIso ?? new Date().toISOString(),
+  });
   return Math.min(m, Math.max(0, args.grossWorkMinutes));
 }
 

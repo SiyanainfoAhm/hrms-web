@@ -10,132 +10,14 @@ import {
   getAttendanceContextForUser,
 } from "@/lib/attendanceTimeZone";
 import { disconnectedSecondsFromSessions } from "@/lib/attendanceDisconnectedSeconds";
+import {
+  breakWindowsFromLog,
+  lunchTeaBreakMinutesBase,
+} from "@/lib/attendanceBreakUtils";
 
 /** YYYY-MM-DD */
 function isYmd(s: string): boolean {
   return /^\d{4}-\d{2}-\d{2}$/.test(s);
-}
-
-function minutesBetween(startIso: string | null, endIso: string | null): number {
-  if (!startIso || !endIso) return 0;
-
-  const start = new Date(startIso).getTime();
-  const end = new Date(endIso).getTime();
-
-  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) {
-    return 0;
-  }
-
-  return Math.max(0, Math.round((end - start) / 60000));
-}
-
-type BreakWindow = {
-  startMs: number;
-  endMs: number;
-};
-
-function asSegments(raw: unknown): { out: string; in: string }[] {
-  if (!raw) return [];
-
-  if (Array.isArray(raw)) {
-    return raw
-      .map((x) => (x && typeof x === "object" ? x : null))
-      .filter(Boolean)
-      .map((x: any) => ({
-        out: String(x.out ?? ""),
-        in: String(x.in ?? ""),
-      }))
-      .filter((s) => s.out && s.in);
-  }
-
-  if (typeof raw === "string") {
-    try {
-      return asSegments(JSON.parse(raw));
-    } catch {
-      return [];
-    }
-  }
-
-  return [];
-}
-
-function addBreakWindow(
-  windows: BreakWindow[],
-  startIso: string | null | undefined,
-  endIso: string | null | undefined,
-) {
-  if (!startIso || !endIso) return;
-
-  const startMs = new Date(String(startIso)).getTime();
-  const endMs = new Date(String(endIso)).getTime();
-
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
-    return;
-  }
-
-  windows.push({ startMs, endMs });
-}
-
-function mergeBreakWindows(windows: BreakWindow[]): BreakWindow[] {
-  const sorted = windows
-    .filter(
-      (w) =>
-        Number.isFinite(w.startMs) &&
-        Number.isFinite(w.endMs) &&
-        w.endMs > w.startMs,
-    )
-    .sort((a, b) => a.startMs - b.startMs);
-
-  const merged: BreakWindow[] = [];
-
-  for (const w of sorted) {
-    const last = merged[merged.length - 1];
-
-    if (!last || w.startMs > last.endMs) {
-      merged.push({ ...w });
-    } else {
-      last.endMs = Math.max(last.endMs, w.endMs);
-    }
-  }
-
-  return merged;
-}
-
-function breakWindowsFromLog(log: any, nowMs: number): BreakWindow[] {
-  const windows: BreakWindow[] = [];
-  const nowIso = new Date(nowMs).toISOString();
-
-  for (const s of asSegments(log.lunch_break_segments)) {
-    addBreakWindow(windows, s.out, s.in);
-  }
-
-  for (const s of asSegments(log.tea_break_segments)) {
-    addBreakWindow(windows, s.out, s.in);
-  }
-
-  // Fallback for older rows / single-break rows.
-  addBreakWindow(
-    windows,
-    log.lunch_check_out_at ?? null,
-    log.lunch_check_in_at ?? null,
-  );
-
-  addBreakWindow(
-    windows,
-    log.tea_check_out_at ?? null,
-    log.tea_check_in_at ?? null,
-  );
-
-  // Running breaks. These are critical so active time does not keep increasing during lunch/tea.
-  if (log.lunch_break_started_at) {
-    addBreakWindow(windows, String(log.lunch_break_started_at), nowIso);
-  }
-
-  if (log.tea_break_started_at) {
-    addBreakWindow(windows, String(log.tea_break_started_at), nowIso);
-  }
-
-  return mergeBreakWindows(windows);
 }
 
 /** Logged-in user’s attendance rows only. */
@@ -308,46 +190,9 @@ export async function GET(request: NextRequest) {
           ? Math.max(0, Math.round(Number(log.total_hours) * 60))
           : null;
 
-    const recordedLunchMin = Number(log.lunch_break_minutes) || 0;
-    const recordedTeaMin = Number(log.tea_break_minutes) || 0;
-
-    const lunchSpanMin = minutesBetween(
-      log.lunch_check_out_at ?? null,
-      log.lunch_check_in_at ?? null,
-    );
-
-    const teaSpanMin = minutesBetween(
-      log.tea_check_out_at ?? null,
-      log.tea_check_in_at ?? null,
-    );
-
     const nowIso = new Date(nowMs).toISOString();
-
-    /**
-     * Important:
-     * Do not check `!log.lunch_check_in_at` here.
-     * If user has taken a previous lunch/tea segment, check_in_at may already exist.
-     * Running break should depend only on `*_break_started_at`.
-     */
-    const runningLunchMin = log.lunch_break_started_at
-      ? minutesBetween(String(log.lunch_break_started_at), nowIso)
-      : 0;
-
-    const runningTeaMin = log.tea_break_started_at
-      ? minutesBetween(String(log.tea_break_started_at), nowIso)
-      : 0;
-
-    const lunchIdleMinBase = Math.max(
-      recordedLunchMin,
-      lunchSpanMin,
-      runningLunchMin,
-    );
-
-    const teaIdleMinBase = Math.max(
-      recordedTeaMin,
-      teaSpanMin,
-      runningTeaMin,
-    );
+    const { lunchMinutes: lunchIdleMinBase, teaMinutes: teaIdleMinBase } =
+      lunchTeaBreakMinutesBase(log, nowIso);
 
     /**
      * Minimum 60-minute combined break policy applies only after final punch-out.

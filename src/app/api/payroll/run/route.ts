@@ -638,7 +638,7 @@ async function computeAttendanceDrivenPayDays(args: {
   const { data: att, error: attErr } = await supabase
     .from("HRMS_attendance_logs")
     .select(
-      "employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_check_out_at, lunch_check_in_at"
+      "employee_id, work_date, check_in_at, check_out_at, total_hours, lunch_break_minutes, tea_break_minutes, lunch_check_out_at, lunch_check_in_at, lunch_break_segments, tea_break_segments, lunch_break_started_at"
     )
     .eq("company_id", companyId)
     .in("employee_id", employeeIds)
@@ -681,6 +681,8 @@ async function computeAttendanceDrivenPayDays(args: {
       recordedLunchMinutes: Number((row as any).lunch_break_minutes ?? 0) || 0,
       lunchCheckOutAt: (row as any).lunch_check_out_at,
       lunchCheckInAt: (row as any).lunch_check_in_at,
+      lunchBreakSegments: (row as any).lunch_break_segments,
+      lunchBreakStartedAt: (row as any).lunch_break_started_at,
       grossWorkMinutes: durationMinutes,
     });
     const breakMin = lunchMin + teaMin;
