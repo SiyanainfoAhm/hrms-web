@@ -1,5 +1,6 @@
 import bcrypt from "bcryptjs";
 import { supabase } from "@/lib/supabaseClient";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export type UserRole = "super_admin" | "admin" | "hr" | "manager" | "employee";
 export type AuthProvider = "password" | "google";
@@ -23,11 +24,12 @@ function randomEmployeeCode(): string {
   return out;
 }
 
-async function generateUniqueEmployeeCode(): Promise<string> {
+/** Server-side safe: uses service role when configured so RLS does not block code checks. */
+export async function generateUniqueEmployeeCode(): Promise<string> {
   // Very low collision probability, but we still check to guarantee uniqueness.
   for (let attempt = 0; attempt < 10; attempt++) {
     const code = randomEmployeeCode();
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from("HRMS_users")
       .select("id")
       .eq("employee_code", code)

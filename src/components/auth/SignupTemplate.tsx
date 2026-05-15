@@ -4,7 +4,6 @@ import Link from "next/link";
 import { useState } from "react";
 import { authConfig, type AuthConfig } from "../../config/authConfig";
 import { cn } from "../../lib/cn";
-import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { PasswordField } from "@/components/auth/PasswordField";
 
 const AUTH_PASSWORD_INPUT_CLASS =
@@ -15,14 +14,12 @@ export function SignupTemplate({
   loading = false,
   error,
   onEmailPasswordSignup,
-  onGoogleSignup,
   onFacebookSignup
 }: {
   config?: AuthConfig;
   loading?: boolean;
   error?: string;
-  onEmailPasswordSignup?: (payload: { name?: string; email: string; password: string }) => void | Promise<void>;
-  onGoogleSignup?: () => void | Promise<void>;
+  onEmailPasswordSignup?: (payload: { name?: string; companyName: string; email: string; password: string }) => void | Promise<void>;
   onFacebookSignup?: () => void | Promise<void>;
 }) {
   const methods = config.methods;
@@ -51,8 +48,6 @@ export function SignupTemplate({
         />
       )}
 
-      {methods.google && <GoogleAuthButton mode="signup" onSuccessRedirect="/app/dashboard" />}
-
       {!methods.emailPassword && !methods.google && !methods.facebook && (
         <div className="text-sm text-gray-500 text-center">
           No signup methods are enabled. Toggle them in `src/config/authConfig.ts`.
@@ -76,7 +71,7 @@ function SignupEmailPasswordForm({
 }: {
   loading: boolean;
   error?: string;
-  onEmailPasswordSignup?: (payload: { name?: string; email: string; password: string }) => void | Promise<void>;
+  onEmailPasswordSignup?: (payload: { name?: string; companyName: string; email: string; password: string }) => void | Promise<void>;
 }) {
   const [password, setPassword] = useState("");
 
@@ -88,14 +83,23 @@ function SignupEmailPasswordForm({
         if (!onEmailPasswordSignup) return;
         const fd = new FormData(e.currentTarget);
         const name = String(fd.get("name") ?? "");
+        const companyName = String(fd.get("companyName") ?? "");
         const email = String(fd.get("email") ?? "");
-        void onEmailPasswordSignup({ name, email, password });
+        void onEmailPasswordSignup({ name, companyName, email, password });
       }}
     >
       <input
         name="name"
         type="text"
         placeholder="Name (optional)"
+        className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
+        disabled={loading}
+      />
+      <input
+        name="companyName"
+        type="text"
+        required
+        placeholder="Company name"
         className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
       />

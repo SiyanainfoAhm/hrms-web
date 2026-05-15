@@ -77,6 +77,7 @@ export function GoogleAuthButton(props: {
               const res = await fetch("/api/auth/google", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "include",
                 body: JSON.stringify({ idToken: token, mode }),
               });
               const data = await res.json().catch(() => ({}));
@@ -87,6 +88,25 @@ export function GoogleAuthButton(props: {
                   email: String(u.email),
                   name: typeof u?.name === "string" ? u.name : undefined,
                 });
+              }
+              // Match email/password login: shell and client features read `demoUser`; session cookie is for APIs.
+              if (u?.id && u?.email) {
+                try {
+                  localStorage.setItem(
+                    "demoUser",
+                    JSON.stringify({
+                      id: String(u.id),
+                      email: String(u.email),
+                      fullName:
+                        typeof u?.name === "string" && u.name.trim()
+                          ? u.name.trim()
+                          : String(u.email).split("@")[0] || "User",
+                      role: typeof u?.role === "string" ? u.role : "employee",
+                    }),
+                  );
+                } catch {
+                  /* ignore quota / private mode */
+                }
               }
               window.location.href = redirectTo;
             } catch (e: any) {

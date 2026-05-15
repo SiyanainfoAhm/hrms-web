@@ -20,13 +20,19 @@ export default function SignupPage() {
       <SignupTemplate
         loading={loading}
         error={error}
-        onEmailPasswordSignup={async ({ name, email }) => {
+        onEmailPasswordSignup={async ({ name, companyName, email }) => {
           setError(undefined);
           setLoading(true);
           try {
             localStorage.setItem(
               "demoUser",
-              JSON.stringify({ id: "u1", fullName: name || (email.split("@")[0] || "User"), role: "admin", email })
+              JSON.stringify({
+                id: "u1",
+                fullName: name || (email.split("@")[0] || "User"),
+                role: "admin",
+                email,
+                companyName,
+              })
             );
             router.push(getRoleHomeHref("admin"));
           } catch {

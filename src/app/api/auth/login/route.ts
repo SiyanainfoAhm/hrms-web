@@ -12,7 +12,7 @@ export async function POST(request: NextRequest) {
 
     const user = await findUserByEmail(email);
     if (!user) {
-      return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+      return NextResponse.json({ error: "Account does not exist" }, { status: 401 });
     }
     if ((user as any).authProvider && (user as any).authProvider !== "password") {
       return NextResponse.json({ error: "This account uses Google sign-in. Please continue with Google." }, { status: 400 });
