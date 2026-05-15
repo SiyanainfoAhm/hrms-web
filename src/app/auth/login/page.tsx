@@ -15,7 +15,7 @@ export default function LoginPage() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Pick your Google work account first if your admin added you, or sign in with email and password."
+      subtitle="Sign in with your work email and password, or continue with Google below."
       variant="login"
     >
       <LoginTemplate

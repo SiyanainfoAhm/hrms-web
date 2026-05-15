@@ -227,27 +227,11 @@ async function searchEmployeeReply(query: string): Promise<AgentResult> {
 
 function attendanceConfirmation(intent: HrmsAgentIntent): AgentResult {
   const map: Record<string, { title: string; details: string; confirmText: string }> = {
-    punch_in: {
-      title: "Confirm Punch In",
-      details:
-        "I'll record your punch-in now. Your browser will ask for location permission — this is required for the geofence check.",
-      confirmText: "Punch in",
-    },
     punch_out: {
       title: "Confirm Punch Out",
       details:
         "I'll close today's attendance. End any open lunch/tea break first; the server will reject otherwise.",
       confirmText: "Punch out",
-    },
-    lunch_out: {
-      title: "Confirm Start Lunch",
-      details: "I'll mark you as on lunch. Lunch must be ended before final punch out.",
-      confirmText: "Start lunch",
-    },
-    lunch_in: {
-      title: "Confirm End Lunch",
-      details: "I'll record that you're back from lunch.",
-      confirmText: "End lunch",
     },
   };
   const cfg = map[intent];
@@ -367,9 +351,11 @@ export async function dispatchIntent(
       /* ----- Write actions: ask for confirmation, then execute on confirm ----- */
 
       case "punch_in":
-      case "punch_out":
       case "lunch_in":
       case "lunch_out":
+        return runAttendanceAction(intent);
+
+      case "punch_out":
         if (!confirmed) return attendanceConfirmation(intent);
         return runAttendanceAction(intent);
 

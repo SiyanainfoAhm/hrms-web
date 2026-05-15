@@ -1,6 +1,8 @@
 "use client";
 
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { GoogleLogo } from "@/components/GoogleLogo";
+import { cn } from "@/lib/cn";
 
 declare global {
   interface Window {
@@ -32,12 +34,12 @@ export function GoogleAuthButton(props: {
   label?: string;
   onSuccessRedirect?: string;
   mode?: "login" | "signup";
-  /** When false, omits the leading "or" row (use when Google is the first sign-in option). Default true. */
+  /** When false, omits the leading "or" row (parent usually renders OrDivider above this button). */
   showOrDivider?: boolean;
-  /** Called when a Google credential is received (clears email/password errors on the parent screen). */
   onAuthStart?: () => void;
-  /** Optional: used on signup screen to prefill form values. */
   onPrefill?: (data: { email: string; name?: string }) => void;
+  /** Required for signup: company name from the form above the button. */
+  getCompanyName?: () => string;
 }) {
   const label = props.label ?? "Continue with Google";
   const redirectTo = props.onSuccessRedirect ?? "/app/dashboard";
@@ -50,10 +52,11 @@ export function GoogleAuthButton(props: {
 
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [gsiReady, setGsiReady] = useState(false);
   const renderedRef = useRef(false);
   const onPrefillRef = useRef(props.onPrefill);
-
   const onAuthStartRef = useRef(props.onAuthStart);
+  const getCompanyNameRef = useRef(props.getCompanyName);
 
   useEffect(() => {
     onPrefillRef.current = props.onPrefill;
@@ -62,6 +65,10 @@ export function GoogleAuthButton(props: {
   useEffect(() => {
     onAuthStartRef.current = props.onAuthStart;
   }, [props.onAuthStart]);
+
+  useEffect(() => {
+    getCompanyNameRef.current = props.getCompanyName;
+  }, [props.getCompanyName]);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,7 +83,6 @@ export function GoogleAuthButton(props: {
 
         window.google.accounts.id.initialize({
           client_id: clientId,
-          /** Avoid silently picking an account; user should explicitly choose when multiple exist. */
           auto_select: false,
           callback: async (resp: { credential?: string }) => {
             const token = resp?.credential;
@@ -88,11 +94,17 @@ export function GoogleAuthButton(props: {
             setLoading(true);
             setError(null);
             try {
+              const companyName =
+                mode === "signup" ? (getCompanyNameRef.current?.() ?? "").trim() : "";
               const res = await fetch("/api/auth/google", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 credentials: "include",
-                body: JSON.stringify({ idToken: token, mode }),
+                body: JSON.stringify({
+                  idToken: token,
+                  mode,
+                  ...(mode === "signup" && companyName ? { companyName } : {}),
+                }),
               });
               const data = await res.json().catch(() => ({}));
               if (!res.ok) throw new Error(data?.error || "Google sign-in failed");
@@ -103,7 +115,6 @@ export function GoogleAuthButton(props: {
                   name: typeof u?.name === "string" ? u.name : undefined,
                 });
               }
-              // Match email/password login: shell and client features read `demoUser`; session cookie is for APIs.
               if (u?.id && u?.email) {
                 try {
                   localStorage.setItem(
@@ -131,14 +142,17 @@ export function GoogleAuthButton(props: {
           },
         });
 
-        // Render the official button to avoid policy issues
-        window.google.accounts.id.renderButton(document.getElementById(containerId), {
-          theme: "outline",
-          size: "large",
-          width: 360,
-          text: "continue_with",
-          shape: "pill",
-        });
+        const host = document.getElementById(containerId);
+        if (host) {
+          window.google.accounts.id.renderButton(host, {
+            theme: "outline",
+            size: "large",
+            width: 360,
+            text: "continue_with",
+            shape: "rectangular",
+          });
+        }
+        if (!cancelled) setGsiReady(true);
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load Google sign-in");
       }
@@ -147,6 +161,30 @@ export function GoogleAuthButton(props: {
       cancelled = true;
     };
   }, [clientId, containerId, redirectTo, mode]);
+
+  const triggerGoogle = useCallback(() => {
+    if (loading) return;
+    if (mode === "signup") {
+      const co = (getCompanyNameRef.current?.() ?? "").trim();
+      if (!co) {
+        setError("Company name is required before signing up with Google.");
+        return;
+      }
+    }
+    setError(null);
+    onAuthStartRef.current?.();
+    const host = document.getElementById(containerId);
+    const inner = host?.querySelector('[role="button"]') as HTMLElement | null;
+    if (inner) {
+      inner.click();
+      return;
+    }
+    if (window.google?.accounts?.id?.prompt) {
+      window.google.accounts.id.prompt();
+      return;
+    }
+    setError("Google sign-in is still loading. Try again in a moment.");
+  }, [containerId, loading, mode]);
 
   if (!clientId) {
     return null;
@@ -161,13 +199,27 @@ export function GoogleAuthButton(props: {
           <div className="h-px flex-1 bg-slate-200" />
         </div>
       )}
-      <div className="flex justify-center">
-        <div className={loading ? "pointer-events-none opacity-70" : ""}>
-          <div id={containerId} aria-label={label} />
-        </div>
-      </div>
+      <button
+        type="button"
+        onClick={triggerGoogle}
+        disabled={loading || !gsiReady}
+        className={cn(
+          "w-full flex items-center justify-center gap-3 py-3 px-4 border border-gray-300 rounded-lg bg-white hover:bg-gray-50 transition shadow-sm",
+          "disabled:opacity-60 disabled:pointer-events-none",
+        )}
+        aria-label={label}
+      >
+        <GoogleLogo />
+        <span className="text-gray-800 font-semibold text-sm">
+          {loading ? "Please wait…" : label}
+        </span>
+      </button>
+      <div
+        id={containerId}
+        className="sr-only absolute h-0 w-0 overflow-hidden opacity-0 pointer-events-none"
+        aria-hidden
+      />
       {error && <p className="text-center text-sm text-red-600">{error}</p>}
     </div>
   );
 }
-

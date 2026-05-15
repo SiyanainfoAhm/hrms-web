@@ -1,28 +1,42 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { authConfig, type AuthConfig } from "../../config/authConfig";
 import { cn } from "../../lib/cn";
+import { GoogleAuthButton } from "@/components/GoogleAuthButton";
 import { PasswordField } from "@/components/auth/PasswordField";
 
 const AUTH_PASSWORD_INPUT_CLASS =
   "border border-gray-200 rounded-lg bg-[var(--primary-soft)]/45 py-2.5 text-sm focus:ring-2 focus:ring-[var(--primary)]/20";
+
+function OrDivider() {
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <div className="h-px flex-1 bg-slate-200" />
+      <span className="text-xs text-slate-500">or</span>
+      <div className="h-px flex-1 bg-slate-200" />
+    </div>
+  );
+}
 
 export function SignupTemplate({
   config = authConfig,
   loading = false,
   error,
   onEmailPasswordSignup,
-  onFacebookSignup
+  onFacebookSignup,
+  onClearError,
 }: {
   config?: AuthConfig;
   loading?: boolean;
   error?: string;
   onEmailPasswordSignup?: (payload: { name?: string; companyName: string; email: string; password: string }) => void | Promise<void>;
   onFacebookSignup?: () => void | Promise<void>;
+  onClearError?: () => void;
 }) {
   const methods = config.methods;
+  const companyNameRef = useRef<HTMLInputElement>(null);
 
   return (
     <div className="space-y-3">
@@ -44,7 +58,22 @@ export function SignupTemplate({
         <SignupEmailPasswordForm
           loading={loading}
           error={error}
+          companyNameRef={companyNameRef}
           onEmailPasswordSignup={onEmailPasswordSignup}
+          onFieldInteract={onClearError}
+        />
+      )}
+
+      {methods.google && methods.emailPassword && <OrDivider />}
+
+      {methods.google && (
+        <GoogleAuthButton
+          mode="signup"
+          label="Sign up with Google"
+          onSuccessRedirect="/app/dashboard"
+          showOrDivider={false}
+          onAuthStart={onClearError}
+          getCompanyName={() => companyNameRef.current?.value ?? ""}
         />
       )}
 
@@ -67,11 +96,15 @@ export function SignupTemplate({
 function SignupEmailPasswordForm({
   loading,
   error,
+  companyNameRef,
   onEmailPasswordSignup,
+  onFieldInteract,
 }: {
   loading: boolean;
   error?: string;
+  companyNameRef: React.RefObject<HTMLInputElement | null>;
   onEmailPasswordSignup?: (payload: { name?: string; companyName: string; email: string; password: string }) => void | Promise<void>;
+  onFieldInteract?: () => void;
 }) {
   const [password, setPassword] = useState("");
 
@@ -94,14 +127,17 @@ function SignupEmailPasswordForm({
         placeholder="Name (optional)"
         className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
+        onChange={() => onFieldInteract?.()}
       />
       <input
+        ref={companyNameRef}
         name="companyName"
         type="text"
         required
         placeholder="Company name"
         className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
+        onChange={() => onFieldInteract?.()}
       />
       <input
         name="email"
@@ -110,13 +146,17 @@ function SignupEmailPasswordForm({
         placeholder="Email"
         className="w-full rounded-lg border border-gray-200 bg-[var(--primary-soft)]/45 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]/20"
         disabled={loading}
+        onChange={() => onFieldInteract?.()}
       />
       <PasswordField
         label="Password"
         hideLabel
         name="new-password"
         value={password}
-        onChange={setPassword}
+        onChange={(v) => {
+          onFieldInteract?.();
+          setPassword(v);
+        }}
         required
         placeholder="Password"
         autoComplete="new-password"

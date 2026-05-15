@@ -14,12 +14,13 @@ export default function SignupPage() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Use your work email to get started. You can complete your profile after signing in."
+      subtitle="Enter your company and email, create an account, or sign up with Google below."
       variant="signup"
     >
       <SignupTemplate
         loading={loading}
         error={error}
+        onClearError={() => setError(undefined)}
         onEmailPasswordSignup={async ({ name, companyName, email }) => {
           setError(undefined);
           setLoading(true);

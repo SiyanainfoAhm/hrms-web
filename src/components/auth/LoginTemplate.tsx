@@ -35,7 +35,6 @@ export function LoginTemplate({
   onEmailPasswordLogin?: (payload: { email: string; password: string }) => void | Promise<void>;
   onFacebookLogin?: () => void | Promise<void>;
   onNavigateForgot?: () => void;
-  /** Clears email/password login errors when the user switches method or edits fields. */
   onClearError?: () => void;
 }) {
   const methods = config.methods;
@@ -56,17 +55,6 @@ export function LoginTemplate({
         </button>
       )}
 
-      {methods.google && (
-        <GoogleAuthButton
-          mode="login"
-          onSuccessRedirect="/app/dashboard"
-          showOrDivider={false}
-          onAuthStart={onClearError}
-        />
-      )}
-
-      {methods.google && methods.emailPassword && <OrDivider />}
-
       {methods.emailPassword && (
         <EmailPasswordForm
           loading={loading}
@@ -75,6 +63,17 @@ export function LoginTemplate({
           showForgot={methods.forgotPassword}
           onNavigateForgot={onNavigateForgot}
           onFieldInteract={onClearError}
+        />
+      )}
+
+      {methods.google && methods.emailPassword && <OrDivider />}
+
+      {methods.google && (
+        <GoogleAuthButton
+          mode="login"
+          onSuccessRedirect="/app/dashboard"
+          showOrDivider={false}
+          onAuthStart={onClearError}
         />
       )}
 

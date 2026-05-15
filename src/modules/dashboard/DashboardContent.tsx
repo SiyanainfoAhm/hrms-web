@@ -410,20 +410,6 @@ export function DashboardContent() {
   }, [attendance?.log]);
 
   async function handleBreakToggle(kind: "lunch" | "tea") {
-    const isLunch = kind === "lunch";
-    const running = isLunch ? !!attendance?.log?.lunch_break_started_at : !!attendance?.log?.tea_break_started_at;
-    const ok = await confirmAction({
-      title: isLunch ? (running ? "End lunch break?" : "Start lunch break?") : running ? "End tea break?" : "Start tea break?",
-      message: isLunch
-        ? running
-          ? "This will mark Lunch In now."
-          : "This will mark Lunch Out now."
-        : running
-          ? "This will end tea break now."
-          : "This will start tea break now.",
-      confirmText: running ? "Confirm" : "Confirm",
-    });
-    if (!ok) return;
     setPunching(true);
     try {
       const data = await svcToggleBreak(kind);
@@ -440,12 +426,14 @@ export function DashboardContent() {
   }
 
   async function handleAttendancePunch(action: "in" | "out", opts?: { allowRepunchOut?: boolean }) {
-    const ok = await confirmAction(
-      action === "in"
-        ? { title: "Punch in now?", message: "This will start your workday timer.", confirmText: "Punch in" }
-        : { title: "Final punch out now?", message: "This will complete today's attendance.", confirmText: "Punch out" }
-    );
-    if (!ok) return;
+    if (action === "out") {
+      const ok = await confirmAction({
+        title: "Final punch out now?",
+        message: "This will complete today's attendance.",
+        confirmText: "Punch out",
+      });
+      if (!ok) return;
+    }
     setPunching(true);
     try {
       const location = await getCurrentLocation();
