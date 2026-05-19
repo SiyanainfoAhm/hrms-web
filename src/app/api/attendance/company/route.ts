@@ -8,6 +8,7 @@ import { attendanceEmployeeIdForUser } from "@/lib/attendanceEmployee";
 import { disconnectedSecondsFromSessions } from "@/lib/attendanceDisconnectedSeconds";
 import {
   breakWindowsFromLog,
+  grossMinutesFromAttendanceLog,
   lunchTeaBreakMinutesBase,
 } from "@/lib/attendanceBreakUtils";
 
@@ -320,23 +321,10 @@ export async function GET(request: NextRequest) {
 
       if (u?.role === "super_admin") return null;
 
-      const checkInMs = log.check_in_at
-        ? new Date(String(log.check_in_at)).getTime()
-        : null;
+      const useNowForOpenShift =
+        !log.check_out_at && String(log.work_date ?? "") === todayIst && endDate === todayIst;
 
-      const checkOutMs = log.check_out_at
-        ? new Date(String(log.check_out_at)).getTime()
-        : nowMs;
-
-      const grossMin =
-        checkInMs != null &&
-        Number.isFinite(checkInMs) &&
-        Number.isFinite(checkOutMs) &&
-        checkOutMs > checkInMs
-          ? Math.max(0, Math.round((checkOutMs - checkInMs) / 60000))
-          : log.total_hours != null
-            ? Math.max(0, Math.round(Number(log.total_hours) * 60))
-            : null;
+      const grossMin = grossMinutesFromAttendanceLog(log, { nowMs, useNowForOpenShift });
 
       const nowIso = new Date(nowMs).toISOString();
       const { lunchMinutes: lunchIdleMinBase, teaMinutes: teaIdleMinBase } =

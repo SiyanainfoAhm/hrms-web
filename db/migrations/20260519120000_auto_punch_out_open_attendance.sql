@@ -1,4 +1,5 @@
 -- Backfill: set check_out_at to shift end for rows with punch-in but no final punch-out.
+-- Skips TODAY (IST calendar day) so in-progress attendance stays open until manual punch-out or next-day punch-in.
 -- Day shift: work_date + end_time (default 18:00) in Asia/Kolkata.
 -- Night shift: work_date + 1 day + end_time (default 02:00) in America/New_York.
 
@@ -32,6 +33,7 @@ WITH open_logs AS (
   LEFT JOIN "HRMS_shifts" s ON s.id = e.shift_id AND s.company_id = al.company_id
   WHERE al.check_in_at IS NOT NULL
     AND al.check_out_at IS NULL
+    AND al.work_date < (timezone('Asia/Kolkata', now()))::date
 ),
 finalized AS (
   SELECT
@@ -60,6 +62,7 @@ finalized AS (
     END AS final_tea_min
   FROM open_logs o
   WHERE o.checkout_utc > o.check_in_at
+    AND o.checkout_utc <= timezone('UTC', now())
 )
 UPDATE "HRMS_attendance_logs" al
 SET

@@ -177,3 +177,42 @@ export function breakWindowsFromLog(
 
   return mergeBreakWindows(windows);
 }
+
+/**
+ * Gross span for attendance display.
+ * - Final punch-out recorded: check-in → check-out.
+ * - Open shift still in progress (today only): check-in → now (live gross/active/idle).
+ * - Past days with no punch-out: null (avoids 100h+ inflated gross).
+ */
+export function grossMinutesFromAttendanceLog(
+  log: {
+    check_in_at?: string | null;
+    check_out_at?: string | null;
+    total_hours?: number | null;
+    work_date?: string | null;
+  },
+  options?: { nowMs?: number; useNowForOpenShift?: boolean },
+): number | null {
+  if (!log.check_in_at) return null;
+
+  const checkInMs = new Date(String(log.check_in_at)).getTime();
+  if (!Number.isFinite(checkInMs)) return null;
+
+  let checkOutMs: number | null = null;
+  if (log.check_out_at) {
+    checkOutMs = new Date(String(log.check_out_at)).getTime();
+  } else if (options?.useNowForOpenShift && options.nowMs != null) {
+    checkOutMs = options.nowMs;
+  } else {
+    return null;
+  }
+
+  if (!Number.isFinite(checkOutMs) || checkOutMs <= checkInMs) {
+    if (log.check_out_at && log.total_hours != null) {
+      return Math.max(0, Math.round(Number(log.total_hours) * 60));
+    }
+    return null;
+  }
+
+  return Math.max(0, Math.round((checkOutMs - checkInMs) / 60000));
+}

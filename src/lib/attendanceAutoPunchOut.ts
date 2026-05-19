@@ -148,6 +148,8 @@ export async function autoCloseForgottenPunchOuts(args: {
   const rows = (openRows ?? []) as OpenLogRow[];
   let closed = 0;
 
+  const nowMs = Date.now();
+
   for (const row of rows) {
     const checkOutIso = computeShiftEndIso({
       workDateYmd: String(row.work_date),
@@ -155,6 +157,10 @@ export async function autoCloseForgottenPunchOuts(args: {
       isNightShift: ctx.isNightShift,
       tz: ctx.timeZone,
     });
+
+    if (new Date(checkOutIso).getTime() > nowMs) {
+      continue;
+    }
 
     let patch: ReturnType<typeof buildAutoPunchOutPatch>;
     try {
