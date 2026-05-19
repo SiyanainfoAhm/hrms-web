@@ -11,6 +11,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "rea
 import { fmtDmy } from "@/lib/dateFormat";
 import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, US_EASTERN_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
+import { notesIndicateAutoPunchOut } from "@/lib/attendanceAutoPunchOut";
 import { todayYmdTz } from "@/lib/tzCalendar";
 
 type Row = {
@@ -158,8 +159,16 @@ function AttendanceRow({
           </span>
         )}
       </td>
-      <td className="bg-white max-w-[320px] px-3 py-3 text-xs text-slate-600 group-hover:bg-[var(--primary-soft)]/40">
-        {r.notes ? <span className="line-clamp-2">{r.notes}</span> : <span className="text-slate-400">—</span>}
+      <td className="bg-white max-w-[320px] px-3 py-3 text-xs group-hover:bg-[var(--primary-soft)]/40">
+        {r.notes ? (
+          <span
+            className={`line-clamp-3 ${notesIndicateAutoPunchOut(r.notes) ? "font-semibold text-red-600" : "text-slate-600"}`}
+          >
+            {r.notes}
+          </span>
+        ) : (
+          <span className="text-slate-400">—</span>
+        )}
       </td>
       {showScreenshotsCol && (
         <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">

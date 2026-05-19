@@ -5,6 +5,7 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
+import { autoCloseForgottenPunchOuts } from "@/lib/attendanceAutoPunchOut";
 import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
 
 async function workDateForUser(args: { companyId: string; attendanceEmployeeId: string }): Promise<{
@@ -337,6 +338,13 @@ export async function POST(request: NextRequest) {
     if (existing?.check_in_at && !existing?.check_out_at) {
       return NextResponse.json({ error: "You are already punched in. Punch out to end your shift." }, { status: 400 });
     }
+
+    await autoCloseForgottenPunchOuts({
+      supabase,
+      companyId: meCompanyId,
+      employeeId: attendanceEmployeeId,
+      currentWorkDate: wd,
+    });
 
     if (officeLat == null || officeLng == null) {
       return NextResponse.json(

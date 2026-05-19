@@ -105,6 +105,11 @@ type Props = {
   effectiveRunDay: number;
   readOnly: boolean;
   onUpdate: (employeeUserId: string, field: string, value: number) => void;
+  showExportSelection?: boolean;
+  exportSelectedIds?: Set<string>;
+  allExportSelected?: boolean;
+  onToggleExportAll?: (checked: boolean) => void;
+  onToggleExportOne?: (employeeUserId: string, checked: boolean) => void;
 };
 
 function d(m: GovernmentPreviewMonthly | null | undefined, k: keyof GovernmentPreviewMonthly["deductions"]): number {
@@ -176,7 +181,18 @@ function SingleRowBand({
   );
 }
 
-export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, readOnly, onUpdate }: Props) {
+export function GovernmentRunPreviewTable({
+  rows,
+  daysInMonth,
+  effectiveRunDay,
+  readOnly,
+  onUpdate,
+  showExportSelection = false,
+  exportSelectedIds,
+  allExportSelected = false,
+  onToggleExportAll,
+  onToggleExportOne,
+}: Props) {
   return (
     <div className="-mx-1 sm:mx-0">
       <p className="mb-3 text-xs leading-relaxed text-slate-600">
@@ -189,6 +205,16 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
         <table className="w-max min-w-[640px] border-collapse text-left text-xs">
           <thead>
             <tr className="bg-slate-100">
+              {showExportSelection ? (
+                <th className={`${th} w-10 text-center`}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all employees for PDF export"
+                    checked={allExportSelected}
+                    onChange={(e) => onToggleExportAll?.(e.target.checked)}
+                  />
+                </th>
+              ) : null}
               <th className={`${th} w-[140px]`}>Employee</th>
               <th className={`${th} w-[88px]`}>Days</th>
               <th className={`${th} w-[100px]`}>Gr. basic</th>
@@ -207,6 +233,16 @@ export function GovernmentRunPreviewTable({ rows, daysInMonth, effectiveRunDay, 
               const gb = r.grossMonthly ?? 0;
               return (
                 <tr key={r.employeeUserId} className="border-t border-slate-200 bg-white">
+                  {showExportSelection ? (
+                    <td className={`${tdL} text-center`}>
+                      <input
+                        type="checkbox"
+                        aria-label={`Include ${r.employeeName || r.employeeEmail} in PDF export`}
+                        checked={exportSelectedIds?.has(r.employeeUserId) ?? false}
+                        onChange={(e) => onToggleExportOne?.(r.employeeUserId, e.target.checked)}
+                      />
+                    </td>
+                  ) : null}
                   <td className={tdL} title={r.employeeEmail || undefined}>
                     <span className="font-medium text-slate-900">{r.employeeName || r.employeeEmail || "—"}</span>
                   </td>

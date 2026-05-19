@@ -25,7 +25,12 @@ import {
   type GovernmentOptionalMonthlyEarnings,
 } from "@/lib/governmentPayroll";
 import { GovernmentRunPreviewTable, type GovernmentRunPreviewRow } from "@/components/payroll/GovernmentRunPreviewTable";
+import {
+  PayrollRunExportPrint,
+  type PayrollRunExportRow,
+} from "@/components/payroll/PayrollRunExportPrint";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
+import { downloadPdfFromElement, formatCompanyForPayrollExport } from "@/lib/payrollRunPdfExport";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 import { normalizePayDaysHalfStepAndClamp } from "@/lib/payrollExcelExport";
@@ -793,6 +798,13 @@ function PayrollPageContent() {
     }[]
   >([]);
 
+  const [runCompany, setRunCompany] = useState<{ name: string; address: string; logoUrl: string | null } | null>(
+    null,
+  );
+  const [runExportSelectedIds, setRunExportSelectedIds] = useState<Set<string>>(() => new Set());
+  const [runPdfDownloading, setRunPdfDownloading] = useState(false);
+  const runExportRef = useRef<HTMLDivElement>(null);
+
   const previewHasGovernment = useMemo(
     () => !!(preview?.rows?.length && preview.rows.some((r: any) => r.payrollMode === "government")),
     [preview?.rows],
@@ -894,6 +906,86 @@ function PayrollPageContent() {
       setEditableRows([]);
     }
   }, [preview?.rows, preview?.daysInMonth, preview?.workingDaysInFullMonth]);
+
+  useEffect(() => {
+    if (!editableRows.length) {
+      setRunExportSelectedIds(new Set());
+      return;
+    }
+    setRunExportSelectedIds(new Set(editableRows.map((r) => r.employeeUserId)));
+  }, [editableRows]);
+
+  const runExportRows = useMemo((): PayrollRunExportRow[] => {
+    return editableRows
+      .filter((r) => runExportSelectedIds.has(r.employeeUserId))
+      .map((r) => {
+        const gov = r.governmentMonthly as { totalEarnings?: number } | null | undefined;
+        const govGross =
+          previewAllGovernment && gov?.totalEarnings != null
+            ? Math.round(Number(gov.totalEarnings))
+            : r.grossPay;
+        return {
+        employeeUserId: r.employeeUserId,
+        employeeName: r.employeeName || r.employeeEmail || "—",
+        payDays: r.payDays,
+        unpaidLeaveDays: r.unpaidLeaveDays,
+        grossPay: govGross,
+        netPay: r.netPay,
+        pfEmployee: r.pfEmployee,
+        pfEmployer: r.pfEmployer,
+        esicEmployee: r.esicEmployee,
+        esicEmployer: r.esicEmployer,
+        profTax: r.profTax,
+        prBonus: r.prBonus,
+        incentive: r.incentive,
+        reimbursement: r.reimbursement,
+        tds: r.tds,
+        takeHome: r.takeHome,
+        ctc: r.ctc,
+        deductions: r.deductions,
+      };
+      });
+  }, [editableRows, runExportSelectedIds, previewAllGovernment]);
+
+  const allRunExportSelected =
+    editableRows.length > 0 && editableRows.every((r) => runExportSelectedIds.has(r.employeeUserId));
+
+  function toggleRunExportAll(checked: boolean) {
+    if (checked) {
+      setRunExportSelectedIds(new Set(editableRows.map((r) => r.employeeUserId)));
+    } else {
+      setRunExportSelectedIds(new Set());
+    }
+  }
+
+  function toggleRunExportOne(employeeUserId: string, checked: boolean) {
+    setRunExportSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(employeeUserId);
+      else next.delete(employeeUserId);
+      return next;
+    });
+  }
+
+  async function handleRunDownloadPdf() {
+    const el = runExportRef.current;
+    if (!el || !runExportRows.length) {
+      showToast("error", "Select at least one employee to export.");
+      return;
+    }
+    setRunPdfDownloading(true);
+    try {
+      const periodTitle = preview?.periodName || `${runMonth}/${runYear}`;
+      const safePeriod = periodTitle.replace(/[^a-zA-Z0-9]+/g, "-").replace(/^-|-$/g, "") || "Payroll";
+      const fileName = `Payroll-Register-${safePeriod}.pdf`;
+      await downloadPdfFromElement(el, fileName, { landscape: true });
+    } catch (err) {
+      console.error("Payroll run PDF failed:", err);
+      showToast("error", "PDF generation failed. Please try again.");
+    } finally {
+      setRunPdfDownloading(false);
+    }
+  }
 
   useEffect(() => {
     if (tab !== "slips" || !canManage) return;
@@ -1309,6 +1401,7 @@ function PayrollPageContent() {
         setCompanyPt(pt != null && Number(pt) >= 0 ? Number(pt) : 200);
         setPrivatePayrollCfg(normalizePrivatePayrollConfig(cfgData?.config));
         const c = data?.company ?? null;
+        setRunCompany(formatCompanyForPayrollExport(c));
         const type = String(c?.company_type ?? c?.type ?? c?.payroll_type ?? c?.payrollMode ?? "").toLowerCase();
         const allow =
           c?.is_government === true ||
@@ -3432,14 +3525,34 @@ function PayrollPageContent() {
                     ) : null}
                   </p>
                   {preview?.existingPeriodId && (
-                    <a
-                      href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
-                      download
-                      className="btn btn-outline !py-1.5 !text-sm"
-                    >
-                      Download Excel
-                    </a>
+                    <>
+                      <a
+                        href={`/api/payroll/export?periodId=${preview.existingPeriodId}`}
+                        download
+                        className="btn btn-outline !py-1.5 !text-sm"
+                      >
+                        Download Excel
+                      </a>
+                      {role === "super_admin" && (
+                        <button
+                          type="button"
+                          className="btn btn-outline !py-1.5 !text-sm"
+                          disabled={runPdfDownloading || runExportRows.length === 0}
+                          onClick={() => void handleRunDownloadPdf()}
+                        >
+                          {runPdfDownloading
+                            ? "Generating PDF…"
+                            : `Download PDF${runExportRows.length ? ` (${runExportRows.length})` : ""}`}
+                        </button>
+                      )}
+                    </>
                   )}
+                  {role === "super_admin" && preview?.alreadyRun && editableRows.length > 0 ? (
+                    <p className="w-full text-xs text-slate-600">
+                      Use row checkboxes to choose employees for the PDF register. Excel always includes everyone in
+                      the period.
+                    </p>
+                  ) : null}
                 </div>
               )}
               {previewLoading ? (
@@ -3464,12 +3577,27 @@ function PayrollPageContent() {
                       effectiveRunDay={preview.daysInMonth}
                       readOnly={!!preview?.alreadyRun}
                       onUpdate={updateEditableRow}
+                      showExportSelection={role === "super_admin" && !!preview?.alreadyRun}
+                      exportSelectedIds={runExportSelectedIds}
+                      onToggleExportAll={toggleRunExportAll}
+                      onToggleExportOne={toggleRunExportOne}
+                      allExportSelected={allRunExportSelected}
                     />
                   ) : (
                     <div className="-mx-1 overflow-x-auto sm:mx-0">
                       <table className="w-full min-w-[720px] table-fixed text-left text-xs">
                         <thead className="bg-slate-50 text-slate-600">
                           <tr>
+                            {role === "super_admin" && preview?.alreadyRun ? (
+                              <th className="w-8 px-1 py-1">
+                                <input
+                                  type="checkbox"
+                                  aria-label="Select all employees for PDF export"
+                                  checked={allRunExportSelected}
+                                  onChange={(e) => toggleRunExportAll(e.target.checked)}
+                                />
+                              </th>
+                            ) : null}
                             <th className="w-[100px] px-1.5 py-1">Employee</th>
                             <th className="w-[72px] px-1 py-1">Days</th>
                             <th className="w-[60px] px-1 py-1">Gross</th>
@@ -3492,6 +3620,16 @@ function PayrollPageContent() {
                             const readOnly = !!preview?.alreadyRun;
                             return (
                               <tr key={r.employeeUserId} className="border-t border-slate-200">
+                                {role === "super_admin" && preview?.alreadyRun ? (
+                                  <td className="px-1 py-1">
+                                    <input
+                                      type="checkbox"
+                                      aria-label={`Include ${r.employeeName || r.employeeEmail} in PDF export`}
+                                      checked={runExportSelectedIds.has(r.employeeUserId)}
+                                      onChange={(e) => toggleRunExportOne(r.employeeUserId, e.target.checked)}
+                                    />
+                                  </td>
+                                ) : null}
                                 <td
                                   className="truncate px-1.5 py-1 font-medium text-slate-900"
                                   title={r.employeeName || r.employeeEmail || undefined}
@@ -3734,6 +3872,18 @@ function PayrollPageContent() {
                 </div>
               ) : !preview?.alreadyRun ? (
                 <p className="muted py-6">No employees in payroll for the selected month and year. Ensure employees have Payroll Master records.</p>
+              ) : null}
+              {role === "super_admin" && preview?.alreadyRun && runExportRows.length > 0 ? (
+                <div className="pointer-events-none fixed left-[-12000px] top-0 z-[-1]" aria-hidden>
+                  <PayrollRunExportPrint
+                    ref={runExportRef}
+                    company={runCompany}
+                    periodTitle={preview.periodName || `${runMonth}/${runYear}`}
+                    rows={runExportRows}
+                    pfColumnLabel={previewHasGovernment ? "CPF" : "PF"}
+                    governmentSummary={previewAllGovernment}
+                  />
+                </div>
               ) : null}
             </form>
           </div>
