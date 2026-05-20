@@ -13,7 +13,7 @@ import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, US_EASTERN_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
 import { notesIndicateAutoPunchOut } from "@/lib/attendanceAutoPunchOut";
 import { todayYmdTz } from "@/lib/tzCalendar";
-import type { BreakSegment } from "@/lib/attendanceBreakUtils";
+import { minutesBetween, type BreakSegment } from "@/lib/attendanceBreakUtils";
 
 type Row = {
   logId: string;
@@ -79,6 +79,37 @@ function formatOutInSpan(
   return `${formatTimeTz(outIso ?? null, tz)} – ${formatTimeTz(inIso ?? null, tz)}`;
 }
 
+/** Compact duration for break lines (e.g. 7m, 1h 22m). */
+function fmtBreakDuration(min: number): string {
+  if (min <= 0) return "0m";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  if (h === 0) return `${m}m`;
+  if (m === 0) return `${h}h`;
+  return `${h}h ${m}m`;
+}
+
+function BreakRangeWithDuration({
+  outIso,
+  inIso,
+  tz,
+}: {
+  outIso: string | null | undefined;
+  inIso: string | null | undefined;
+  tz: AttendanceTimeZoneId;
+}) {
+  const mins =
+    outIso && inIso ? minutesBetween(String(outIso), String(inIso)) : 0;
+  return (
+    <>
+      {formatOutInSpan(outIso, inIso, tz)}
+      {outIso && inIso ? (
+        <span className="text-slate-500"> · {fmtBreakDuration(mins)}</span>
+      ) : null}
+    </>
+  );
+}
+
 function BreakPunchesBlock({
   r,
   tz,
@@ -105,7 +136,7 @@ function BreakPunchesBlock({
       nodes.push(
         <div key={`l-${i}`} className="tabular-nums text-slate-800">
           <span className="text-slate-500">{label}: </span>
-          {formatOutInSpan(seg.out, seg.in, tz)}
+          <BreakRangeWithDuration outIso={seg.out} inIso={seg.in} tz={tz} />
         </div>,
       );
     });
@@ -113,7 +144,7 @@ function BreakPunchesBlock({
     nodes.push(
       <div key="l-leg" className="tabular-nums text-slate-800">
         <span className="text-slate-500">Lunch: </span>
-        {formatOutInSpan(r.lunchCheckOutAt, r.lunchCheckInAt, tz)}
+        <BreakRangeWithDuration outIso={r.lunchCheckOutAt} inIso={r.lunchCheckInAt} tz={tz} />
       </div>,
     );
   }
@@ -131,7 +162,7 @@ function BreakPunchesBlock({
       nodes.push(
         <div key={`t-${i}`} className="tabular-nums text-slate-800">
           <span className="text-slate-500">{label}: </span>
-          {formatOutInSpan(seg.out, seg.in, tz)}
+          <BreakRangeWithDuration outIso={seg.out} inIso={seg.in} tz={tz} />
         </div>,
       );
     });
@@ -139,7 +170,7 @@ function BreakPunchesBlock({
     nodes.push(
       <div key="t-leg" className="tabular-nums text-slate-800">
         <span className="text-slate-500">Tea: </span>
-        {formatOutInSpan(r.teaCheckOutAt, r.teaCheckInAt, tz)}
+        <BreakRangeWithDuration outIso={r.teaCheckOutAt} inIso={r.teaCheckInAt} tz={tz} />
       </div>,
     );
   }
@@ -203,7 +234,7 @@ function AttendanceRow({
       </td>
       <td
         className="bg-white min-w-[200px] max-w-[280px] px-3 py-3 group-hover:bg-[var(--primary-soft)]/40"
-        title="Each line is one break window (out → in). Multiple periods appear when recorded separately. If no segment history exists, lunch shows first out and last in only."
+        title="Each line is one break window (out → in) with duration. Multiple lunch/tea periods appear separately when stored as segments."
       >
         <BreakPunchesBlock r={r} tz={tz} />
       </td>
@@ -680,7 +711,7 @@ export default function AttendancePage() {
                       </th>
                       <th
                         className="min-w-[200px] max-w-[280px] px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700"
-                        title="Each line is one break window (out → in). Multiple lunch/tea periods appear separately when stored as segments. Without segments, lunch shows first out and last in only."
+                        title="Each line is one break window (out → in) with duration. Multiple lunch/tea periods appear separately when stored as segments. Without segments, lunch shows first out and last in only."
                       >
                         2. Break punches
                         <span className="mt-0.5 block text-[10px] font-normal normal-case tracking-normal text-gray-500">
