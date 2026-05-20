@@ -7,12 +7,13 @@ import { PaginationBar } from "@/components/common/PaginationBar";
 import { SkeletonTable } from "@/components/common/Skeleton";
 import { HrmsShellPage } from "@/components/layout/HrmsShellPage";
 import { useResponsivePageSize } from "@/hooks/useResponsivePageSize";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { fmtDmy } from "@/lib/dateFormat";
 import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, US_EASTERN_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
 import { notesIndicateAutoPunchOut } from "@/lib/attendanceAutoPunchOut";
 import { todayYmdTz } from "@/lib/tzCalendar";
+import type { BreakSegment } from "@/lib/attendanceBreakUtils";
 
 type Row = {
   logId: string;
@@ -23,6 +24,12 @@ type Row = {
   checkInAt: string | null;
   lunchCheckOutAt: string | null;
   lunchCheckInAt: string | null;
+  teaCheckOutAt?: string | null;
+  teaCheckInAt?: string | null;
+  lunchBreakSegments?: BreakSegment[] | null;
+  teaBreakSegments?: BreakSegment[] | null;
+  lunchBreakStartedAt?: string | null;
+  teaBreakStartedAt?: string | null;
   checkOutAt: string | null;
   totalHours: number | null;
   lunchBreakMinutes: number;
@@ -62,6 +69,86 @@ function formatTimeTz(iso: string | null | undefined, tz: AttendanceTimeZoneId):
   } catch {
     return "—";
   }
+}
+
+function formatOutInSpan(
+  outIso: string | null | undefined,
+  inIso: string | null | undefined,
+  tz: AttendanceTimeZoneId,
+): string {
+  return `${formatTimeTz(outIso ?? null, tz)} – ${formatTimeTz(inIso ?? null, tz)}`;
+}
+
+function BreakPunchesBlock({
+  r,
+  tz,
+  className,
+}: {
+  r: Row;
+  tz: AttendanceTimeZoneId;
+  className?: string;
+}) {
+  const lunchSegs = r.lunchBreakSegments ?? [];
+  const teaSegs = r.teaBreakSegments ?? [];
+  const nodes: ReactNode[] = [];
+
+  if (r.lunchBreakOpen && r.lunchBreakStartedAt) {
+    nodes.push(
+      <div key="l-open" className="tabular-nums text-amber-900">
+        <span className="text-slate-500">Lunch (open): </span>
+        {formatTimeTz(r.lunchBreakStartedAt, tz)} → …
+      </div>,
+    );
+  } else if (lunchSegs.length > 0) {
+    lunchSegs.forEach((seg, i) => {
+      const label = lunchSegs.length > 1 ? `Lunch ${i + 1}` : "Lunch";
+      nodes.push(
+        <div key={`l-${i}`} className="tabular-nums text-slate-800">
+          <span className="text-slate-500">{label}: </span>
+          {formatOutInSpan(seg.out, seg.in, tz)}
+        </div>,
+      );
+    });
+  } else if (r.lunchCheckOutAt || r.lunchCheckInAt) {
+    nodes.push(
+      <div key="l-leg" className="tabular-nums text-slate-800">
+        <span className="text-slate-500">Lunch: </span>
+        {formatOutInSpan(r.lunchCheckOutAt, r.lunchCheckInAt, tz)}
+      </div>,
+    );
+  }
+
+  if (r.teaBreakOpen && r.teaBreakStartedAt) {
+    nodes.push(
+      <div key="t-open" className="tabular-nums text-amber-900">
+        <span className="text-slate-500">Tea (open): </span>
+        {formatTimeTz(r.teaBreakStartedAt, tz)} → …
+      </div>,
+    );
+  } else if (teaSegs.length > 0) {
+    teaSegs.forEach((seg, i) => {
+      const label = teaSegs.length > 1 ? `Tea ${i + 1}` : "Tea";
+      nodes.push(
+        <div key={`t-${i}`} className="tabular-nums text-slate-800">
+          <span className="text-slate-500">{label}: </span>
+          {formatOutInSpan(seg.out, seg.in, tz)}
+        </div>,
+      );
+    });
+  } else if (r.teaCheckOutAt || r.teaCheckInAt) {
+    nodes.push(
+      <div key="t-leg" className="tabular-nums text-slate-800">
+        <span className="text-slate-500">Tea: </span>
+        {formatOutInSpan(r.teaCheckOutAt, r.teaCheckInAt, tz)}
+      </div>,
+    );
+  }
+
+  if (nodes.length === 0) {
+    return <span className="text-slate-400">—</span>;
+  }
+
+  return <div className={className ?? "space-y-1 text-xs"}>{nodes}</div>;
 }
 
 function fmtHoursMin(min: number | null): string {
@@ -114,11 +201,11 @@ function AttendanceRow({
       <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
         {formatTimeTz(r.checkInAt, tz)}
       </td>
-      <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
-        {formatTimeTz(r.lunchCheckOutAt, tz)}
-      </td>
-      <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
-        {formatTimeTz(r.lunchCheckInAt, tz)}
+      <td
+        className="bg-white min-w-[200px] max-w-[280px] px-3 py-3 group-hover:bg-[var(--primary-soft)]/40"
+        title="Each line is one break window (out → in). Multiple periods appear when recorded separately. If no segment history exists, lunch shows first out and last in only."
+      >
+        <BreakPunchesBlock r={r} tz={tz} />
       </td>
       <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
         {formatTimeTz(r.checkOutAt, tz)}
@@ -235,16 +322,14 @@ function AttendanceMobileCard({
           <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.checkInAt, tz)}</dd>
         </div>
         <div>
-          <dt className="text-xs text-slate-500">2. Lunch out</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.lunchCheckOutAt, tz)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-slate-500">3. Lunch in</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.lunchCheckInAt, tz)}</dd>
-        </div>
-        <div>
-          <dt className="text-xs text-slate-500">4. Final out</dt>
+          <dt className="text-xs text-slate-500">2. Final out</dt>
           <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.checkOutAt, tz)}</dd>
+        </div>
+        <div className="col-span-2">
+          <dt className="text-xs text-slate-500">Break punches (lunch &amp; tea)</dt>
+          <dd className="text-slate-800">
+            <BreakPunchesBlock r={r} tz={tz} className="space-y-1 text-xs" />
+          </dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">Gross</dt>
@@ -460,7 +545,7 @@ export default function AttendancePage() {
     setMobilePage(1);
   }, [mobilePageSize]);
 
-  const baseCols = (showEmployeeCols ? 11 : 10) + (showScreenshotsCol ? 1 : 0);
+  const baseCols = (showEmployeeCols ? 10 : 9) + (showScreenshotsCol ? 1 : 0);
   const colCount = showDateCol ? baseCols + 1 : baseCols;
 
   const filteredEmployeeLabel = useMemo(() => {
@@ -475,7 +560,7 @@ export default function AttendancePage() {
       : "Company attendance"
     : "My attendance";
   const description = isManagerial
-    ? "Punch sequence: first check in → lunch out → lunch in → final check out. Lunch is deducted only when it is recorded (minutes or punches). Active time = gross minus lunch and tea. Present for payroll when active work is at least 8 hours. Dates use the IST calendar."
+    ? "Punch order: first in → break windows (lunch/tea, each out→in) → final out. When the app stores segment pairs, every break appears on its own line; otherwise lunch shows first out and last in only. Idle lunch/tea minutes drive active time. Present for payroll when active work is at least 8 hours."
     : `Your records for the selected period (${timeZoneLabel(viewTz)}). Same punch rules as on the dashboard. Use the Dashboard to punch in/out for today.`;
 
   return (
@@ -577,7 +662,7 @@ export default function AttendancePage() {
             <>
             <div className="hidden overflow-hidden rounded-xl border border-gray-200 bg-white shadow-sm lg:block">
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[980px] text-left text-sm">
+                <table className="w-full min-w-[920px] text-left text-sm">
                   <thead className="bg-[var(--primary-soft)]/40">
                     <tr className="border-b border-gray-200">
                       {showDateCol && (
@@ -593,14 +678,17 @@ export default function AttendancePage() {
                       <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         1. First in
                       </th>
-                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
-                        2. Lunch out
+                      <th
+                        className="min-w-[200px] max-w-[280px] px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700"
+                        title="Each line is one break window (out → in). Multiple lunch/tea periods appear separately when stored as segments. Without segments, lunch shows first out and last in only."
+                      >
+                        2. Break punches
+                        <span className="mt-0.5 block text-[10px] font-normal normal-case tracking-normal text-gray-500">
+                          (lunch &amp; tea)
+                        </span>
                       </th>
                       <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
-                        3. Lunch in
-                      </th>
-                      <th className="w-[120px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
-                        4. Final out
+                        3. Final out
                       </th>
                       <th className="w-[110px] whitespace-nowrap px-3 py-3 text-xs font-semibold uppercase tracking-wide text-gray-700">
                         Gross

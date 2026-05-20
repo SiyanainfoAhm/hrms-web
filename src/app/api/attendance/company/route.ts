@@ -7,6 +7,7 @@ import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
 import { attendanceEmployeeIdForUser } from "@/lib/attendanceEmployee";
 import { disconnectedSecondsFromSessions } from "@/lib/attendanceDisconnectedSeconds";
 import {
+  asBreakSegments,
   breakWindowsFromLog,
   grossMinutesFromAttendanceLog,
   lunchTeaBreakMinutesBase,
@@ -453,6 +454,10 @@ export async function GET(request: NextRequest) {
         checkInAt: log.check_in_at,
         lunchCheckOutAt: log.lunch_check_out_at ?? null,
         lunchCheckInAt: log.lunch_check_in_at ?? null,
+        teaCheckOutAt: log.tea_check_out_at ?? null,
+        teaCheckInAt: log.tea_check_in_at ?? null,
+        lunchBreakSegments: asBreakSegments(log.lunch_break_segments),
+        teaBreakSegments: asBreakSegments(log.tea_break_segments),
         checkOutAt: log.check_out_at,
 
         totalHours:
