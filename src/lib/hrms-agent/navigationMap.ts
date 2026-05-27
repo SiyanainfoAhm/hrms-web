@@ -50,7 +50,7 @@ function buildTargets(): NavTarget[] {
       href: "/app/approvals?tab=reimbursement",
       aliases: ["reimbursements", "expenses", "claim", "claims"],
     },
-    { key: "payslip", label: "My Payslips", href: "/app/profile?tab=pay", aliases: ["payslips", "salary slip"] },
+    { key: "payslip", label: "Payslips", href: "/app/payroll?tab=slips", aliases: ["payslips", "salary slip", "salary slips"] },
     {
       key: "documents",
       label: "My Documents",

@@ -1021,10 +1021,10 @@ export function DashboardContent() {
             View generated payslips for each payroll period. Admin / HR can run payroll per company.
           </p>
           <Link
-            href="/app/profile?tab=pay"
+            href="/app/payroll?tab=slips"
             className="inline-flex items-center justify-center rounded-lg bg-[var(--primary)] px-4 py-2 text-sm font-semibold text-white hover:brightness-95 transition"
           >
-            View my payslips
+            Payslips
           </Link>
         </div>
 
