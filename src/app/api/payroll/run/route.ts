@@ -1104,7 +1104,7 @@ async function computeFreshPayrollPreviewFromMasters(
       pfEmployerMonthly,
       esicEmployerMonthly,
       incentiveMonthly,
-      prBonus: 0,
+      prBonusMonthly: 0,
     });
     const { ctcBase, ctc: periodCtc } = computePrivatePeriodCtc({
       grossPay,
@@ -1178,6 +1178,7 @@ function mapSavedPayslipToPreviewRow(p: any, u: any | undefined, gov: any | unde
     payDays: Number(p.pay_days) ?? 0,
     unpaidLeaveDays: gov ? Number(gov.unpaid_days) || 0 : 0,
     grossPay: Math.round(Number(p.gross_pay) ?? 0),
+    grossMonthly: undefined as number | undefined,
     pfEmployee: Math.round(Number(p.pf_employee) ?? 0),
     pfEmployer: Math.round(Number(p.pf_employer) ?? 0),
     esicEmployee: Math.round(Number(p.esic_employee) ?? 0),
@@ -1357,7 +1358,7 @@ async function computePreview(
               pfEmployerMonthly,
               esicEmployerMonthly,
               incentiveMonthly,
-              prBonus: 0,
+              prBonusMonthly: 0,
             }),
         );
         const { ctcBase, ctc: periodCtc } = computePrivatePeriodCtc({

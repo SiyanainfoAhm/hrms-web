@@ -779,6 +779,9 @@ function PayrollPageContent() {
       netPay: number;
       takeHome: number;
       ctc: number;
+      ctcMonthly?: number;
+      periodCtc?: number;
+      ctcBase?: number;
       grossMonthly?: number;
       incentive?: number;
       prBonus?: number;
@@ -822,6 +825,8 @@ function PayrollPageContent() {
       tds: number;
       takeHome: number;
       ctc: number;
+      ctcMonthly?: number;
+      periodCtc?: number;
       ctcBase?: number;
       payrollMode?: string;
       governmentMonthly?: unknown;
