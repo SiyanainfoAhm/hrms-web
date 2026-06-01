@@ -12,6 +12,7 @@ import { DatePickerField } from "@/components/ui/DatePickerField";
 import {
   computePayrollFromGross,
   computePrivateMonthlyCtc,
+  computePrivateNetPay,
   computePrivatePeriodCtc,
   computePrivateTakeHome,
   defaultSalaryBreakup,
@@ -415,7 +416,7 @@ function computePreviewPrivateStatutory(
   const pfEmployer = Math.round(monthlyCalc.pfEmpr * ratio);
   const esicEmployee = Math.round(monthlyCalc.esicEmp * ratio);
   const esicEmployer = Math.round(monthlyCalc.esicEmpr * ratio);
-  const profTax = payPd > 0 ? Math.round(profMonth * ratio) : 0;
+  const profTax = payPd > 0 ? profMonth : 0;
   const deductions = pfEmployee + esicEmployee + profTax;
   const tds = Math.max(0, Number(row.tds) || 0);
   const netPay = Math.max(0, grossPay - deductions);
@@ -924,24 +925,32 @@ function PayrollPageContent() {
             r.grossMonthly ??
             Math.round((Number(r.grossPay || 0) * denom) / (r.payDays || r.rawPayDays || 1)),
           grossPay: Number(r.grossPay ?? 0),
-          netPay: Number(r.netPay ?? 0),
           pfEmployee: Number(r.pfEmployee ?? 0),
           pfEmployer: Number(r.pfEmployer ?? 0),
           esicEmployee: Number(r.esicEmployee ?? 0),
           esicEmployer: Number(r.esicEmployer ?? 0),
           profTax: Number(r.profTax ?? 0),
-          deductions: Number(r.deductions ?? 0),
           incentive: r.incentive ?? 0,
           prBonus: r.prBonus ?? 0,
           reimbursement: r.reimbursement ?? 0,
           tds: r.tds ?? 0,
-          takeHome: computePrivateTakeHome({
-            netPay: Number(r.netPay ?? 0),
-            tds: Number(r.tds ?? 0),
-            incentive: r.incentive,
-            prBonus: r.prBonus,
-            reimbursement: r.reimbursement,
-          }),
+          ...(() => {
+            const grossPay = Number(r.grossPay ?? 0);
+            const pfEmployee = Number(r.pfEmployee ?? 0);
+            const esicEmployee = Number(r.esicEmployee ?? 0);
+            const profTax = Number(r.profTax ?? 0);
+            const deductions =
+              Number(r.deductions ?? 0) || pfEmployee + esicEmployee + profTax;
+            const netPay = computePrivateNetPay(grossPay, deductions);
+            const takeHome = computePrivateTakeHome({
+              netPay,
+              tds: Number(r.tds ?? 0),
+              incentive: r.incentive,
+              prBonus: r.prBonus,
+              reimbursement: r.reimbursement,
+            });
+            return { deductions, netPay, takeHome };
+          })(),
           ctc: Number(r.ctcMonthly ?? r.ctc ?? 0),
           ctcMonthly: Number(r.ctcMonthly ?? r.ctc ?? 0),
           periodCtc: Number(
@@ -1317,7 +1326,7 @@ function PayrollPageContent() {
           return next;
         }
         const recalcNetPayFromGross = () => {
-          next.netPay = Math.max(0, next.grossPay - next.deductions);
+          next.netPay = computePrivateNetPay(next.grossPay, next.deductions);
         };
         const recalcTakeHome = () => {
           next.takeHome = computePrivateTakeHome({
@@ -1384,7 +1393,7 @@ function PayrollPageContent() {
           next.pfEmployer = Math.round(calc.pfEmpr * ratio);
           next.esicEmployee = Math.round(calc.esicEmp * ratio);
           next.esicEmployer = Math.round(calc.esicEmpr * ratio);
-          const profTaxApplied = payPd > 0 ? Math.round(profMonth * ratio) : 0;
+          const profTaxApplied = payPd > 0 ? profMonth : 0;
           next.profTax = profTaxApplied;
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           recalcNetPayFromGross();
@@ -1422,7 +1431,7 @@ function PayrollPageContent() {
             next.pfEmployer = Math.round(calc.pfEmpr * ratioPd);
             next.esicEmployee = Math.round(calc.esicEmp * ratioPd);
             next.esicEmployer = Math.round(calc.esicEmpr * ratioPd);
-            const profTaxApplied = newPayDays > 0 ? Math.round(profMonth * ratioPd) : 0;
+            const profTaxApplied = newPayDays > 0 ? profMonth : 0;
             next.profTax = profTaxApplied;
           } else {
             const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
@@ -3704,7 +3713,12 @@ function PayrollPageContent() {
                             <th className="w-[100px] px-1.5 py-1">Employee</th>
                             <th className="w-[72px] px-1 py-1">Days</th>
                             <th className="w-[60px] px-1 py-1">Gross</th>
-                            <th className="w-[60px] px-1 py-1">Net</th>
+                            <th
+                              className="w-[60px] px-1 py-1"
+                              title="After PF, ESIC, PT (before TDS)"
+                            >
+                              Net
+                            </th>
                             <th className="w-[48px] px-1 py-1">{previewHasGovernment ? "CPF" : "PF"}</th>
                             <th className="w-[48px] px-1 py-1">PF(R)</th>
                             <th className="w-[48px] px-1 py-1">ESIC</th>
@@ -3714,7 +3728,9 @@ function PayrollPageContent() {
                             <th className="w-[48px] px-1 py-1">Inc</th>
                             <th className="w-[52px] px-1 py-1">Reimb</th>
                             <th className="w-[44px] px-1 py-1">TDS</th>
-                            <th className="w-[60px] px-1 py-1">Take</th>
+                            <th className="w-[60px] px-1 py-1" title="Bank pay: Net − TDS (+ incentive/reimb)">
+                              Take
+                            </th>
                             <th className="w-[60px] px-1 py-1" title="Full month CTC (compare with Gross/Take for unpaid days)">
                               CTC
                             </th>

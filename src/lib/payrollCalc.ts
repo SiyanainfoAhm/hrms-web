@@ -230,6 +230,11 @@ export function computePayrollFromGross(
  * Bank take-home for private payroll run preview / payslips:
  * net salary (gross − statutory deductions) − TDS + incentive + bonus + reimbursement.
  */
+/** Salary after employee PF, ESIC, and PT (before TDS / incentive / reimbursement). */
+export function computePrivateNetPay(grossPay: number, deductions: number): number {
+  return Math.max(0, Math.round(Number(grossPay) || 0) - Math.round(Number(deductions) || 0));
+}
+
 export function computePrivateTakeHome(params: {
   netPay: number;
   tds: number;

@@ -23,6 +23,7 @@ import {
   computePayrollFromCtc,
   computePayrollFromGross,
   computePrivateMonthlyCtc,
+  computePrivateNetPay,
   computePrivatePeriodCtc,
   computePrivateTakeHome,
   defaultSalaryBreakup,
@@ -152,13 +153,10 @@ function privateStatutoryMonthlyFromMaster(
   };
 }
 
-function proratedProfTaxMonthly(
-  profTaxMonthly: number,
-  payDays: number,
-  salaryProrationDays: number,
-): number {
+/** PT is a monthly statutory amount: full month when pay days > 0 (not prorated for unpaid leave). */
+function profTaxForPayrollPeriod(profTaxMonthly: number, payDays: number): number {
   if (payDays <= 0) return 0;
-  return Math.round(profTaxMonthly * (payDays / Math.max(1, salaryProrationDays)));
+  return Math.round(profTaxMonthly);
 }
 
 /**
@@ -1081,9 +1079,9 @@ async function computeFreshPayrollPreviewFromMasters(
     const pfEmpr = statM.pfEmpr * (payDays / Math.max(1, salaryProrationDays));
     const esicEmp = statM.esicEmp * (payDays / Math.max(1, salaryProrationDays));
     const esicEmpr = statM.esicEmpr * (payDays / Math.max(1, salaryProrationDays));
-    const profTaxApplied = proratedProfTaxMonthly(profTaxMonthly, payDays, salaryProrationDays);
+    const profTaxApplied = profTaxForPayrollPeriod(profTaxMonthly, payDays);
     const deductions = Math.round(pfEmp + esicEmp + profTaxApplied);
-    const netPay = grossPay - deductions;
+    const netPay = computePrivateNetPay(grossPay, deductions);
     const tdsMonth = Number(m.tds) || 0;
     const advMonth = Number(m.advance_bonus) || 0;
     const incentive = Math.round(advMonth * ratio);
@@ -1329,14 +1327,20 @@ async function computePreview(
       if (p) {
         const savedRow = mapSavedPayslipToPreviewRow(p, nameById.get(uid), govByUser.get(uid));
         const tds = Math.round(Number(p.tds ?? fr.tds) || 0);
-        const netPay = Math.round(Number(fr.netPay ?? savedRow.netPay) || 0);
         const incentive = Math.round(Number(fr.incentive ?? savedRow.incentive) || 0);
         const prBonus = Math.round(Number(fr.prBonus ?? savedRow.prBonus) || 0);
         const reimbursement = Math.round(Number(fr.reimbursement ?? savedRow.reimbursement) || 0);
-        const takeHome = computePrivateTakeHome({ netPay, tds, incentive, prBonus, reimbursement });
         const payDaysMerged = Math.max(0, Number(fr.payDays ?? savedRow.payDays) || 0);
         const grossMonthly = Math.round(Number(fr.grossMonthly ?? savedRow.grossMonthly) || 0);
         const grossPay = Math.round(Number(fr.grossPay ?? savedRow.grossPay) || 0);
+        const pfEmployee = Math.round(Number(fr.pfEmployee ?? savedRow.pfEmployee) || 0);
+        const esicEmployee = Math.round(Number(fr.esicEmployee ?? savedRow.esicEmployee) || 0);
+        const profTax = Math.round(Number(fr.profTax ?? savedRow.profTax) || 0);
+        const deductions = Math.round(
+          Number(fr.deductions ?? savedRow.deductions) || pfEmployee + esicEmployee + profTax,
+        );
+        const netPay = computePrivateNetPay(grossPay, deductions);
+        const takeHome = computePrivateTakeHome({ netPay, tds, incentive, prBonus, reimbursement });
         const pfEmployer = Math.round(Number(fr.pfEmployer ?? savedRow.pfEmployer) || 0);
         const esicEmployer = Math.round(Number(fr.esicEmployer ?? savedRow.esicEmployer) || 0);
         const pfEmployerMonthly = Math.round(
@@ -1374,12 +1378,12 @@ async function computePreview(
           grossMonthly: fr.grossMonthly ?? savedRow.grossMonthly,
           grossPay,
           netPay,
-          pfEmployee: fr.pfEmployee ?? savedRow.pfEmployee,
+          pfEmployee,
           pfEmployer,
-          esicEmployee: fr.esicEmployee ?? savedRow.esicEmployee,
+          esicEmployee: Math.round(Number(fr.esicEmployee ?? savedRow.esicEmployee) || 0),
           esicEmployer,
-          profTax: fr.profTax ?? savedRow.profTax,
-          deductions: fr.deductions ?? savedRow.deductions,
+          profTax,
+          deductions,
           tds,
           incentive,
           prBonus,
@@ -1803,7 +1807,7 @@ export async function POST(request: NextRequest) {
       const pfEmpr = Math.round(statCm.pfEmpr * (payDays / Math.max(1, salaryProrationDays)));
       const esicEmp = Math.round(statCm.esicEmp * (payDays / Math.max(1, salaryProrationDays)));
       const esicEmpr = Math.round(statCm.esicEmpr * (payDays / Math.max(1, salaryProrationDays)));
-      const profTaxAppliedCm = proratedProfTaxMonthly(profTaxMonthlyRoundedCm, payDays, salaryProrationDays);
+      const profTaxAppliedCm = profTaxForPayrollPeriod(profTaxMonthlyRoundedCm, payDays);
       const deductions = pfEmp + esicEmp + profTaxAppliedCm;
       const netPay = grossPay - deductions;
       const tdsMonthIns = Number(m.tds) || 0;
@@ -2351,7 +2355,7 @@ export async function POST(request: NextRequest) {
       const pfEmpr = Math.round(statRun.pfEmpr * (payDays / Math.max(1, salaryProrationDays)));
       const esicEmp = Math.round(statRun.esicEmp * (payDays / Math.max(1, salaryProrationDays)));
       const esicEmpr = Math.round(statRun.esicEmpr * (payDays / Math.max(1, salaryProrationDays)));
-      const profTaxAppliedRun = proratedProfTaxMonthly(profTaxMonthlyRoundedRun, payDays, salaryProrationDays);
+      const profTaxAppliedRun = profTaxForPayrollPeriod(profTaxMonthlyRoundedRun, payDays);
       const deductions = pfEmp + esicEmp + profTaxAppliedRun;
       const netPay = grossPay - deductions;
       const tdsMonthIns = Number(m.tds) || 0;
