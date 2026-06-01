@@ -11,6 +11,9 @@ import { SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import {
   computePayrollFromGross,
+  computePrivateMonthlyCtc,
+  computePrivatePeriodCtc,
+  computePrivateTakeHome,
   defaultSalaryBreakup,
   isPfStatutorilyMandatory,
   isWithinEsicWageCeiling,
@@ -406,17 +409,42 @@ function computePreviewPrivateStatutory(
 
   const monthlyCalc = computePayrollFromGross(fallbackMonthly, pfEligible, esicEligible, profMonth, undefined, cfg);
 
-  const grossMonthly = Math.max(0, Math.round((monthlyCalc as any).gross ?? fallbackMonthly));
+  const grossMonthly = Math.max(0, Math.round(fallbackMonthly));
   const grossPay = Math.max(0, Math.round(grossMonthly * ratio));
   const pfEmployee = Math.round(monthlyCalc.pfEmp * ratio);
   const pfEmployer = Math.round(monthlyCalc.pfEmpr * ratio);
   const esicEmployee = Math.round(monthlyCalc.esicEmp * ratio);
   const esicEmployer = Math.round(monthlyCalc.esicEmpr * ratio);
-  const profTax = payPd > 0 ? profMonth : 0;
+  const profTax = payPd > 0 ? Math.round(profMonth * ratio) : 0;
   const deductions = pfEmployee + esicEmployee + profTax;
   const tds = Math.max(0, Number(row.tds) || 0);
-  const netPay = Math.max(0, grossPay - deductions - tds);
-  const takeHome = netPay + (row.incentive ?? 0) + (row.prBonus ?? 0) + (row.reimbursement ?? 0);
+  const netPay = Math.max(0, grossPay - deductions);
+  const takeHome = computePrivateTakeHome({
+    netPay,
+    tds,
+    incentive: row.incentive,
+    prBonus: row.prBonus,
+    reimbursement: row.reimbursement,
+  });
+
+  const { ctcBase, ctc: periodCtc } = computePrivatePeriodCtc({
+    grossPay,
+    pfEmployer,
+    esicEmployer,
+    incentive: row.incentive,
+    prBonus: row.prBonus,
+  });
+  const incentiveMonthly =
+    payPd > 0
+      ? Math.round((Number(row.incentive) || 0) * (denom / payPd))
+      : Math.round(Number(row.incentive) || 0);
+  const ctcMonthly = computePrivateMonthlyCtc({
+    grossMonthly,
+    pfEmployerMonthly: monthlyCalc.pfEmpr,
+    esicEmployerMonthly: monthlyCalc.esicEmpr,
+    incentiveMonthly,
+    prBonusMonthly: row.prBonus,
+  });
 
   return {
     grossMonthly,
@@ -429,7 +457,10 @@ function computePreviewPrivateStatutory(
     deductions,
     netPay,
     takeHome,
-    ctcBase: Math.round(monthlyCalc.ctc),
+    ctc: ctcMonthly,
+    ctcMonthly,
+    periodCtc,
+    ctcBase,
   };
 }
 
@@ -718,6 +749,7 @@ function PayrollPageContent() {
     periodStart: string;
     periodEnd: string;
     daysInMonth: number;
+    salaryProrationDays?: number;
     workingDaysInFullMonth?: number;
     workingDaysThroughRunDay?: number;
     effectiveRunDay: number;
@@ -874,7 +906,11 @@ function PayrollPageContent() {
   const payslipRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const denom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth;
+    const denom =
+      preview?.salaryProrationDays ??
+      preview?.workingDaysThroughRunDay ??
+      preview?.daysInMonth ??
+      preview?.workingDaysInFullMonth;
     if (preview?.rows?.length && denom) {
       setEditableRows(
         preview.rows.map((r: any) => ({
@@ -890,13 +926,30 @@ function PayrollPageContent() {
           esicEmployer: Number(r.esicEmployer ?? 0),
           profTax: Number(r.profTax ?? 0),
           deductions: Number(r.deductions ?? 0),
-          takeHome: Number(r.takeHome ?? 0),
-          ctc: Number(r.ctc ?? 0),
           incentive: r.incentive ?? 0,
           prBonus: r.prBonus ?? 0,
           reimbursement: r.reimbursement ?? 0,
           tds: r.tds ?? 0,
-          ctcBase: r.ctcBase ?? r.ctc,
+          takeHome: computePrivateTakeHome({
+            netPay: Number(r.netPay ?? 0),
+            tds: Number(r.tds ?? 0),
+            incentive: r.incentive,
+            prBonus: r.prBonus,
+            reimbursement: r.reimbursement,
+          }),
+          ctc: Number(r.ctcMonthly ?? r.ctc ?? 0),
+          ctcMonthly: Number(r.ctcMonthly ?? r.ctc ?? 0),
+          periodCtc: Number(
+            r.periodCtc ??
+              computePrivatePeriodCtc({
+                grossPay: Number(r.grossPay ?? 0),
+                pfEmployer: Number(r.pfEmployer ?? 0),
+                esicEmployer: Number(r.esicEmployer ?? 0),
+                incentive: r.incentive,
+                prBonus: r.prBonus,
+              }).ctc,
+          ),
+          ctcBase: r.ctcBase,
           payrollMode: r.payrollMode,
           governmentMonthly: r.governmentMonthly ?? null,
           govRecalc: r.govRecalc,
@@ -1133,7 +1186,12 @@ function PayrollPageContent() {
     field: string,
     value: number
   ) {
-    const payDenom = preview?.daysInMonth ?? preview?.workingDaysInFullMonth ?? 30;
+    const payDenom =
+      preview?.salaryProrationDays ??
+      preview?.workingDaysThroughRunDay ??
+      preview?.effectiveRunDay ??
+      preview?.daysInMonth ??
+      30;
     const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
     const govPayDaysMax = preview?.daysInMonth ?? 31;
     setEditableRows((prev) =>
@@ -1254,15 +1312,49 @@ function PayrollPageContent() {
           return next;
         }
         const recalcNetPayFromGross = () => {
-          const tds = Math.max(0, Number(next.tds) || 0);
-          next.netPay = Math.max(0, next.grossPay - next.deductions - tds);
+          next.netPay = Math.max(0, next.grossPay - next.deductions);
         };
         const recalcTakeHome = () => {
-          next.takeHome = (Number(next.netPay) || 0) + (next.incentive ?? 0) + (next.prBonus ?? 0) + (next.reimbursement ?? 0);
+          next.takeHome = computePrivateTakeHome({
+            netPay: Number(next.netPay) || 0,
+            tds: Number(next.tds) || 0,
+            incentive: next.incentive,
+            prBonus: next.prBonus,
+            reimbursement: next.reimbursement,
+          });
         };
         const recalcCtc = () => {
-          const base = next.ctcBase ?? row.ctcBase ?? row.ctc;
-          next.ctc = base + (next.incentive ?? 0) + (next.prBonus ?? 0);
+          const grossPay = Number(next.grossPay) || 0;
+          const pfEmployer = Number(next.pfEmployer) || 0;
+          const esicEmployer = Number(next.esicEmployer) || 0;
+          const payPd = Math.max(0, Number(next.payDays) || 0);
+          const gm =
+            next.grossMonthly ??
+            (payPd > 0 ? Math.round((grossPay * payDenom) / payPd) : grossPay);
+          const { ctcBase, ctc: periodCtc } = computePrivatePeriodCtc({
+            grossPay,
+            pfEmployer,
+            esicEmployer,
+            incentive: next.incentive,
+            prBonus: next.prBonus,
+          });
+          const pfEmployerMonthly =
+            payPd > 0 ? Math.round((pfEmployer * payDenom) / payPd) : pfEmployer;
+          const esicEmployerMonthly =
+            payPd > 0 ? Math.round((esicEmployer * payDenom) / payPd) : esicEmployer;
+          const incentiveMonthly =
+            payPd > 0 ? Math.round(((next.incentive ?? 0) * payDenom) / payPd) : next.incentive ?? 0;
+          const ctcMonthly = computePrivateMonthlyCtc({
+            grossMonthly: gm,
+            pfEmployerMonthly,
+            esicEmployerMonthly,
+            incentiveMonthly,
+            prBonusMonthly: next.prBonus,
+          });
+          next.ctcBase = ctcBase;
+          next.periodCtc = periodCtc;
+          next.ctcMonthly = ctcMonthly;
+          next.ctc = ctcMonthly;
         };
         if (field === "grossPay" && row.payrollMode !== "government") {
           const newGrossPay = Math.max(0, Math.round(value));
@@ -1287,8 +1379,7 @@ function PayrollPageContent() {
           next.pfEmployer = Math.round(calc.pfEmpr * ratio);
           next.esicEmployee = Math.round(calc.esicEmp * ratio);
           next.esicEmployer = Math.round(calc.esicEmpr * ratio);
-          next.ctcBase = Math.round(calc.ctc);
-          const profTaxApplied = payPd > 0 ? profMonth : 0;
+          const profTaxApplied = payPd > 0 ? Math.round(profMonth * ratio) : 0;
           next.profTax = profTaxApplied;
           next.deductions = next.pfEmployee + next.esicEmployee + next.profTax;
           recalcNetPayFromGross();
@@ -1326,8 +1417,7 @@ function PayrollPageContent() {
             next.pfEmployer = Math.round(calc.pfEmpr * ratioPd);
             next.esicEmployee = Math.round(calc.esicEmp * ratioPd);
             next.esicEmployer = Math.round(calc.esicEmpr * ratioPd);
-            next.ctcBase = Math.round(calc.ctc);
-            const profTaxApplied = newPayDays > 0 ? profMonth : 0;
+            const profTaxApplied = newPayDays > 0 ? Math.round(profMonth * ratioPd) : 0;
             next.profTax = profTaxApplied;
           } else {
             const ratio = row.payDays > 0 && newPayDays > 0 ? newPayDays / row.payDays : newPayDays === 0 ? 0 : 1;
@@ -1346,7 +1436,7 @@ function PayrollPageContent() {
           recalcTakeHome();
           recalcCtc();
         } else if (field === "deductions") {
-          next.netPay = Math.max(0, next.grossPay - value - (Number(next.tds) || 0));
+          next.netPay = Math.max(0, next.grossPay - value);
           recalcTakeHome();
           recalcCtc();
         } else if (["incentive", "prBonus", "reimbursement", "tds"].includes(field)) {
@@ -2070,38 +2160,48 @@ function PayrollPageContent() {
     }
   }
 
+  function buildRunRowsPayload() {
+    return editableRows.map((r) => ({
+      employeeUserId: r.employeeUserId,
+      payDays: r.payDays,
+      grossPay: r.grossPay,
+      netPay: r.netPay,
+      pfEmployee: r.pfEmployee,
+      pfEmployer: r.pfEmployer,
+      esicEmployee: r.esicEmployee,
+      esicEmployer: r.esicEmployer,
+      profTax: r.profTax,
+      deductions: r.deductions,
+      incentive: r.incentive ?? 0,
+      prBonus: r.prBonus ?? 0,
+      reimbursement: r.reimbursement ?? 0,
+      tds: r.tds ?? 0,
+      takeHome: r.takeHome,
+      ctc: r.ctc,
+      ...(r.payrollMode === "government" && r.govRecalc
+        ? {
+          payrollMode: r.payrollMode,
+          governmentMonthly: r.governmentMonthly,
+          governmentDeductionDefaults: r.govRecalc.deductionDefaults,
+          governmentEarningPaidOverrides: r.govRecalc.earningPaidOverrides,
+        }
+        : {}),
+    }));
+  }
+
+  async function refreshRunPreview() {
+    const refreshRes = await fetch(`/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`);
+    const refreshData = await refreshRes.json();
+    if (refreshRes.ok && refreshData.preview) setPreview(refreshData.preview);
+  }
+
   async function handleRunPayroll(e: FormEvent) {
     e.preventDefault();
     setRunError(null);
     setRunning(true);
     try {
       const useCompleteMissing = Boolean(preview?.alreadyRun && preview?.payrollComplete === false);
-      const rowsPayload = editableRows.map((r) => ({
-        employeeUserId: r.employeeUserId,
-        payDays: r.payDays,
-        grossPay: r.grossPay,
-        netPay: r.netPay,
-        pfEmployee: r.pfEmployee,
-        pfEmployer: r.pfEmployer,
-        esicEmployee: r.esicEmployee,
-        esicEmployer: r.esicEmployer,
-        profTax: r.profTax,
-        deductions: r.deductions,
-        incentive: r.incentive ?? 0,
-        prBonus: r.prBonus ?? 0,
-        reimbursement: r.reimbursement ?? 0,
-        tds: r.tds ?? 0,
-        takeHome: r.takeHome,
-        ctc: r.ctc,
-        ...(r.payrollMode === "government" && r.govRecalc
-          ? {
-            payrollMode: r.payrollMode,
-            governmentMonthly: r.governmentMonthly,
-            governmentDeductionDefaults: r.govRecalc.deductionDefaults,
-            governmentEarningPaidOverrides: r.govRecalc.earningPaidOverrides,
-          }
-          : {}),
-      }));
+      const rowsPayload = buildRunRowsPayload();
       const res = await fetch("/api/payroll/run", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2129,12 +2229,7 @@ function PayrollPageContent() {
           ? `Added ${data.payslipsGenerated} missing payslip(s). Excel updated.`
           : `Payroll generated: ${data.payslipsGenerated} payslips. Excel saved to storage.`,
       );
-      // Stay on Run tab and refetch preview to show generated records + Download Excel
-      const refreshRes = await fetch(
-        `/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`
-      );
-      const refreshData = await refreshRes.json();
-      if (refreshRes.ok && refreshData.preview) setPreview(refreshData.preview);
+      await refreshRunPreview();
     } catch (e: any) {
       setRunError(e?.message || "Failed to run payroll");
       showToast("error", e?.message || "Failed to run payroll");
@@ -3510,6 +3605,9 @@ function PayrollPageContent() {
               {preview && !previewLoading && (
                 <p className="text-xs text-slate-600">
                   Days in full month: {preview.daysInMonth}
+                  {preview.salaryProrationDays != null
+                    ? ` · Payroll period days (proration): ${preview.salaryProrationDays}`
+                    : null}
                   {preview.effectiveRunDay != null ? ` · Through selected run date: ${preview.effectiveRunDay}` : null}
                 </p>
               )}
@@ -3612,7 +3710,9 @@ function PayrollPageContent() {
                             <th className="w-[52px] px-1 py-1">Reimb</th>
                             <th className="w-[44px] px-1 py-1">TDS</th>
                             <th className="w-[60px] px-1 py-1">Take</th>
-                            <th className="w-[60px] px-1 py-1">CTC</th>
+                            <th className="w-[60px] px-1 py-1" title="Full month CTC (compare with Gross/Take for unpaid days)">
+                              CTC
+                            </th>
                           </tr>
                         </thead>
                         <tbody>
@@ -3849,12 +3949,12 @@ function PayrollPageContent() {
                                 </td>
                                 <td className="px-1 py-1">
                                   {readOnly ? (
-                                    <span>{r.ctc.toLocaleString("en-IN")}</span>
+                                    <span>{(r.ctcMonthly ?? r.ctc).toLocaleString("en-IN")}</span>
                                   ) : (
                                     <input
                                       type="number"
                                       min={0}
-                                      value={r.ctc}
+                                      value={r.ctcMonthly ?? r.ctc}
                                       onChange={(e) =>
                                         updateEditableRow(r.employeeUserId, "ctc", parseInt(e.target.value, 10) || 0)
                                       }

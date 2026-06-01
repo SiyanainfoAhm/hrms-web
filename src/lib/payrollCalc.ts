@@ -226,6 +226,78 @@ export function computePayrollFromGross(
   };
 }
 
+/**
+ * Bank take-home for private payroll run preview / payslips:
+ * net salary (gross − statutory deductions) − TDS + incentive + bonus + reimbursement.
+ */
+export function computePrivateTakeHome(params: {
+  netPay: number;
+  tds: number;
+  incentive?: number;
+  prBonus?: number;
+  reimbursement?: number;
+}): number {
+  const netPay = Math.max(0, Math.round(Number(params.netPay) || 0));
+  const tds = Math.max(0, Math.round(Number(params.tds) || 0));
+  const incentive = Math.round(Number(params.incentive) || 0);
+  const prBonus = Math.round(Number(params.prBonus) || 0);
+  const reimbursement = Math.round(Number(params.reimbursement) || 0);
+  return Math.max(0, netPay - tds) + incentive + prBonus + reimbursement;
+}
+
+/**
+ * CTC for a payroll period (not full month): prorated gross + employer PF + employer ESIC (+ incentive/bonus if included in CTC).
+ */
+/** Full-calendar-month CTC (gross + employer contributions) for comparison with prorated period pay. */
+export function computePrivateMonthlyCtc(params: {
+  grossMonthly: number;
+  pfEmployerMonthly: number;
+  esicEmployerMonthly: number;
+  incentiveMonthly?: number;
+  prBonusMonthly?: number;
+}): number {
+  return computePrivatePeriodCtc({
+    grossPay: params.grossMonthly,
+    pfEmployer: params.pfEmployerMonthly,
+    esicEmployer: params.esicEmployerMonthly,
+    incentive: params.incentiveMonthly,
+    prBonus: params.prBonusMonthly,
+  }).ctc;
+}
+
+export function computePrivatePeriodCtc(params: {
+  grossPay: number;
+  pfEmployer: number;
+  esicEmployer: number;
+  incentive?: number;
+  prBonus?: number;
+}): { ctcBase: number; ctc: number } {
+  const ctcBase = Math.round(
+    Math.max(0, Number(params.grossPay) || 0) +
+      Math.max(0, Number(params.pfEmployer) || 0) +
+      Math.max(0, Number(params.esicEmployer) || 0),
+  );
+  const incentive = Math.round(Number(params.incentive) || 0);
+  const prBonus = Math.round(Number(params.prBonus) || 0);
+  return { ctcBase, ctc: ctcBase + incentive + prBonus };
+}
+
+/** Reverse `computePrivateTakeHome` when `net_pay` on a payslip is stored as final take-home. */
+export function netPayBeforeVariableLines(params: {
+  takeHome: number;
+  tds: number;
+  incentive?: number;
+  prBonus?: number;
+  reimbursement?: number;
+}): number {
+  const takeHome = Math.round(Number(params.takeHome) || 0);
+  const tds = Math.max(0, Math.round(Number(params.tds) || 0));
+  const incentive = Math.round(Number(params.incentive) || 0);
+  const prBonus = Math.round(Number(params.prBonus) || 0);
+  const reimbursement = Math.round(Number(params.reimbursement) || 0);
+  return Math.max(0, takeHome + tds - incentive - prBonus - reimbursement);
+}
+
 /** PT for a month: fixed rupees or recomputed from gross each iteration (slab PT). */
 export type ProfessionalTaxInput = number | ((grossForSlab: number) => number);
 
