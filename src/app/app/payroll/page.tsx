@@ -16,8 +16,6 @@ import {
   computePrivatePeriodCtc,
   computePrivateTakeHome,
   defaultSalaryBreakup,
-  isPfStatutorilyMandatory,
-  isWithinEsicWageCeiling,
 } from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import { privateEsicEligibleMerged, privatePfEligibleMerged } from "@/lib/payrollEligibility";
@@ -1798,37 +1796,7 @@ function PayrollPageContent() {
     if (!editMasterOpen) editMasterBreakupOverrideRef.current = false;
   }, [editMasterOpen]);
 
-  /** Private payroll master: align PF with policy unless the user checked/unchecked manually. */
-  useEffect(() => {
-    if (!editMasterOpen || editPayrollMode !== "private" || editMasterPfOverrideRef.current) return;
-    const cfg = normalizePrivatePayrollConfig(privatePayrollCfg);
-    const gross = parseFloat(editGross);
-    if (!Number.isFinite(gross) || gross <= 0) return;
-    const hra = defaultSalaryBreakup(gross, cfg).hra;
-    setEditPfEligible(isPfStatutorilyMandatory(gross, hra));
-  }, [editMasterOpen, editPayrollMode, editGross, privatePayrollCfg]);
-
-  /** Private payroll master: align ESIC with policy unless the user checked/unchecked manually. */
-  useEffect(() => {
-    if (!editMasterOpen || editPayrollMode !== "private" || editMasterEsicOverrideRef.current) return;
-    const cfg = normalizePrivatePayrollConfig(privatePayrollCfg);
-    const ptParsed = parseFloat(editPt);
-    const ptFallback = Number.isFinite(ptParsed) && ptParsed >= 0 ? ptParsed : companyPt;
-
-    const gross = parseFloat(editGross);
-    if (!Number.isFinite(gross) || gross <= 0) return;
-    const basic = defaultSalaryBreakup(gross, cfg).basic;
-    setEditEsicEligible(isWithinEsicWageCeiling(basic, cfg));
-  }, [
-    editMasterOpen,
-    editPayrollMode,
-    editGross,
-    editPfEligible,
-    editPt,
-    companyPt,
-    privatePayrollCfg,
-  ]);
-
+  /** Private payroll master edit: do not auto-sync PF/ESIC from salary policy — use values stored on the employee record. */
   const masterHasGovernment = useMemo(
     () => masterGrid.some((r) => r.payrollMode === "government"),
     [masterGrid]
@@ -1864,8 +1832,6 @@ function PayrollPageContent() {
 
   /** Opens the salary breakup modal from the current grid row (includes unsaved inline edits). */
   function openPayrollMasterEditDialog(gridRow: MasterGridRow, apiRow?: any) {
-    editMasterEsicOverrideRef.current = false;
-    editMasterPfOverrideRef.current = false;
     editMasterBreakupOverrideRef.current = false;
     setPayrollMasterHistory([]);
     const gross = gridRow.gross;
@@ -1907,12 +1873,11 @@ function PayrollPageContent() {
     setEditTrans(String(split.trans));
     setEditLta(String(split.lta));
     setEditPersonal(String(split.personal));
-    setEditPfEligible(
-      privatePfEligibleMerged({ pf_eligible: apiRow?.master?.pfEligible }, { pf_eligible: apiRow?.pfEligible }),
-    );
-    setEditEsicEligible(
-      privateEsicEligibleMerged({ esic_eligible: apiRow?.master?.esicEligible }, { esic_eligible: apiRow?.esicEligible }),
-    );
+    // Edit dialog: employee record (HRMS_users) is source of truth — do not merge with master or policy.
+    setEditPfEligible(apiRow?.pfEligible !== false);
+    setEditEsicEligible(apiRow?.esicEligible === true);
+    editMasterPfOverrideRef.current = true;
+    editMasterEsicOverrideRef.current = true;
     const curMasterStart = gridRow.effectiveStartDate ? String(gridRow.effectiveStartDate).slice(0, 10) : "";
     const defaultNewStart = curMasterStart ? dayAfterYmd(curMasterStart) : new Date().toISOString().slice(0, 10);
     setEditEffectiveDate(defaultNewStart);
