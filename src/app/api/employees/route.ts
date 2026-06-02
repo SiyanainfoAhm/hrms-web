@@ -270,7 +270,7 @@ export async function GET(request: NextRequest) {
         aadhaar: u.aadhaar ?? "",
         pan: u.pan ?? "",
         uanNumber: u.uan_number ?? "",
-        pfNumber: u.pf_number ?? "",
+        pfNumber: u.pf_number ?? u.cpf_number ?? "",
         esicNumber: u.esic_number ?? "",
         governmentPayLevel: u.government_pay_level != null ? Number(u.government_pay_level) : null,
         grossBasic: u.gross_salary != null ? Number(u.gross_salary) : null,

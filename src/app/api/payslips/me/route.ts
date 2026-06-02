@@ -38,7 +38,7 @@ export async function GET() {
       .single(),
     supabase
       .from("HRMS_users")
-      .select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number, department_id, government_pay_level")
+      .select("name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, cpf_number, esic_number, pf_eligible, esic_eligible, department_id, government_pay_level")
       .eq("id", session.id)
       .single(),
     supabase
@@ -136,8 +136,10 @@ export async function GET() {
           aadhaar: user.aadhaar ?? "",
           pan: user.pan ?? "",
           uanNumber: user.uan_number ?? "",
-          pfNumber: user.pf_number ?? "",
+          pfNumber: user.pf_number ?? user.cpf_number ?? "",
           esicNumber: user.esic_number ?? "",
+          pfEligible: user.pf_eligible !== false,
+          esicEligible: user.esic_eligible === true,
           governmentPayLevel: (user as { government_pay_level?: number | null }).government_pay_level ?? null,
         }
       : null,

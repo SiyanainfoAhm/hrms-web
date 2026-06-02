@@ -44,6 +44,29 @@ export function privatePayslipEarningsRows(
   ];
 }
 
+export type PayslipStatutoryUserFields = {
+  uanNumber?: string | null;
+  pfNumber?: string | null;
+  cpfNumber?: string | null;
+  esicNumber?: string | null;
+  pfEligible?: boolean | null;
+  esicEligible?: boolean | null;
+};
+
+/** Statutory ID rows for payslip header (shown when eligible or a value exists in DB). */
+export function payslipStatutoryIdLines(user: PayslipStatutoryUserFields | null | undefined): Array<{ label: string; value: string }> {
+  const uan = String(user?.uanNumber ?? "").trim();
+  const pf = String(user?.pfNumber ?? user?.cpfNumber ?? "").trim();
+  const esic = String(user?.esicNumber ?? "").trim();
+  const pfOn = user?.pfEligible !== false;
+  const esicOn = user?.esicEligible === true;
+  const lines: Array<{ label: string; value: string }> = [];
+  if (esicOn || esic) lines.push({ label: "ESIC number", value: esic });
+  if (pfOn || uan) lines.push({ label: "UAN number", value: uan });
+  if (pfOn || pf) lines.push({ label: "PF number", value: pf });
+  return lines;
+}
+
 export type PrivatePayslipSideColumns = {
   dedLabel: string;
   dedAmount: number | null | undefined;

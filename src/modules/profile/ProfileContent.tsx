@@ -15,6 +15,7 @@ import {
   privatePayslipEarningsRows,
   privatePayslipSideColumnsForRow,
 } from "@/lib/privatePayslipDisplay";
+import { PrivatePayslipStatutoryIds } from "@/components/payslip/PrivatePayslipStatutoryIds";
 import { normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 
 export function ProfileContent() {
@@ -1376,11 +1377,7 @@ export function ProfileContent() {
                               </div>
                             </td>
                             <td className={cellClass}>
-                              <div className="space-y-1.5 text-sm leading-relaxed">
-                                <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || ""}</div>
-                                <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || ""}</div>
-                                <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || ""}</div>
-                              </div>
+                              <PrivatePayslipStatutoryIds user={user} />
                             </td>
                           </tr>
                           <tr>

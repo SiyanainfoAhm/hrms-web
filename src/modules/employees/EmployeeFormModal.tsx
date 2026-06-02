@@ -88,6 +88,7 @@ export function EmployeeFormModal({
   const [offerDate, setOfferDate] = useState("");
   const [uanNumber, setUanNumber] = useState("");
   const [pfNumber, setPfNumber] = useState("");
+  const [esicNumber, setEsicNumber] = useState("");
   const [showGovernmentPayroll, setShowGovernmentPayroll] = useState(false);
   const [governmentPayLevel, setGovernmentPayLevel] = useState("");
   const [grossBasic, setGrossBasic] = useState("");
@@ -168,6 +169,7 @@ export function EmployeeFormModal({
     setOfferDate("");
     setUanNumber("");
     setPfNumber("");
+    setEsicNumber("");
     setShowGovernmentPayroll(false);
     setGovernmentPayLevel("");
     setGrossBasic("");
@@ -270,6 +272,7 @@ export function EmployeeFormModal({
         setPan(String(u.pan ?? ""));
         setUanNumber(String(u.uanNumber ?? ""));
         setPfNumber(String(u.pfNumber ?? u.cpfNumber ?? ""));
+        setEsicNumber(String(u.esicNumber ?? ""));
         setShowGovernmentPayroll(u.governmentPayLevel != null);
         setGovernmentPayLevel(u.governmentPayLevel != null ? String(u.governmentPayLevel) : "");
         setGrossBasic(u.grossBasic != null ? String(u.grossBasic) : "");
@@ -442,6 +445,7 @@ export function EmployeeFormModal({
         uanNumber: uanNumber || undefined,
         pfNumber: pfNumber.trim() || undefined,
         cpfNumber: pfNumber.trim() || undefined,
+        esicNumber: esicNumber.trim() || undefined,
         password: mode === "add" ? password.trim() || undefined : undefined,
         requestedDocumentIds: mode === "add" && requestedDocIds.length ? requestedDocIds : undefined
       };
@@ -985,6 +989,24 @@ export function EmployeeFormModal({
                           </label>
                         </div>
                       </label>
+                      {pfEligible && (
+                        <>
+                          <label className="text-sm">
+                            <span className="text-gray-600">UAN number</span>
+                            <input className={field} value={uanNumber} onChange={(e) => setUanNumber(e.target.value)} />
+                          </label>
+                          <label className="text-sm">
+                            <span className="text-gray-600">PF number</span>
+                            <input className={field} value={pfNumber} onChange={(e) => setPfNumber(e.target.value)} />
+                          </label>
+                        </>
+                      )}
+                      {esicEligible && (
+                        <label className="text-sm">
+                          <span className="text-gray-600">ESIC number</span>
+                          <input className={field} value={esicNumber} onChange={(e) => setEsicNumber(e.target.value)} />
+                        </label>
+                      )}
                       {privatePreview && (
                         <div className="sm:col-span-2 space-y-3 rounded-lg border border-gray-100 bg-gray-50 px-3 py-3">
                           <div className="text-xs font-semibold uppercase tracking-wide text-gray-500">Calculated preview</div>

@@ -48,7 +48,7 @@ function mapUser(row: any) {
     aadhaar: (row.aadhaar ?? "") as string,
     pan: (row.pan ?? "") as string,
     uanNumber: (row.uan_number ?? "") as string,
-    pfNumber: (row.pf_number ?? "") as string,
+    pfNumber: (row.pf_number ?? row.cpf_number ?? "") as string,
     esicNumber: (row.esic_number ?? "") as string,
   };
 }

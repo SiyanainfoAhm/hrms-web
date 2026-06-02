@@ -10,6 +10,7 @@ import {
   masterRowToDeductionDefaults,
 } from "@/lib/governmentPayroll";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
+import { statutoryIdPatchFromBody } from "@/lib/payrollEligibility";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -91,7 +92,7 @@ export async function GET(request: NextRequest) {
   const userIds = [...new Set((masters ?? []).map((m: any) => m.employee_user_id))];
   const { data: users } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, role, government_pay_level, bank_name, bank_account_holder_name, bank_account_number, bank_ifsc")
+    .select("id, name, email, role, government_pay_level, bank_name, bank_account_holder_name, bank_account_number, bank_ifsc, uan_number, pf_number, cpf_number, esic_number, pf_eligible, esic_eligible")
     .in("id", userIds);
   const userMap = new Map((users ?? []).map((u: any) => [u.id, u]));
 
@@ -111,6 +112,14 @@ export async function GET(request: NextRequest) {
         bankAccountHolderName: (u as { bank_account_holder_name?: string | null })?.bank_account_holder_name ?? "",
         bankAccountNumber: (u as { bank_account_number?: string | null })?.bank_account_number ?? "",
         bankIfsc: (u as { bank_ifsc?: string | null })?.bank_ifsc ?? "",
+        uanNumber: (u as { uan_number?: string | null })?.uan_number ?? "",
+        pfNumber:
+          (u as { pf_number?: string | null })?.pf_number ??
+          (u as { cpf_number?: string | null })?.cpf_number ??
+          "",
+        esicNumber: (u as { esic_number?: string | null })?.esic_number ?? "",
+        pfEligible: (u as { pf_eligible?: boolean | null })?.pf_eligible !== false,
+        esicEligible: (u as { esic_eligible?: boolean | null })?.esic_eligible === true,
         master: {
           id: m.id,
           payrollMode: (m.payroll_mode as string) || "private",
@@ -227,15 +236,18 @@ export async function PATCH(request: NextRequest) {
     const ifscErr = validateIndianIfsc(bankIfsc);
     if (ifscErr) return NextResponse.json({ error: ifscErr }, { status: 400 });
 
+    const userPatch: Record<string, string | null> = {
+      bank_name: bankName || null,
+      bank_account_holder_name: bankAccountHolderName || null,
+      bank_account_number: bankAccountNumber || null,
+      bank_ifsc: bankIfsc || null,
+      updated_at: new Date().toISOString(),
+      ...statutoryIdPatchFromBody(body),
+    };
+
     const { error: bankErr } = await supabase
       .from("HRMS_users")
-      .update({
-        bank_name: bankName || null,
-        bank_account_holder_name: bankAccountHolderName || null,
-        bank_account_number: bankAccountNumber || null,
-        bank_ifsc: bankIfsc || null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(userPatch)
       .eq("id", userId)
       .eq("company_id", meB.company_id);
     if (bankErr) return NextResponse.json({ error: bankErr.message }, { status: 400 });
@@ -514,7 +526,14 @@ export async function PATCH(request: NextRequest) {
 
   await supabase
     .from("HRMS_users")
-    .update({ ctc, gross_salary: grossSalary, pf_eligible: pfEligible, esic_eligible: esicEligible, updated_at: new Date().toISOString() })
+    .update({
+      ctc,
+      gross_salary: grossSalary,
+      pf_eligible: pfEligible,
+      esic_eligible: esicEligible,
+      updated_at: new Date().toISOString(),
+      ...statutoryIdPatchFromBody(body),
+    })
     .eq("id", userId);
 
   return NextResponse.json({ ok: true });

@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
   // Ensure employee belongs to the same company
   const { data: empUser, error: empErr } = await supabase
     .from("HRMS_users")
-    .select("id, company_id, name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, esic_number, department_id, government_pay_level")
+    .select("id, company_id, name, employee_code, designation, date_of_joining, aadhaar, pan, uan_number, pf_number, cpf_number, esic_number, pf_eligible, esic_eligible, department_id, government_pay_level")
     .eq("id", employeeUserId)
     .maybeSingle();
   if (empErr) return NextResponse.json({ error: empErr.message }, { status: 400 });
@@ -143,8 +143,10 @@ export async function GET(request: NextRequest) {
           aadhaar: (empUser as any).aadhaar ?? "",
           pan: (empUser as any).pan ?? "",
           uanNumber: (empUser as any).uan_number ?? "",
-          pfNumber: (empUser as any).pf_number ?? "",
+          pfNumber: (empUser as any).pf_number ?? (empUser as any).cpf_number ?? "",
           esicNumber: (empUser as any).esic_number ?? "",
+          pfEligible: (empUser as any).pf_eligible !== false,
+          esicEligible: (empUser as any).esic_eligible === true,
           governmentPayLevel: (empUser as any).government_pay_level ?? null,
         }
       : null,

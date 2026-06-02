@@ -20,6 +20,7 @@ import {
   isWithinEsicWageCeiling,
 } from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
+import { privateEsicEligibleMerged, privatePfEligibleMerged } from "@/lib/payrollEligibility";
 import {
   computeGovernmentMonthlyPayroll,
   deriveTransportSlabFromLevel,
@@ -42,6 +43,7 @@ import {
   privatePayslipEarningsRows,
   privatePayslipSideColumnsForRow,
 } from "@/lib/privatePayslipDisplay";
+import { PrivatePayslipStatutoryIds } from "@/components/payslip/PrivatePayslipStatutoryIds";
 
 type MasterGridRow = {
   employeeUserId: string;
@@ -527,6 +529,12 @@ function emptyGovFields(): Pick<
 function buildMasterGridRow(apiRow: any, companyPtFixed: number, privateCfg: ReturnType<typeof normalizePrivatePayrollConfig>): MasterGridRow | null {
   const m = apiRow.master;
   if (!m) return null;
+  const userPf = { pf_eligible: apiRow.pfEligible };
+  const userEsic = { esic_eligible: apiRow.esicEligible };
+  const masterPf = { pf_eligible: m.pfEligible };
+  const masterEsic = { esic_eligible: m.esicEligible };
+  const pfEligibleMerged = privatePfEligibleMerged(masterPf, userPf);
+  const esicEligibleMerged = privateEsicEligibleMerged(masterEsic, userEsic);
   const payrollMode = m.payrollMode === "government" ? "government" : "private";
   const governmentPayLevel =
     apiRow.governmentPayLevel != null && Number.isFinite(Number(apiRow.governmentPayLevel))
@@ -575,8 +583,8 @@ function buildMasterGridRow(apiRow: any, companyPtFixed: number, privateCfg: Ret
       incomeTaxDefault,
       advanceBonus,
       effectiveStartDate: m.effectiveStartDate ? String(m.effectiveStartDate).slice(0, 10) : "",
-      pfEligible: !!m.pfEligible,
-      esicEligible: !!m.esicEligible,
+      pfEligible: pfEligibleMerged,
+      esicEligible: esicEligibleMerged,
       daPercent,
       hraPercent,
       medicalFixed,
@@ -655,8 +663,8 @@ function buildMasterGridRow(apiRow: any, companyPtFixed: number, privateCfg: Ret
     incomeTaxDefault: tds,
     advanceBonus,
     effectiveStartDate: m.effectiveStartDate ? String(m.effectiveStartDate).slice(0, 10) : "",
-    pfEligible: !!m.pfEligible,
-    esicEligible: !!m.esicEligible,
+    pfEligible: pfEligibleMerged,
+    esicEligible: esicEligibleMerged,
     basic,
     hra,
     medical,
@@ -699,7 +707,7 @@ function PayrollPageContent() {
   const [editTrans, setEditTrans] = useState("");
   const [editLta, setEditLta] = useState("");
   const [editPersonal, setEditPersonal] = useState("");
-  const [editPfEligible, setEditPfEligible] = useState(false);
+  const [editPfEligible, setEditPfEligible] = useState(true);
   const [editEsicEligible, setEditEsicEligible] = useState(false);
   const [editEffectiveDate, setEditEffectiveDate] = useState("");
   /** Last calendar day the current (open) master row remains valid; new row starts next calendar day or later. */
@@ -727,6 +735,9 @@ function PayrollPageContent() {
   const [editBankAccountHolderName, setEditBankAccountHolderName] = useState("");
   const [editBankAccountNumber, setEditBankAccountNumber] = useState("");
   const [editBankIfsc, setEditBankIfsc] = useState("");
+  const [editUanNumber, setEditUanNumber] = useState("");
+  const [editPfNumber, setEditPfNumber] = useState("");
+  const [editEsicNumber, setEditEsicNumber] = useState("");
   const [editPayrollMode, setEditPayrollMode] = useState<"private" | "government">("private");
   const [editGrossBasic, setEditGrossBasic] = useState("");
   const [editDaPercent, setEditDaPercent] = useState("53");
@@ -875,6 +886,8 @@ function PayrollPageContent() {
       uanNumber: string;
       pfNumber: string;
       esicNumber: string;
+      pfEligible?: boolean;
+      esicEligible?: boolean;
     } | null;
     payslips: {
       id: string;
@@ -1878,6 +1891,9 @@ function PayrollPageContent() {
     setEditBankAccountHolderName(String(apiRow?.bankAccountHolderName ?? ""));
     setEditBankAccountNumber(String(apiRow?.bankAccountNumber ?? ""));
     setEditBankIfsc(String(apiRow?.bankIfsc ?? ""));
+    setEditUanNumber(String(apiRow?.uanNumber ?? ""));
+    setEditPfNumber(String(apiRow?.pfNumber ?? ""));
+    setEditEsicNumber(String(apiRow?.esicNumber ?? ""));
     setEditMasterOpen({
       employeeUserId: gridRow.employeeUserId,
       employeeName: gridRow.employeeName,
@@ -1891,8 +1907,12 @@ function PayrollPageContent() {
     setEditTrans(String(split.trans));
     setEditLta(String(split.lta));
     setEditPersonal(String(split.personal));
-    setEditPfEligible(gridRow.pfEligible);
-    setEditEsicEligible(gridRow.esicEligible);
+    setEditPfEligible(
+      privatePfEligibleMerged({ pf_eligible: apiRow?.master?.pfEligible }, { pf_eligible: apiRow?.pfEligible }),
+    );
+    setEditEsicEligible(
+      privateEsicEligibleMerged({ esic_eligible: apiRow?.master?.esicEligible }, { esic_eligible: apiRow?.esicEligible }),
+    );
     const curMasterStart = gridRow.effectiveStartDate ? String(gridRow.effectiveStartDate).slice(0, 10) : "";
     const defaultNewStart = curMasterStart ? dayAfterYmd(curMasterStart) : new Date().toISOString().slice(0, 10);
     setEditEffectiveDate(defaultNewStart);
@@ -2037,16 +2057,31 @@ function PayrollPageContent() {
           bankAccountHolderName: editBankAccountHolderName,
           bankAccountNumber: editBankAccountNumber,
           bankIfsc: editBankIfsc,
+          uanNumber: editUanNumber,
+          pfNumber: editPfNumber,
+          esicNumber: editEsicNumber,
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save bank details");
       showToast("success", "Bank details updated");
+      const savedEmployeeId = editMasterOpen.employeeUserId;
       setEditMasterOpen(null);
       setEditMasterTab("structure");
       const refresh = await fetch("/api/payroll/master");
       const refreshData = await refresh.json();
       if (refresh.ok) setMasters(refreshData.masters || []);
+      if (tab === "slips" && selectedEmployeeId === savedEmployeeId) {
+        const slipRes = await fetch(`/api/payslips/employee?employeeUserId=${encodeURIComponent(savedEmployeeId)}`);
+        const slipData = await slipRes.json();
+        if (slipRes.ok) {
+          setSlipsData({
+            company: slipData.company,
+            user: slipData.user,
+            payslips: slipData.payslips || [],
+          });
+        }
+      }
     } catch (e: any) {
       showToast("error", e?.message || "Failed to save bank details");
     } finally {
@@ -2162,6 +2197,9 @@ function PayrollPageContent() {
           tds,
           advanceBonus,
           previousEffectiveEndDate: pe,
+          uanNumber: editUanNumber,
+          pfNumber: editPfNumber,
+          esicNumber: editEsicNumber,
         }),
       });
       const data = await res.json();
@@ -3025,6 +3063,47 @@ function PayrollPageContent() {
                         maxLength={11}
                       />
                     </div>
+                    {(editPfEligible || editEsicEligible) && (
+                      <div className="space-y-4 border-t border-slate-100 pt-4">
+                        <p className="text-sm font-medium text-slate-800">Statutory IDs (shown on payslip)</p>
+                        {editPfEligible && (
+                          <>
+                            <div>
+                              <label className="mb-1 block text-sm font-medium text-slate-700">UAN number</label>
+                              <input
+                                type="text"
+                                value={editUanNumber}
+                                onChange={(e) => setEditUanNumber(e.target.value)}
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                autoComplete="off"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-sm font-medium text-slate-700">PF number</label>
+                              <input
+                                type="text"
+                                value={editPfNumber}
+                                onChange={(e) => setEditPfNumber(e.target.value)}
+                                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                autoComplete="off"
+                              />
+                            </div>
+                          </>
+                        )}
+                        {editEsicEligible && (
+                          <div>
+                            <label className="mb-1 block text-sm font-medium text-slate-700">ESIC number</label>
+                            <input
+                              type="text"
+                              value={editEsicNumber}
+                              onChange={(e) => setEditEsicNumber(e.target.value)}
+                              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                              autoComplete="off"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -3432,6 +3511,47 @@ function PayrollPageContent() {
                             />
                           </div>
                         </div>
+                        {(editPfEligible || editEsicEligible) && (
+                          <div className="space-y-4 border-t border-slate-100 pt-4">
+                            <p className="text-sm font-medium text-slate-800">Statutory IDs (shown on payslip)</p>
+                            {editPfEligible && (
+                              <>
+                                <div>
+                                  <label className="mb-1 block text-sm font-medium text-slate-700">UAN number</label>
+                                  <input
+                                    type="text"
+                                    value={editUanNumber}
+                                    onChange={(e) => setEditUanNumber(e.target.value)}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                    autoComplete="off"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="mb-1 block text-sm font-medium text-slate-700">PF number</label>
+                                  <input
+                                    type="text"
+                                    value={editPfNumber}
+                                    onChange={(e) => setEditPfNumber(e.target.value)}
+                                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                    autoComplete="off"
+                                  />
+                                </div>
+                              </>
+                            )}
+                            {editEsicEligible && (
+                              <div>
+                                <label className="mb-1 block text-sm font-medium text-slate-700">ESIC number</label>
+                                <input
+                                  type="text"
+                                  value={editEsicNumber}
+                                  onChange={(e) => setEditEsicNumber(e.target.value)}
+                                  className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm"
+                                  autoComplete="off"
+                                />
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </>
                     ) : (
                       <div>
@@ -4252,11 +4372,7 @@ function PayrollPageContent() {
                           </div>
                         </td>
                         <td className={cellClass}>
-                          <div className="space-y-1.5 text-sm leading-relaxed">
-                            <div><span className="text-slate-600">ESIC number:</span> {user?.esicNumber || ""}</div>
-                            <div><span className="text-slate-600">UAN number:</span> {user?.uanNumber || ""}</div>
-                            <div><span className="text-slate-600">PF number:</span> {user?.pfNumber || ""}</div>
-                          </div>
+                          <PrivatePayslipStatutoryIds user={user} />
                         </td>
                       </tr>
                       <tr>
