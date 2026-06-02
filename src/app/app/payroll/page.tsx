@@ -38,6 +38,10 @@ import { downloadPdfFromElement, formatCompanyForPayrollExport } from "@/lib/pay
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
 import { normalizePayDaysHalfStepAndClamp } from "@/lib/payrollExcelExport";
+import {
+  privatePayslipEarningsRows,
+  privatePayslipSideColumnsForRow,
+} from "@/lib/privatePayslipDisplay";
 
 type MasterGridRow = {
   employeeUserId: string;
@@ -4146,6 +4150,17 @@ function PayrollPageContent() {
 
               const cellClass = "border border-black px-3 py-2 align-top text-sm";
               const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
+              const payslipCfg = normalizePrivatePayrollConfig(privatePayrollCfg);
+              const earningsRows = privatePayslipEarningsRows(slip, payslipCfg, key);
+              const sideAmounts = {
+                professionalTax: slip.professionalTax,
+                pfEmployee: slip.pfEmployee,
+                esicEmployee: slip.esicEmployee,
+                tds: slip.tds,
+                prBonus: slip.prBonus,
+                incentive: slip.incentive,
+                reimbursement: slip.reimbursement,
+              };
 
               const gov = slip.governmentMonthly;
               if (gov) {
@@ -4263,55 +4278,37 @@ function PayrollPageContent() {
                                 </tr>
                               </thead>
                               <tbody>
-                                <tr>
-                                  <td className={cellClass}>Basic</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.basic)}</td>
-                                  <td className={cellClass}>Professional Tax</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
-                                  <td className={cellClass}>Bonus</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
-                                </tr>
-                                <tr>
-                                  <td className={cellClass}>HRA</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.hra)}</td>
-                                  <td className={cellClass}>PF</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
-                                  <td className={cellClass}>Incentive</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
-                                </tr>
-                                <tr>
-                                  <td className={cellClass}>Medical</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.medical)}</td>
-                                  <td className={cellClass}>ESIC</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
-                                  <td className={cellClass}>Reimbursement</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
-                                </tr>
-                                <tr>
-                                  <td className={cellClass}>Trans</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.trans)}</td>
-                                  <td className={cellClass}>TDS</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.tds ?? 0)}</td>
-                                  <td colSpan={2} className={cellClass}></td>
-                                </tr>
-                                <tr>
-                                  <td className={cellClass}>LTA</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.lta)}</td>
-                                  <td colSpan={2} className={cellClass}></td>
-                                  <td colSpan={2} className={cellClass}></td>
-                                </tr>
-                                <tr>
-                                  <td className={cellClass}>Personal</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
-                                  <td className={`${cellClass} text-right`}>{n(slip.personal)}</td>
-                                  <td colSpan={2} className={cellClass}></td>
-                                  <td colSpan={2} className={cellClass}></td>
-                                </tr>
+                                {earningsRows.map(([label, val], idx) => {
+                                  const side = privatePayslipSideColumnsForRow(idx, sideAmounts);
+                                  return (
+                                    <tr key={label}>
+                                      <td className={cellClass}>{label}</td>
+                                      <td className={`${cellClass} text-right`}>{n(val)}</td>
+                                      <td className={`${cellClass} text-right`}>{n(val)}</td>
+                                      {side ? (
+                                        side.perfEmpty ? (
+                                          <>
+                                            <td className={cellClass}>{side.dedLabel}</td>
+                                            <td className={`${cellClass} text-right`}>{n(side.dedAmount)}</td>
+                                            <td colSpan={2} className={cellClass}></td>
+                                          </>
+                                        ) : (
+                                          <>
+                                            <td className={cellClass}>{side.dedLabel}</td>
+                                            <td className={`${cellClass} text-right`}>{n(side.dedAmount)}</td>
+                                            <td className={cellClass}>{side.perfLabel}</td>
+                                            <td className={`${cellClass} text-right`}>{n(side.perfAmount)}</td>
+                                          </>
+                                        )
+                                      ) : (
+                                        <>
+                                          <td colSpan={2} className={cellClass}></td>
+                                          <td colSpan={2} className={cellClass}></td>
+                                        </>
+                                      )}
+                                    </tr>
+                                  );
+                                })}
                                 <tr>
                                   <td className={`${cellClass} font-medium`}>GROSS</td>
                                   <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>

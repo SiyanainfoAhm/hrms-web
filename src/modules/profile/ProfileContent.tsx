@@ -11,6 +11,11 @@ import { fmtDmy } from "@/lib/dateFormat";
 import { GovernmentPayslipPrint } from "@/components/payslip/GovernmentPayslipPrint";
 import type { GovernmentMonthlySlip } from "@/lib/governmentPayslipLayout";
 import type { GovernmentLeavePayslipDisplay } from "@/lib/leaveBalancesCompute";
+import {
+  privatePayslipEarningsRows,
+  privatePayslipSideColumnsForRow,
+} from "@/lib/privatePayslipDisplay";
+import { normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 
 export function ProfileContent() {
   const { role } = useHrmsSession();
@@ -1238,7 +1243,7 @@ export function ProfileContent() {
                   const slip = payslipsData.payslips.find((p) => p.periodMonth === key);
                   const company = payslipsData.company;
                   const user = payslipsData.user;
-                  const cfg = payslipsData.privatePayrollConfig;
+                  const cfg = normalizePrivatePayrollConfig(payslipsData.privatePayrollConfig);
 
                   if (!slip) {
                     return <p className="muted">No payslip for the selected period.</p>;
@@ -1304,26 +1309,16 @@ export function ProfileContent() {
 
                   const cellClass = "border border-black px-3 py-2 align-top text-sm";
                   const thClass = "border border-black px-3 py-2 text-left font-semibold text-sm";
-                  const effYm = cfg?.payslipEarningsEffectiveFromYm ?? "";
-                  const mode = cfg?.payslipEarningsMode ?? "classic";
-                  const useCompactHeads =
-                    mode === "basic_hra_advance_special" && /^\d{4}-\d{2}$/.test(effYm) && slip.periodMonth >= effYm;
-
-                  const earningsRows = useCompactHeads
-                    ? ([
-                        ["Basic + DA", slip.basic],
-                        ["HRA", slip.hra],
-                        ["Advance bonus", slip.medical],
-                        ["Special allowance", slip.personal],
-                      ] as const)
-                    : ([
-                        ["Basic", slip.basic],
-                        ["HRA", slip.hra],
-                        ["Medical", slip.medical],
-                        ["Trans", slip.trans],
-                        ["LTA", slip.lta],
-                        ["Personal", slip.personal],
-                      ] as const);
+                  const earningsRows = privatePayslipEarningsRows(slip, cfg, slip.periodMonth);
+                  const sideAmounts = {
+                    professionalTax: slip.professionalTax,
+                    pfEmployee: slip.pfEmployee,
+                    esicEmployee: slip.esicEmployee,
+                    tds: slip.tds,
+                    prBonus: slip.prBonus,
+                    incentive: slip.incentive,
+                    reimbursement: slip.reimbursement,
+                  };
 
                   return (
                     <div ref={payslipRef} className="payslip-print-area overflow-x-auto rounded-lg border border-black bg-white p-6 print:overflow-visible print:max-w-[190mm]" style={{ minWidth: "min(100%, 190mm)" }}>
@@ -1413,40 +1408,37 @@ export function ProfileContent() {
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {earningsRows.map(([label, val], idx) => (
-                                    <tr key={label}>
-                                      <td className={cellClass}>{label}</td>
-                                      <td className={`${cellClass} text-right`}>{n(val)}</td>
-                                      <td className={`${cellClass} text-right`}>{n(val)}</td>
-                                      {idx === 0 ? (
-                                        <>
-                                          <td className={cellClass}>Professional Tax</td>
-                                          <td className={`${cellClass} text-right`}>{n(slip.professionalTax)}</td>
-                                          <td className={cellClass}>Bonus</td>
-                                          <td className={`${cellClass} text-right`}>{n(slip.prBonus)}</td>
-                                        </>
-                                      ) : idx === 1 ? (
-                                        <>
-                                          <td className={cellClass}>PF</td>
-                                          <td className={`${cellClass} text-right`}>{n(slip.pfEmployee)}</td>
-                                          <td className={cellClass}>Incentive</td>
-                                          <td className={`${cellClass} text-right`}>{n(slip.incentive)}</td>
-                                        </>
-                                      ) : idx === 2 ? (
-                                        <>
-                                          <td className={cellClass}>ESIC</td>
-                                          <td className={`${cellClass} text-right`}>{n(slip.esicEmployee)}</td>
-                                          <td className={cellClass}>Reimbursement</td>
-                                          <td className={`${cellClass} text-right`}>{n(slip.reimbursement)}</td>
-                                        </>
-                                      ) : (
-                                        <>
-                                          <td colSpan={2} className={cellClass}></td>
-                                          <td colSpan={2} className={cellClass}></td>
-                                        </>
-                                      )}
-                                    </tr>
-                                  ))}
+                                  {earningsRows.map(([label, val], idx) => {
+                                    const side = privatePayslipSideColumnsForRow(idx, sideAmounts);
+                                    return (
+                                      <tr key={label}>
+                                        <td className={cellClass}>{label}</td>
+                                        <td className={`${cellClass} text-right`}>{n(val)}</td>
+                                        <td className={`${cellClass} text-right`}>{n(val)}</td>
+                                        {side ? (
+                                          side.perfEmpty ? (
+                                            <>
+                                              <td className={cellClass}>{side.dedLabel}</td>
+                                              <td className={`${cellClass} text-right`}>{n(side.dedAmount)}</td>
+                                              <td colSpan={2} className={cellClass}></td>
+                                            </>
+                                          ) : (
+                                            <>
+                                              <td className={cellClass}>{side.dedLabel}</td>
+                                              <td className={`${cellClass} text-right`}>{n(side.dedAmount)}</td>
+                                              <td className={cellClass}>{side.perfLabel}</td>
+                                              <td className={`${cellClass} text-right`}>{n(side.perfAmount)}</td>
+                                            </>
+                                          )
+                                        ) : (
+                                          <>
+                                            <td colSpan={2} className={cellClass}></td>
+                                            <td colSpan={2} className={cellClass}></td>
+                                          </>
+                                        )}
+                                      </tr>
+                                    );
+                                  })}
                                   <tr>
                                     <td className={`${cellClass} font-medium`}>GROSS</td>
                                     <td className={`${cellClass} text-right font-medium`}>{n(slip.grossPay)}</td>
