@@ -8,6 +8,21 @@ import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/common/S
 import { normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
 import Image from "next/image";
 import { AccountDeletionRequestsPanel } from "@/components/settings/AccountDeletionRequestsPanel";
+import type { RoleId } from "@/config/roleConfig";
+import {
+  CUSTOM_ROLE_ACCESS_LEVELS,
+  accessLevelLabel,
+  isBuiltInCompanyRole,
+  permissionLabels,
+  permissionsForAccessLevel,
+} from "@/lib/companyRoles";
+
+const emptyRoleForm = () => ({
+  id: "",
+  name: "",
+  description: "",
+  accessLevel: "employee" as RoleId,
+});
 
 export function SettingsContent() {
   const { role } = useHrmsSession();
@@ -680,7 +695,11 @@ export function SettingsContent() {
   const [divisionForm, setDivisionForm] = useState({ id: "", name: "", description: "" });
   const [departmentForm, setDepartmentForm] = useState({ id: "", name: "", description: "", divisionId: "" });
   const [designationForm, setDesignationForm] = useState({ id: "", title: "", level: "" });
-  const [roleForm, setRoleForm] = useState({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
+  const [roleForm, setRoleForm] = useState(emptyRoleForm);
+  const roleFormPermissions = useMemo(
+    () => permissionsForAccessLevel(roleForm.accessLevel),
+    [roleForm.accessLevel],
+  );
 
   useEffect(() => {
     if (activeTab === "company") return;
@@ -730,7 +749,13 @@ export function SettingsContent() {
 
   async function refreshRoles() {
     const res = await fetch("/api/settings/roles");
-    const data = await res.json();
+    const raw = await res.text();
+    let data: { error?: string; roles?: unknown[] } = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      throw new Error(res.ok ? "Invalid roles response from server" : `Failed to load roles (${res.status})`);
+    }
     if (!res.ok) throw new Error(data?.error || "Failed to load roles");
     setRoles(data.roles || []);
   }
@@ -777,8 +802,8 @@ export function SettingsContent() {
 
   async function openRoles() {
     setModuleError(null);
-    setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
-    setIsRolesDialogOpen(true);
+                      setRoleForm(emptyRoleForm());
+                      setIsRolesDialogOpen(true);
     try {
       await refreshRoles();
     } catch (e: any) {
@@ -919,7 +944,7 @@ export function SettingsContent() {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save role");
       await refreshRoles();
-      setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
+      setRoleForm(emptyRoleForm());
       setIsRolesDialogOpen(false);
       if (isSuperAdmin) showToast("success", "Settings updated successfully");
     } catch (e: any) {
@@ -1762,7 +1787,9 @@ export function SettingsContent() {
               <div className="flex items-start justify-between gap-4">
                 <div>
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">Roles</h2>
-                  <p className="muted">Default roles (Super Admin/Admin/HR/Manager) cannot be deleted.</p>
+                  <p className="muted">
+                    Built-in roles (Super Admin, Admin, HR, Manager) cannot be edited or deleted. Add custom roles with an access level (Employee, Manager, HR, or Admin).
+                  </p>
                 </div>
                 {canManage && (
                   <button
@@ -1770,7 +1797,7 @@ export function SettingsContent() {
                     className="btn btn-primary"
                     onClick={() => {
                       setModuleError(null);
-                      setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false });
+                      setRoleForm(emptyRoleForm());
                       setIsRolesDialogOpen(true);
                     }}
                   >
@@ -1789,64 +1816,66 @@ export function SettingsContent() {
                       <tr>
                         <th className="px-3 py-2">Key</th>
                         <th className="px-3 py-2">Name</th>
-                        <th className="px-3 py-2">Default</th>
+                        <th className="px-3 py-2">Access level</th>
+                        <th className="px-3 py-2">Type</th>
                         <th className="px-3 py-2">Status</th>
                         <th className="px-3 py-2">Actions</th>
                       </tr>
                     </thead>
                     <tbody>
                       {roles.map((r) => {
-                        const isProtected =
-                          r.is_default || r.role_key === "super_admin" || r.role_key === "admin" || r.role_key === "hr" || r.role_key === "manager";
+                        const isBuiltin = isBuiltInCompanyRole(r);
                         return (
                           <tr key={r.id} className="border-t border-slate-200">
-                            <td className="px-3 py-2">{r.role_key}</td>
+                            <td className="px-3 py-2 font-mono text-xs">{r.role_key}</td>
                             <td className="px-3 py-2">{r.name}</td>
-                            <td className="px-3 py-2">{r.is_default ? "Yes" : "No"}</td>
+                            <td className="px-3 py-2">{r.access_level_label ?? accessLevelLabel(String(r.role_key))}</td>
+                            <td className="px-3 py-2">{isBuiltin ? "Built-in" : "Custom"}</td>
                             <td className="px-3 py-2">{r.is_active === false ? "Inactive" : "Active"}</td>
                             <td className="px-3 py-2">
-                              <div className="flex flex-wrap gap-2">
-                                {canManage && (
-                                  <button
-                                    type="button"
-                                    className="btn btn-outline"
-                                    onClick={() => {
-                                      setRoleForm({
-                                        id: r.id,
-                                        roleKey: r.role_key,
-                                        name: r.name,
-                                        description: r.description ?? "",
-                                        isDefault: Boolean(r.is_default),
-                                      });
-                                      setIsRolesDialogOpen(true);
-                                    }}
-                                  >
-                                    Edit
-                                  </button>
-                                )}
-                                {isSuperAdmin && (
-                                  <>
+                              {isBuiltin ? (
+                                <span className="text-sm text-slate-500">—</span>
+                              ) : (
+                                <div className="flex flex-wrap gap-2">
+                                  {canManage && (
                                     <button
                                       type="button"
                                       className="btn btn-outline"
-                                      disabled={moduleSaving || isProtected}
-                                      onClick={() => toggleActive("roles", r.id, r.is_active === false)}
-                                      title={isProtected ? "Default roles cannot be deactivated" : undefined}
+                                      onClick={() => {
+                                        setRoleForm({
+                                          id: r.id,
+                                          name: r.name,
+                                          description: r.description ?? "",
+                                          accessLevel: (r.role_key as RoleId) || "employee",
+                                        });
+                                        setIsRolesDialogOpen(true);
+                                      }}
                                     >
-                                      {r.is_active === false ? "Activate" : "Deactivate"}
+                                      Edit
                                     </button>
-                                    <button
-                                      type="button"
-                                      className="btn btn-outline"
-                                      disabled={moduleSaving || isProtected}
-                                      onClick={() => deleteItem("roles", r.id)}
-                                      title={isProtected ? "Default roles cannot be deleted" : undefined}
-                                    >
-                                      Delete
-                                    </button>
-                                  </>
-                                )}
-                              </div>
+                                  )}
+                                  {isSuperAdmin && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline"
+                                        disabled={moduleSaving}
+                                        onClick={() => toggleActive("roles", r.id, r.is_active === false)}
+                                      >
+                                        {r.is_active === false ? "Activate" : "Deactivate"}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline"
+                                        disabled={moduleSaving}
+                                        onClick={() => deleteItem("roles", r.id)}
+                                      >
+                                        Delete
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                              )}
                             </td>
                           </tr>
                         );
@@ -2943,7 +2972,9 @@ export function SettingsContent() {
             <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-200 px-5 py-4">
               <div>
                 <h2 className="text-lg font-semibold text-slate-900">Role management</h2>
-                <p className="text-sm text-slate-500">Add and edit roles for this company.</p>
+                <p className="text-sm text-slate-500">
+                  {roleForm.id ? "Edit custom role access and name." : "Create a custom role and choose its access level."}
+                </p>
               </div>
               <button type="button" className="btn btn-outline" onClick={() => setIsRolesDialogOpen(false)}>
                 Close
@@ -2952,21 +2983,6 @@ export function SettingsContent() {
             <div className="max-h-[75vh] overflow-y-auto p-5 space-y-4">
               {moduleError && <p className="text-sm text-red-600">{moduleError}</p>}
               <form onSubmit={saveRole} className="card grid grid-cols-1 gap-4 md:grid-cols-4">
-                <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Role key</label>
-                  <select
-                    value={roleForm.roleKey}
-                    disabled={Boolean(roleForm.id)}
-                    onChange={(e) => setRoleForm((p) => ({ ...p, roleKey: e.target.value }))}
-                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 disabled:bg-slate-50"
-                  >
-                    <option value="employee">employee</option>
-                    <option value="manager">manager</option>
-                    <option value="hr">hr</option>
-                    <option value="admin">admin</option>
-                    <option value="super_admin">super_admin</option>
-                  </select>
-                </div>
                 <div className="md:col-span-2">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Display name</label>
                   <input
@@ -2974,19 +2990,26 @@ export function SettingsContent() {
                     required
                     value={roleForm.name}
                     onChange={(e) => setRoleForm((p) => ({ ...p, name: e.target.value }))}
+                    placeholder="e.g. Field staff, Team lead"
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
-                <div className="md:col-span-1">
-                  <label className="mb-1 block text-sm font-medium text-slate-700">Default</label>
-                  <label className="flex items-center gap-2 text-sm text-slate-700 mt-2">
-                    <input
-                      type="checkbox"
-                      checked={roleForm.isDefault}
-                      onChange={(e) => setRoleForm((p) => ({ ...p, isDefault: e.target.checked }))}
-                    />
-                    Is default
-                  </label>
+                <div className="md:col-span-2">
+                  <label className="mb-1 block text-sm font-medium text-slate-700">Access level</label>
+                  <select
+                    value={roleForm.accessLevel}
+                    onChange={(e) => setRoleForm((p) => ({ ...p, accessLevel: e.target.value as RoleId }))}
+                    className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    {CUSTOM_ROLE_ACCESS_LEVELS.map((level) => (
+                      <option key={level} value={level}>
+                        {accessLevelLabel(level)}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Same rights as the {accessLevelLabel(roleForm.accessLevel)} system role.
+                  </p>
                 </div>
                 <div className="md:col-span-4">
                   <label className="mb-1 block text-sm font-medium text-slate-700">Description (optional)</label>
@@ -2997,6 +3020,19 @@ export function SettingsContent() {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
                   />
                 </div>
+                <div className="md:col-span-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+                  <p className="mb-2 text-sm font-medium text-slate-800">Permissions included</p>
+                  <ul className="flex flex-wrap gap-2">
+                    {roleFormPermissions.map((perm) => (
+                      <li
+                        key={perm}
+                        className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-700"
+                      >
+                        {permissionLabels[perm]}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
                 <div className="md:col-span-4 flex justify-between">
                   <div />
                   <div className="flex gap-2">
@@ -3004,7 +3040,7 @@ export function SettingsContent() {
                       <button
                         type="button"
                         className="btn btn-outline"
-                        onClick={() => setRoleForm({ id: "", roleKey: "employee", name: "", description: "", isDefault: false })}
+                        onClick={() => setRoleForm(emptyRoleForm())}
                       >
                         Cancel edit
                       </button>
