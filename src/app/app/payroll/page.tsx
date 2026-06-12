@@ -928,10 +928,11 @@ function PayrollPageContent() {
 
   useEffect(() => {
     const denom =
+      preview?.daysInMonth ??
+      preview?.workingDaysInFullMonth ??
       preview?.salaryProrationDays ??
       preview?.workingDaysThroughRunDay ??
-      preview?.daysInMonth ??
-      preview?.workingDaysInFullMonth;
+      30;
     if (preview?.rows?.length && denom) {
       setEditableRows(
         preview.rows.map((r: any) => ({
@@ -1216,10 +1217,11 @@ function PayrollPageContent() {
     value: number
   ) {
     const payDenom =
+      preview?.daysInMonth ??
+      preview?.workingDaysInFullMonth ??
       preview?.salaryProrationDays ??
       preview?.workingDaysThroughRunDay ??
       preview?.effectiveRunDay ??
-      preview?.daysInMonth ??
       30;
     const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
     const govPayDaysMax = preview?.daysInMonth ?? 31;
@@ -3709,7 +3711,7 @@ function PayrollPageContent() {
                 <p className="text-xs text-slate-600">
                   Days in full month: {preview.daysInMonth}
                   {preview.salaryProrationDays != null
-                    ? ` · Payroll period days (proration): ${preview.salaryProrationDays}`
+                    ? ` · Days through run date: ${preview.salaryProrationDays}`
                     : null}
                   {preview.effectiveRunDay != null ? ` · Through selected run date: ${preview.effectiveRunDay}` : null}
                 </p>
@@ -3768,8 +3770,8 @@ function PayrollPageContent() {
                         ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
                         : "Payroll generated for this period. Values are read-only."
                       : previewAllGovernment
-                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days use the calendar month (see Days column max). Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. For now, default pay days follow calendar days (including holidays) minus unpaid leave days."}
+                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days = weekends + holidays + paid leave + weekdays with gross hours ≥ 9h. Changing days recomputes Basic, DA, HRA, CPF, and totals."
+                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. Default pay days = weekends + holidays + paid leave + weekdays with gross hours ≥ 9h, minus unpaid leave. Salary = monthly amount × pay days ÷ days in month."}
                   </p>
                   {previewAllGovernment && preview?.daysInMonth ? (
                     <GovernmentRunPreviewTable
