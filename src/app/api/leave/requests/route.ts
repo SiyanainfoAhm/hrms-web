@@ -5,13 +5,8 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import { istTodayYmd } from "@/lib/istCalendar";
-import {
-  asOfYmdForLeaveEntitlementBooking,
-  computeEntitled,
-  computeUsedDaysForYear,
-  leaveYearStart,
-  type LeavePolicy,
-} from "@/lib/leavePolicy";
+import { type ApprovedLeave } from "@/lib/leavePolicy";
+import { computeLeavePaidUnpaidSplit, leavePolicyFromRow } from "@/lib/leavePaidUnpaidSplit";
 import { notifyLeaveRequestCreated, notifyLeaveRequestDecided } from "@/lib/hrmsTransactionNotify";
 import { computeLeaveBookingSummary, type HolidayRow } from "@/lib/leaveBookingDays";
 
@@ -42,6 +37,8 @@ function mapLeaveRow(
     startDate: String(r.start_date),
     endDate: String(r.end_date),
     totalDays: r.total_days,
+    paidDays: r.paid_days,
+    unpaidDays: r.unpaid_days,
     reason: r.reason as string | null,
     status: r.status as string,
     createdAt: new Date(r.created_at).toISOString(),
@@ -296,46 +293,31 @@ export async function POST(request: NextRequest) {
   }
 
   // Compute paid vs unpaid days for payroll: excess beyond balance = unpaid
-  let paidDays = totalDays;
-  let unpaidDays = 0;
-  if (lt.is_paid === false) {
-    paidDays = 0;
-    unpaidDays = totalDays;
-  } else {
-    const pRaw = Array.isArray((lt as any).HRMS_leave_policies) ? (lt as any).HRMS_leave_policies[0] : (lt as any).HRMS_leave_policies;
-    if (pRaw) {
-      const policy: LeavePolicy = {
-        leave_type_id: leaveTypeId,
-        accrual_method: pRaw.accrual_method,
-        monthly_accrual_rate: pRaw.monthly_accrual_rate,
-        annual_quota: pRaw.annual_quota,
-        prorate_on_join: Boolean(pRaw.prorate_on_join),
-        reset_month: Number(pRaw.reset_month ?? 1),
-        reset_day: Number(pRaw.reset_day ?? 1),
-        allow_carryover: Boolean(pRaw.allow_carryover),
-        carryover_limit: pRaw.carryover_limit,
-      };
+  const pRaw = Array.isArray((lt as any).HRMS_leave_policies)
+    ? (lt as any).HRMS_leave_policies[0]
+    : (lt as any).HRMS_leave_policies;
+  const policy = leavePolicyFromRow(leaveTypeId, pRaw);
 
-      const asOfYmd = asOfYmdForLeaveEntitlementBooking(startDate, istTodayYmd());
-      const asOf = new Date(asOfYmd + "T00:00:00Z");
-      const joinDate = targetJoinDate ? new Date(targetJoinDate + "T00:00:00Z") : null;
-      const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
-      const yearEndExclusive = new Date(Date.UTC(yearStart.getUTCFullYear() + 1, yearStart.getUTCMonth(), yearStart.getUTCDate(), 0, 0, 0, 0));
+  const { data: approvedLeaves, error: usedErr } = await supabase
+    .from("HRMS_leave_requests")
+    .select("leave_type_id, start_date, end_date, total_days")
+    .eq("company_id", me.company_id)
+    .eq("employee_user_id", targetEmployeeUserId)
+    .eq("status", "approved");
+  if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
 
-      const { data: approvedLeaves, error: usedErr } = await supabase
-        .from("HRMS_leave_requests")
-        .select("leave_type_id, start_date, end_date, total_days")
-        .eq("company_id", me.company_id)
-        .eq("employee_user_id", targetEmployeeUserId)
-        .eq("status", "approved");
-      if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
-
-      const entitled = computeEntitled(policy, joinDate, asOf);
-      const remaining = entitled == null ? totalDays : Math.max(0, entitled - computeUsedDaysForYear(approvedLeaves ?? [], leaveTypeId, yearStart, yearEndExclusive));
-      paidDays = Math.min(totalDays, remaining);
-      unpaidDays = totalDays - paidDays;
-    }
-  }
+  const split = computeLeavePaidUnpaidSplit({
+    totalDays,
+    startDateYmd: startDate,
+    leaveTypeId,
+    isPaidLeaveType: lt.is_paid !== false,
+    policy,
+    joinDateYmd: targetJoinDate,
+    todayYmd: istTodayYmd(),
+    approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
+  });
+  const paidDays = split.paidDays;
+  const unpaidDays = split.unpaidDays;
 
   const now = new Date().toISOString();
   const autoApprove = isApprover(session.role);
@@ -395,10 +377,69 @@ export async function PATCH(request: NextRequest) {
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
+  const { data: existing, error: fetchErr } = await supabase
+    .from("HRMS_leave_requests")
+    .select(
+      "id, company_id, employee_user_id, leave_type_id, start_date, end_date, total_days, status, HRMS_leave_types(id, is_paid, HRMS_leave_policies(*))",
+    )
+    .eq("id", id)
+    .eq("company_id", me.company_id)
+    .maybeSingle();
+  if (fetchErr) return NextResponse.json({ error: fetchErr.message }, { status: 400 });
+  if (!existing) return NextResponse.json({ error: "Leave request not found" }, { status: 404 });
+
   const now = new Date().toISOString();
+  let paidDaysUpdate: number | undefined;
+  let unpaidDaysUpdate: number | undefined;
+
+  if (action === "approve" && existing.status !== "approved") {
+    const { data: empUser, error: empUserErr } = await supabase
+      .from("HRMS_users")
+      .select("date_of_joining")
+      .eq("id", existing.employee_user_id)
+      .maybeSingle();
+    if (empUserErr) return NextResponse.json({ error: empUserErr.message }, { status: 400 });
+
+    const ltRaw: any = (existing as any).HRMS_leave_types;
+    const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
+    const leaveTypeId = String(existing.leave_type_id);
+    const pNested = ltObj?.HRMS_leave_policies;
+    const pRaw = Array.isArray(pNested) ? pNested[0] : pNested;
+    const policy = leavePolicyFromRow(leaveTypeId, pRaw);
+
+    const { data: approvedLeaves, error: usedErr } = await supabase
+      .from("HRMS_leave_requests")
+      .select("leave_type_id, start_date, end_date, total_days")
+      .eq("company_id", me.company_id)
+      .eq("employee_user_id", existing.employee_user_id)
+      .eq("status", "approved")
+      .neq("id", id);
+    if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
+
+    const split = computeLeavePaidUnpaidSplit({
+      totalDays: Number(existing.total_days) || 0,
+      startDateYmd: String(existing.start_date).slice(0, 10),
+      leaveTypeId,
+      isPaidLeaveType: ltObj?.is_paid !== false,
+      policy,
+      joinDateYmd: empUser?.date_of_joining ? String(empUser.date_of_joining).slice(0, 10) : null,
+      todayYmd: istTodayYmd(),
+      approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
+    });
+    paidDaysUpdate = split.paidDays;
+    unpaidDaysUpdate = split.unpaidDays;
+  }
+
   const payload =
     action === "approve"
-      ? { status: "approved", approver_user_id: session.id, approved_at: now, rejected_at: null, rejection_reason: null }
+      ? {
+          status: "approved",
+          approver_user_id: session.id,
+          approved_at: now,
+          rejected_at: null,
+          rejection_reason: null,
+          ...(paidDaysUpdate != null ? { paid_days: paidDaysUpdate, unpaid_days: unpaidDaysUpdate } : {}),
+        }
       : { status: "rejected", approver_user_id: session.id, rejected_at: now, approved_at: null, rejection_reason: rejectionReason || "Rejected" };
 
   const { data, error } = await supabase

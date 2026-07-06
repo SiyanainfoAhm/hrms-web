@@ -3770,8 +3770,8 @@ function PayrollPageContent() {
                         ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
                         : "Payroll generated for this period. Values are read-only."
                       : previewAllGovernment
-                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days = weekends + holidays + paid leave + weekdays with gross hours ≥ 9h. Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. Default pay days = weekends + holidays + paid leave + weekdays with gross hours ≥ 9h, minus unpaid leave. Salary = monthly amount × pay days ÷ days in month."}
+                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days = weekends + holidays + paid leave + weekday attendance (1 if gross ≥ 9h, 0.5 if > 4h and < 9h). Changing days recomputes Basic, DA, HRA, CPF, and totals."
+                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. Default pay days = weekends + holidays + paid leave + weekday attendance (1 if gross ≥ 9h, 0.5 if > 4h and < 9h), minus unpaid leave. Salary = monthly amount × pay days ÷ days in month."}
                   </p>
                   {previewAllGovernment && preview?.daysInMonth ? (
                     <GovernmentRunPreviewTable

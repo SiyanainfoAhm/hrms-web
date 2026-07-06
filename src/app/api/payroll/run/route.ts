@@ -285,8 +285,17 @@ function optionalEarningsFromClientGovernmentMonthly(gm: unknown): GovernmentOpt
   };
 }
 
-/** Minimum gross hours (punch-in to punch-out) for a weekday to count as an attendance pay day. */
-const MIN_GROSS_HOURS_FOR_ATTENDANCE_DAY = 9;
+/** Full attendance day when gross hours (punch-in → punch-out) are at least this. */
+const MIN_GROSS_HOURS_FULL_ATTENDANCE_DAY = 9;
+/** Half attendance day when gross hours are above this (exclusive) and below full-day threshold. */
+const MIN_GROSS_HOURS_HALF_ATTENDANCE_DAY = 4;
+
+/** Weekday attendance pay credit from gross hours: 1 (≥9h), 0.5 (>4h and <9h), 0 (≤4h). */
+function attendancePayCreditFromGrossHours(grossHours: number): number {
+  if (grossHours >= MIN_GROSS_HOURS_FULL_ATTENDANCE_DAY) return 1;
+  if (grossHours > MIN_GROSS_HOURS_HALF_ATTENDANCE_DAY) return 0.5;
+  return 0;
+}
 
 // Removed minimum-qualifying-days gating. Pay days must reflect attendance/leave directly.
 
@@ -381,10 +390,10 @@ function monthlySalaryProrationDays(daysInMonth: number): number {
 /**
  * Pay days, capped by eligible employment days in the period (calendar days ∩ DOJ–DOL).
  *
- * **presentDays** = weekend pay days + weekday attendance days (gross hours ≥ 9).
+ * **presentDays** = weekend pay days + weekday attendance credits (1 if gross ≥ 9h, 0.5 if > 4h and < 9h).
  * **holidayPayDays** = weekday company holidays not already covered by attendance or leave.
  *
- * Formula: weekends + holidays + paid leave + attendance days (gross ≥ 9h) − unpaid leave.
+ * Formula: weekends + holidays + paid leave + attendance credits − unpaid leave.
  */
 function resolvePayDaysFromAttendance(args: {
   presentDays: number;
@@ -778,8 +787,9 @@ async function computeAttendanceDrivenPayDays(args: {
     if (durationMinutes == null) continue;
 
     const grossHours = durationMinutes / 60;
-    if (grossHours >= MIN_GROSS_HOURS_FOR_ATTENDANCE_DAY) {
-      presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + 1);
+    const credit = attendancePayCreditFromGrossHours(grossHours);
+    if (credit > 0) {
+      presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + credit);
       const set = presentDatesByUser.get(uid) || new Set<string>();
       set.add(workDate);
       presentDatesByUser.set(uid, set);
