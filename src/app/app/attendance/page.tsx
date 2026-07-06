@@ -50,6 +50,8 @@ type Row = {
   checkOutLng?: number | null;
   notes?: string | null;
   screenshotCount?: number | null;
+  isOfficeLeave?: boolean;
+  officeLeaveAttachmentUrl?: string | null;
 };
 
 type ScreenshotsTarget = {
@@ -267,7 +269,11 @@ function AttendanceRow({
         )}
       </td>
       <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">
-        {r.inOffice ? (
+        {r.isOfficeLeave ? (
+          <span className="inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-900">
+            Office leave
+          </span>
+        ) : r.inOffice ? (
           <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
             Inside
           </span>
@@ -287,6 +293,16 @@ function AttendanceRow({
         ) : (
           <span className="text-slate-400">—</span>
         )}
+        {r.officeLeaveAttachmentUrl ? (
+          <a
+            href={r.officeLeaveAttachmentUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-1 inline-block text-[11px] font-medium text-[var(--primary)] hover:underline"
+          >
+            View attachment
+          </a>
+        ) : null}
       </td>
       {showScreenshotsCol && (
         <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">

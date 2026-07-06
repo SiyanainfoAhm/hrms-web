@@ -5,6 +5,8 @@ import {
 } from "@/lib/attendanceBreakUtils";
 
 export const MIN_COMBINED_BREAK_MINUTES = 60;
+/** Minimum combined lunch+tea break when employee has approved half-day leave on that work date. */
+export const MIN_COMBINED_BREAK_MINUTES_HALF_DAY = 30;
 
 function clampMinutes(n: number): number {
   return Math.min(24 * 60, Math.max(0, Math.round(Number(n) || 0)));
@@ -42,8 +44,8 @@ export function effectiveLunchBreakMinutes(args: {
  * New policy:
  * Combine lunch + tea break.
  *
- * If lunch + tea < 60 minutes:
- *   Count break as 60 minutes.
+ * If lunch + tea < minimum (60 min, or 30 min on approved half-day leave):
+ *   Count break as minimum minutes.
  *
  * If lunch + tea >= 60 minutes:
  *   Count actual break time.

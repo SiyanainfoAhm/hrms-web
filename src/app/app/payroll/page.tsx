@@ -1618,6 +1618,12 @@ function PayrollPageContent() {
   }, [canManage, tab, runYear, runMonth, runDay]);
 
   useEffect(() => {
+    if (!preview?.alreadyRun || preview.effectiveRunDay == null) return;
+    const d = String(preview.effectiveRunDay);
+    setRunDay((prev) => (prev === d ? prev : d));
+  }, [preview?.alreadyRun, preview?.effectiveRunDay, runMonth, runYear]);
+
+  useEffect(() => {
     if (!canManage || tab !== "run") return;
     let cancelled = false;
     setPastPeriodsLoading(true);

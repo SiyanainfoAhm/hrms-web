@@ -81,6 +81,7 @@ export function ApprovalsContent() {
   /** Single calendar day (non–Half-Leave type): user can request 0.5 instead of 1. */
   const [singleDayHalfDay, setSingleDayHalfDay] = useState(false);
   const [reason, setReason] = useState("");
+  const [leaveFile, setLeaveFile] = useState<File | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [rejectDialog, setRejectDialog] = useState<null | { id: string; reason: string }>(null);
@@ -157,8 +158,11 @@ export function ApprovalsContent() {
   const selectedLeaveType = typeRows.find((t: any) => t.id === leaveTypeId);
   const calendarSpanDays = diffDaysInclusive(startDate, endDate);
   const isHalfLeave = String(selectedLeaveType?.code ?? "").toUpperCase() === "HL";
+  const isOfficeLeave = String(selectedLeaveType?.code ?? "").toUpperCase() === "OL";
   const isSingleCalendarDay = Boolean(startDate && endDate && startDate === endDate && calendarSpanDays === 1);
-  const singleDayHalfDayEligible = Boolean(selectedLeaveType && isSingleCalendarDay && !isHalfLeave);
+  const singleDayHalfDayEligible = Boolean(
+    selectedLeaveType && isSingleCalendarDay && !isHalfLeave && !isOfficeLeave,
+  );
 
   const leaveBookingSummary = useMemo(() => {
     if (!startDate || !endDate) {
@@ -211,6 +215,11 @@ export function ApprovalsContent() {
       errs.endDate = "Select valid dates";
     }
     if (!errs.employee && !errs.type && !errs.startDate && !errs.endDate && startDate && endDate && (canApprove ? selectedEmployeeId : true)) {
+      if (isOfficeLeave && !leaveFile) {
+        errs.attachment = "Attachment is required for Office Leave (PDF or image, max 8 MB)";
+      } else if (isOfficeLeave && leaveFile && leaveFile.size > REIMB_MAX_BYTES) {
+        errs.attachment = "Attachment must be 8 MB or smaller";
+      }
       if (leaveBookingSummary.overlapError) errs.booking = leaveBookingSummary.overlapError;
       else if (leaveBookingSummary.calendarSpanDays > 0 && leaveBookingSummary.workingDaysInRange <= 0) {
         errs.booking = "No chargeable leave days in this range (weekends and holidays are excluded).";
@@ -229,6 +238,8 @@ export function ApprovalsContent() {
     leaveBookingSummary,
     singleDayHalfDayEligible,
     singleDayHalfDay,
+    isOfficeLeave,
+    leaveFile,
   ]);
 
   const leaveHasErrors = useMemo(() => Object.values(leaveErrors).some(Boolean), [leaveErrors]);
@@ -544,12 +555,25 @@ export function ApprovalsContent() {
         leaveErrors.startDate ||
         leaveErrors.endDate ||
         leaveErrors.booking ||
+        leaveErrors.attachment ||
         "Fix validation errors";
       setError(msg);
       showToast("error", msg);
       return;
     }
     try {
+      let attachmentUrl: string | undefined;
+      if (isOfficeLeave) {
+        if (!leaveFile) throw new Error("Attachment is required for Office Leave");
+        const fd = new FormData();
+        fd.append("file", leaveFile);
+        const upRes = await fetch("/api/leave/upload", { method: "POST", body: fd });
+        const upData = await upRes.json();
+        if (!upRes.ok) throw new Error(upData?.error || "Failed to upload attachment");
+        attachmentUrl = String(upData.url || "");
+        if (!attachmentUrl) throw new Error("Upload did not return a file URL");
+      }
+
       const res = await fetch("/api/leave/requests", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -558,6 +582,7 @@ export function ApprovalsContent() {
         startDate,
         endDate,
         reason: reason.trim() || undefined,
+        ...(attachmentUrl ? { attachmentUrl } : {}),
         ...(singleDayHalfDayEligible && singleDayHalfDay ? { isHalfDay: true } : {}),
         ...(canApprove ? { employeeUserId: selectedEmployeeId } : {}),
       }),
@@ -575,6 +600,7 @@ export function ApprovalsContent() {
       setEndDate("");
       setSingleDayHalfDay(false);
       setReason("");
+      setLeaveFile(null);
       setLeaveDialogOpen(false);
       showToast("success", canApprove ? "Leave added" : "Request submitted");
     } catch (e: any) {
@@ -1331,6 +1357,35 @@ export function ApprovalsContent() {
                         />
                         <span>Half day (0.5) — single date only; leave unchecked for a full day</span>
                       </label>
+                    )}
+
+                    {isOfficeLeave && (
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-slate-700">
+                          Attachment <span className="text-red-500">*</span>{" "}
+                          <span className="font-normal text-slate-500">(max 8 MB)</span>
+                        </label>
+                        <input
+                          type="file"
+                          accept=".pdf,image/*"
+                          className={`block w-full text-sm file:mr-3 file:rounded-lg file:border file:bg-white file:px-3 file:py-1.5 file:text-sm file:font-medium ${
+                            leaveErrors.attachment && (leaveSubmitted || leaveTouched.attachment)
+                              ? "file:border-red-300"
+                              : "file:border-slate-300"
+                          }`}
+                          onChange={(e) => {
+                            setLeaveFile(e.target.files?.[0] ?? null);
+                            markTouched(setLeaveTouched, "attachment");
+                          }}
+                          onBlur={() => markTouched(setLeaveTouched, "attachment")}
+                        />
+                        {leaveErrors.attachment && (leaveSubmitted || leaveTouched.attachment) && (
+                          <div className="mt-1 text-xs text-red-700">{leaveErrors.attachment}</div>
+                        )}
+                        <p className="mt-1 text-xs text-slate-500">
+                          Approved Office Leave creates attendance with 9h gross, 1h break, and 8h active per working day.
+                        </p>
+                      </div>
                     )}
 
                     {totalDays > 0 && (

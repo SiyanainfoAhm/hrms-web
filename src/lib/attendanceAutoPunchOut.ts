@@ -3,10 +3,14 @@ import { fromZonedTime } from "date-fns-tz";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
 import {
-  type AttendanceTimeZoneId,
   getAttendanceContextForUser,
   IST_TZ,
+  type AttendanceTimeZoneId,
 } from "@/lib/attendanceTimeZone";
+import {
+  loadHalfDayLeaveDatesForUser,
+  minimumCombinedBreakMinutesForWorkDate,
+} from "@/lib/halfDayLeaveAttendance";
 
 /** Shown in red on company attendance — marks user did not punch out manually. */
 export const AUTO_PUNCH_OUT_USER_NOTE = "Didn't punch out by user.";
@@ -79,7 +83,11 @@ type OpenLogRow = {
   in_office?: boolean | null;
 };
 
-export function buildAutoPunchOutPatch(row: OpenLogRow, checkOutIso: string) {
+export function buildAutoPunchOutPatch(
+  row: OpenLogRow,
+  checkOutIso: string,
+  options?: { minimumBreakMinutes?: number },
+) {
   const inMs = new Date(String(row.check_in_at)).getTime();
   const outMs = new Date(checkOutIso).getTime();
   if (!Number.isFinite(inMs) || !Number.isFinite(outMs) || outMs <= inMs) {
@@ -101,6 +109,7 @@ export function buildAutoPunchOutPatch(row: OpenLogRow, checkOutIso: string) {
     lunchMinutes: finalLunchMin,
     teaMinutes: finalTeaMin,
     grossWorkMinutes: grossMinutes,
+    minimumBreakMinutes: options?.minimumBreakMinutes,
   });
   const totalHours = Math.round((grossMinutes / 60) * 100) / 100;
 
@@ -148,6 +157,33 @@ export async function autoCloseForgottenPunchOuts(args: {
   const rows = (openRows ?? []) as OpenLogRow[];
   let closed = 0;
 
+  const { data: empRow } = await args.supabase
+    .from("HRMS_employees")
+    .select("user_id")
+    .eq("company_id", args.companyId)
+    .eq("id", args.employeeId)
+    .maybeSingle();
+  const employeeUserId = empRow?.user_id ? String(empRow.user_id) : null;
+
+  const oldestWorkDate =
+    rows.length > 0
+      ? rows.reduce((min, r) => {
+          const d = String(r.work_date);
+          return d < min ? d : min;
+        }, String(rows[0].work_date))
+      : args.currentWorkDate;
+
+  const halfDayLeaveDates =
+    employeeUserId != null
+      ? await loadHalfDayLeaveDatesForUser(
+          args.supabase,
+          args.companyId,
+          employeeUserId,
+          oldestWorkDate,
+          args.currentWorkDate,
+        )
+      : new Set<string>();
+
   const nowMs = Date.now();
 
   for (const row of rows) {
@@ -164,7 +200,10 @@ export async function autoCloseForgottenPunchOuts(args: {
 
     let patch: ReturnType<typeof buildAutoPunchOutPatch>;
     try {
-      patch = buildAutoPunchOutPatch(row, checkOutIso);
+      const workDateYmd = String(row.work_date);
+      patch = buildAutoPunchOutPatch(row, checkOutIso, {
+        minimumBreakMinutes: minimumCombinedBreakMinutesForWorkDate(workDateYmd, halfDayLeaveDates),
+      });
     } catch {
       continue;
     }

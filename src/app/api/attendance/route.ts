@@ -4,6 +4,10 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
+import {
+  loadHalfDayLeaveDatesForUser,
+  minimumCombinedBreakMinutesForWorkDate,
+} from "@/lib/halfDayLeaveAttendance";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 import { autoCloseForgottenPunchOuts } from "@/lib/attendanceAutoPunchOut";
 import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
@@ -483,10 +487,20 @@ export async function POST(request: NextRequest) {
   const actualLunchMinutes = Math.max(finalLunchMin, lunchBreakMinutes);
   const actualTeaMinutes = Math.max(finalTeaMin, teaBreakMinutes);
 
+  const halfDayLeaveDates = await loadHalfDayLeaveDatesForUser(
+    supabase,
+    meCompanyId,
+    session.id,
+    wd,
+    wd,
+  );
+  const minBreakMinutes = minimumCombinedBreakMinutesForWorkDate(wd, halfDayLeaveDates);
+
   const effectiveBreak = effectiveCombinedBreakBreakdown({
     lunchMinutes: actualLunchMinutes,
     teaMinutes: actualTeaMinutes,
     grossWorkMinutes: grossMinutes,
+    minimumBreakMinutes: minBreakMinutes,
   });
 
   const { data: updated, error: upErr } = await supabase

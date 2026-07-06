@@ -711,7 +711,7 @@ async function computeAttendanceDrivenPayDays(args: {
   // Approved leaves (paid/unpaid totals + leave day override)
   const { data: leaves, error: leaveErr } = await supabase
     .from("HRMS_leave_requests")
-    .select("employee_user_id, start_date, end_date, total_days, paid_days, unpaid_days, HRMS_leave_types(is_paid)")
+    .select("employee_user_id, start_date, end_date, total_days, paid_days, unpaid_days, HRMS_leave_types(is_paid, code)")
     .eq("company_id", companyId)
     .eq("status", "approved")
     .in("employee_user_id", userIds);
@@ -724,6 +724,11 @@ async function computeAttendanceDrivenPayDays(args: {
     const l = lAny as LeaveRow;
     const uid = l?.employee_user_id;
     if (!uid) continue;
+    const ltRaw: any = (l as any).HRMS_leave_types;
+    const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
+    const leaveCode = String(ltObj?.code ?? "").toUpperCase();
+    // Office Leave is credited via attendance (9h gross), not as a leave day override.
+    if (leaveCode === "OL") continue;
     const r = computeLeavePaidUnpaidInWindow(l, periodStartYmd, periodEndExclusive);
     if (r.overlapDays <= 0) continue;
     // Keep paid/unpaid days as-is; may be fractional (e.g. 0.5 HL).
@@ -1184,6 +1189,48 @@ async function computeFreshPayrollPreviewFromMasters(
   return { rows };
 }
 
+function governmentMonthlyFromDbRow(g: any | undefined | null) {
+  if (!g) return null;
+  return {
+    basicPaid: Math.round(Number(g.basic_paid) || 0),
+    spPayPaid: Math.round(Number(g.sp_pay_paid) || 0),
+    daPaid: Math.round(Number(g.da_paid) || 0),
+    transportPaid: Math.round(Number(g.transport_paid) || 0),
+    hraPaid: Math.round(Number(g.hra_paid) || 0),
+    medicalPaid: Math.round(Number(g.medical_paid) || 0),
+    extraWorkAllowancePaid: Math.round(Number(g.extra_work_allowance_paid) || 0),
+    nightAllowancePaid: Math.round(Number(g.night_allowance_paid) || 0),
+    uniformAllowancePaid: Math.round(Number(g.uniform_allowance_paid) || 0),
+    educationAllowancePaid: Math.round(Number(g.education_allowance_paid) || 0),
+    daArrearsPaid: Math.round(Number(g.da_arrears_paid) || 0),
+    transportArrearsPaid: Math.round(Number(g.transport_arrears_paid) || 0),
+    encashmentPaid: Math.round(Number(g.encashment_paid) || 0),
+    encashmentDaPaid: Math.round(Number(g.encashment_da_paid) || 0),
+    totalEarnings: Math.round(Number(g.total_earnings) || 0),
+    totalDeductions: Math.round(Number(g.total_deductions) || 0),
+    netSalary: Math.round(Number(g.net_salary) || 0),
+    deductions: {
+      incomeTax: Math.round(Number(g.income_tax_amount) || 0),
+      pt: Math.round(Number(g.pt_amount) || 0),
+      lic: Math.round(Number(g.lic_amount) || 0),
+      cpf: Math.round(Number(g.cpf_amount) || 0),
+      daCpf: Math.round(Number(g.da_cpf_amount) || 0),
+      vpf: Math.round(Number(g.vpf_amount) || 0),
+      pfLoan: Math.round(Number(g.pf_loan_amount) || 0),
+      postOffice: Math.round(Number(g.post_office_amount) || 0),
+      creditSociety: Math.round(Number(g.credit_society_amount) || 0),
+      stdLicenceFee: Math.round(Number(g.std_licence_fee_amount) || 0),
+      electricity: Math.round(Number(g.electricity_amount) || 0),
+      water: Math.round(Number(g.water_amount) || 0),
+      mess: Math.round(Number(g.mess_amount) || 0),
+      horticulture: Math.round(Number(g.horticulture_amount) || 0),
+      welfare: Math.round(Number(g.welfare_amount) || 0),
+      vehCharge: Math.round(Number(g.veh_charge_amount) || 0),
+      other: Math.round(Number(g.other_deduction_amount) || 0),
+    },
+  };
+}
+
 function mapSavedPayslipToPreviewRow(p: any, u: any | undefined, gov: any | undefined) {
   const tds = Math.round(Number(p.tds) ?? 0);
   const inc = Math.round(Number(p.incentive) ?? 0);
@@ -1221,7 +1268,7 @@ function mapSavedPayslipToPreviewRow(p: any, u: any | undefined, gov: any | unde
     takeHome: takeHomeStored,
     ctc: Math.round(Number(p.ctc) ?? 0),
     payrollMode: isGov ? "government" : "private",
-    governmentMonthly: gov ?? null,
+    governmentMonthly: isGov ? governmentMonthlyFromDbRow(gov) : null,
     payslipPending: false,
   };
 }
@@ -1271,24 +1318,31 @@ async function computePreview(
     .toISOString()
     .slice(0, 10);
   const isFutureMonth = selectedMonthStartYmd > currentMonthStartYmd;
-  const effectiveRunDay = isFutureMonth ? daysInMonth : Math.min(Math.max(1, runDay), daysInMonth);
+  let effectiveRunDay = isFutureMonth ? daysInMonth : Math.min(Math.max(1, runDay), daysInMonth);
   const periodStart = new Date(Date.UTC(year, month - 1, 1)).toISOString().slice(0, 10);
-  const periodEnd = new Date(Date.UTC(year, month - 1, effectiveRunDay)).toISOString().slice(0, 10);
   const periodName = `${["", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][month]}-${String(year).slice(-2)}`;
+
+  const { data: existingPeriod } = await supabase
+    .from("HRMS_payroll_periods")
+    .select("id, period_end")
+    .eq("company_id", companyId)
+    .eq("period_start", periodStart)
+    .maybeSingle();
+
+  if (existingPeriod?.period_end) {
+    const storedEndYmd = String(existingPeriod.period_end).slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(storedEndYmd)) {
+      effectiveRunDay = parseInt(storedEndYmd.slice(8, 10), 10);
+    }
+  }
+
+  const periodEnd = new Date(Date.UTC(year, month - 1, effectiveRunDay)).toISOString().slice(0, 10);
 
   // For client clarity we treat payroll "days" as calendar days (no separate weekends/working-days concept).
   // Keep field names for backward compatibility with UI.
   const workingDaysInFullMonth = Math.max(1, daysInMonth);
   const workingDaysThroughRunDay = Math.max(1, effectiveRunDay);
   const salaryProrationDays = salaryProrationDaysForPeriod(periodStart, periodEnd);
-
-  // One payroll run per calendar month (period_start is always YYYY-MM-01); do not allow a second run with a different "through" date.
-  const { data: existingPeriod } = await supabase
-    .from("HRMS_payroll_periods")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("period_start", periodStart)
-    .maybeSingle();
 
   const periodCtx: PayrollPreviewPeriodCtx = {
     periodName,
@@ -1355,77 +1409,7 @@ async function computePreview(
     if (slipIds.has(uid)) {
       const p = savedByUser.get(uid);
       if (p) {
-        const savedRow = mapSavedPayslipToPreviewRow(p, nameById.get(uid), govByUser.get(uid));
-        const tds = Math.round(Number(p.tds ?? fr.tds) || 0);
-        const incentive = Math.round(Number(fr.incentive ?? savedRow.incentive) || 0);
-        const prBonus = Math.round(Number(fr.prBonus ?? savedRow.prBonus) || 0);
-        const reimbursement = Math.round(Number(fr.reimbursement ?? savedRow.reimbursement) || 0);
-        const payDaysMerged = Math.max(0, Number(fr.payDays ?? savedRow.payDays) || 0);
-        const grossMonthly = Math.round(Number(fr.grossMonthly ?? savedRow.grossMonthly) || 0);
-        const grossPay = Math.round(Number(fr.grossPay ?? savedRow.grossPay) || 0);
-        const pfEmployee = Math.round(Number(fr.pfEmployee ?? savedRow.pfEmployee) || 0);
-        const esicEmployee = Math.round(Number(fr.esicEmployee ?? savedRow.esicEmployee) || 0);
-        const profTax = Math.round(Number(fr.profTax ?? savedRow.profTax) || 0);
-        const deductions = Math.round(
-          Number(fr.deductions ?? savedRow.deductions) || pfEmployee + esicEmployee + profTax,
-        );
-        const netPay = computePrivateNetPay(grossPay, deductions);
-        const takeHome = computePrivateTakeHome({ netPay, tds, incentive, prBonus, reimbursement });
-        const pfEmployer = Math.round(Number(fr.pfEmployer ?? savedRow.pfEmployer) || 0);
-        const esicEmployer = Math.round(Number(fr.esicEmployer ?? savedRow.esicEmployer) || 0);
-        const pfEmployerMonthly = Math.round(
-          Number(fr.pfEmployerMonthly) ||
-            (payDaysMerged > 0 ? (pfEmployer * daysInMonth) / payDaysMerged : pfEmployer),
-        );
-        const esicEmployerMonthly = Math.round(
-          Number(fr.esicEmployerMonthly) ||
-            (payDaysMerged > 0 ? (esicEmployer * daysInMonth) / payDaysMerged : esicEmployer),
-        );
-        const incentiveMonthly = Math.round(
-          Number(fr.incentiveMonthly) ||
-            (payDaysMerged > 0 ? (incentive * daysInMonth) / payDaysMerged : incentive),
-        );
-        const ctcMonthly = Math.round(
-          Number(fr.ctcMonthly) ||
-            computePrivateMonthlyCtc({
-              grossMonthly,
-              pfEmployerMonthly,
-              esicEmployerMonthly,
-              incentiveMonthly,
-              prBonusMonthly: 0,
-            }),
-        );
-        const { ctcBase, ctc: periodCtc } = computePrivatePeriodCtc({
-          grossPay,
-          pfEmployer,
-          esicEmployer,
-          incentive,
-          prBonus,
-        });
-        // Re-apply live master/attendance math for display (fixes stale gross when period has fewer calendar days than full month).
-        merged.push({
-          ...savedRow,
-          grossMonthly: fr.grossMonthly ?? savedRow.grossMonthly,
-          grossPay,
-          netPay,
-          pfEmployee,
-          pfEmployer,
-          esicEmployee: Math.round(Number(fr.esicEmployee ?? savedRow.esicEmployee) || 0),
-          esicEmployer,
-          profTax,
-          deductions,
-          tds,
-          incentive,
-          prBonus,
-          reimbursement,
-          takeHome,
-          ctc: ctcMonthly,
-          ctcMonthly,
-          periodCtc,
-          ctcBase,
-          unpaidLeaveDays: fr.unpaidLeaveDays ?? savedRow.unpaidLeaveDays,
-          payDays: fr.payDays ?? savedRow.payDays,
-        });
+        merged.push(mapSavedPayslipToPreviewRow(p, nameById.get(uid), govByUser.get(uid)));
       }
     } else {
       merged.push({ ...fr, payslipPending: true });

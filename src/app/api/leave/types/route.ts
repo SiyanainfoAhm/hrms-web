@@ -74,6 +74,14 @@ export async function GET() {
             payslip_slot: null,
             description: "Leave on half pay",
           },
+          {
+            company_id: me.company_id,
+            name: "Office Leave",
+            code: "OL",
+            is_paid: true,
+            payslip_slot: null,
+            description: "Official duty outside office — creates 9h attendance (8h active, 1h break) with attachment",
+          },
         ],
         { onConflict: "company_id,name" },
       )
@@ -87,6 +95,7 @@ export async function GET() {
     const unpaid = (seededTypes ?? []).find((t) => t.code === "UNPAID");
     const hl = (seededTypes ?? []).find((t) => t.code === "HL");
     const hpl = (seededTypes ?? []).find((t) => t.code === "HPL");
+    const ol = (seededTypes ?? []).find((t) => t.code === "OL");
     const policies = [
       paid && {
         company_id: me.company_id,
@@ -135,6 +144,15 @@ export async function GET() {
         reset_month: 1,
         reset_day: 1,
       },
+      ol && {
+        company_id: me.company_id,
+        leave_type_id: ol.id,
+        accrual_method: "none",
+        annual_quota: null,
+        prorate_on_join: false,
+        reset_month: 1,
+        reset_day: 1,
+      },
     ].filter(Boolean) as any[];
 
     if (policies.length) {
@@ -147,6 +165,42 @@ export async function GET() {
     data = refreshed.data ?? [];
     error = refreshed.error ?? null;
     if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  }
+
+  // Ensure Office Leave exists for companies created before OL was added.
+  const hasOl = (data ?? []).some((t: any) => String(t.code ?? "").toUpperCase() === "OL");
+  if (!hasOl && me.company_id) {
+    const { data: olType, error: olErr } = await supabase
+      .from("HRMS_leave_types")
+      .upsert(
+        {
+          company_id: me.company_id,
+          name: "Office Leave",
+          code: "OL",
+          is_paid: true,
+          payslip_slot: null,
+          description: "Official duty outside office — creates 9h attendance (8h active, 1h break) with attachment",
+        },
+        { onConflict: "company_id,name" },
+      )
+      .select("id")
+      .maybeSingle();
+    if (!olErr && olType?.id) {
+      await supabase.from("HRMS_leave_policies").upsert(
+        {
+          company_id: me.company_id,
+          leave_type_id: olType.id,
+          accrual_method: "none",
+          annual_quota: null,
+          prorate_on_join: false,
+          reset_month: 1,
+          reset_day: 1,
+        },
+        { onConflict: "company_id,leave_type_id" },
+      );
+      const refreshed = await query;
+      data = refreshed.data ?? [];
+    }
   }
 
   return NextResponse.json({ types: data ?? [] });

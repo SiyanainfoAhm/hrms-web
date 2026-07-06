@@ -4,6 +4,14 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
+import {
+  loadHalfDayLeaveDatesForUser,
+  minimumCombinedBreakMinutesForWorkDate,
+} from "@/lib/halfDayLeaveAttendance";
+import {
+  isOfficeLeaveAttendanceLog,
+  officeLeaveMetrics,
+} from "@/lib/officeLeaveAttendance";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 import {
   computeWorkDateForNow,
@@ -113,6 +121,9 @@ export async function GET(request: NextRequest) {
       check_out_lat,
       check_out_lng,
       notes,
+      is_office_leave,
+      office_leave_request_id,
+      office_leave_attachment_url,
       agent_active_minutes,
       agent_idle_minutes,
       agent_disconnected_minutes,
@@ -174,7 +185,72 @@ export async function GET(request: NextRequest) {
   const nowMs = Date.now();
   const todayIst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 
+  const halfDayLeaveDates = await loadHalfDayLeaveDatesForUser(
+    supabase,
+    gate.companyId,
+    session.id,
+    startDate,
+    endDate,
+  );
+
   const rows = (logs ?? []).map((log: any) => {
+    if (isOfficeLeaveAttendanceLog(log)) {
+      const ol = officeLeaveMetrics();
+      return {
+        logId: log.id,
+        employeeId: log.employee_id,
+        employeeCode: employeeCode ?? null,
+        userId: session.id,
+        employeeName: u?.name ?? null,
+        employeeEmail: u?.email ?? "",
+        workDate: log.work_date,
+        checkInAt: log.check_in_at,
+        lunchCheckOutAt: null,
+        lunchCheckInAt: null,
+        teaCheckOutAt: null,
+        teaCheckInAt: null,
+        lunchBreakSegments: null,
+        teaBreakSegments: null,
+        checkOutAt: log.check_out_at,
+        totalHours: ol.grossMinutes / 60,
+        lunchBreakMinutes: ol.lunchBreakMinutes,
+        teaBreakMinutes: ol.teaBreakMinutes,
+        idleLunchMinutes: ol.lunchBreakMinutes,
+        idleTeaMinutes: 0,
+        manualBreakIdleMinutes: ol.manualBreakIdleMinutes,
+        actualLunchBreakMinutes: ol.lunchBreakMinutes,
+        actualTeaBreakMinutes: 0,
+        actualBreakMinutes: ol.manualBreakIdleMinutes,
+        policyBreakMinutes: ol.manualBreakIdleMinutes,
+        policyBreakShortfallMinutes: 0,
+        agentActiveMinutes: ol.agentActiveMinutes,
+        agentIdleMinutes: 0,
+        storedDisconnectedSeconds: 0,
+        storedDisconnectedMinutes: 0,
+        disconnectedSeconds: 0,
+        disconnectedMinutes: 0,
+        idleMinutes: ol.idleMinutes,
+        grossMinutes: ol.grossMinutes,
+        activeMinutes: ol.activeMinutes,
+        meetsEightHourWork: ol.meetsEightHourWork,
+        lunchBreakOpen: false,
+        teaBreakOpen: false,
+        lunchBreakStartedAt: null,
+        teaBreakStartedAt: null,
+        status: log.status,
+        inOffice: Boolean(log.in_office),
+        checkInLat: log.check_in_lat ?? null,
+        checkInLng: log.check_in_lng ?? null,
+        checkOutLat: log.check_out_lat ?? null,
+        checkOutLng: log.check_out_lng ?? null,
+        notes: log.notes ?? null,
+        isOfficeLeave: true,
+        officeLeaveAttachmentUrl: log.office_leave_attachment_url ?? null,
+      };
+    }
+
+    const workDateYmd = String(log.work_date ?? "").slice(0, 10);
+    const minBreakMinutes = minimumCombinedBreakMinutesForWorkDate(workDateYmd, halfDayLeaveDates);
     const useNowForOpenShift =
       !log.check_out_at && String(log.work_date ?? "") === todayIst;
 
@@ -197,6 +273,7 @@ export async function GET(request: NextRequest) {
             lunchMinutes: lunchIdleMinBase,
             teaMinutes: teaIdleMinBase,
             grossWorkMinutes: grossMin,
+            minimumBreakMinutes: minBreakMinutes,
           })
         : {
             lunchBreakMinutes: lunchIdleMinBase,
@@ -354,6 +431,8 @@ export async function GET(request: NextRequest) {
       checkOutLat: log.check_out_lat ?? null,
       checkOutLng: log.check_out_lng ?? null,
       notes: log.notes ?? null,
+      isOfficeLeave: false,
+      officeLeaveAttachmentUrl: null,
     };
   });
 

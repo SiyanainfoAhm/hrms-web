@@ -9,6 +9,12 @@ import { type ApprovedLeave } from "@/lib/leavePolicy";
 import { computeLeavePaidUnpaidSplit, leavePolicyFromRow } from "@/lib/leavePaidUnpaidSplit";
 import { notifyLeaveRequestCreated, notifyLeaveRequestDecided } from "@/lib/hrmsTransactionNotify";
 import { computeLeaveBookingSummary, type HolidayRow } from "@/lib/leaveBookingDays";
+import {
+  isOfficeLeaveTypeCode,
+  loadHolidaysForOfficeLeave,
+  removeOfficeLeaveAttendance,
+  syncOfficeLeaveToAttendance,
+} from "@/lib/officeLeaveAttendance";
 
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -45,6 +51,7 @@ function mapLeaveRow(
     approvedAt: r.approved_at ? new Date(r.approved_at).toISOString() : null,
     rejectedAt: r.rejected_at ? new Date(r.rejected_at).toISOString() : null,
     rejectionReason: r.rejection_reason as string | null,
+    attachmentUrl: (r.attachment_url as string | null) ?? null,
   };
 }
 
@@ -173,6 +180,7 @@ export async function POST(request: NextRequest) {
   const startDate = typeof body?.startDate === "string" ? body.startDate : "";
   const endDate = typeof body?.endDate === "string" ? body.endDate : "";
   const reason = typeof body?.reason === "string" ? body.reason.trim() : undefined;
+  const attachmentUrl = typeof body?.attachmentUrl === "string" ? body.attachmentUrl.trim() : "";
   const employeeUserId = typeof body?.employeeUserId === "string" ? body.employeeUserId : null;
   const isHalfDay = body?.isHalfDay === true;
   if (!leaveTypeId || !startDate || !endDate) {
@@ -225,6 +233,16 @@ export async function POST(request: NextRequest) {
   if (!lt) return NextResponse.json({ error: "Invalid leave type" }, { status: 400 });
 
   const codeUpper = String((lt as any)?.code ?? "").toUpperCase();
+  const isOfficeLeave = isOfficeLeaveTypeCode(codeUpper);
+
+  if (isOfficeLeave) {
+    if (!attachmentUrl) {
+      return NextResponse.json({ error: "Attachment is required for Office Leave" }, { status: 400 });
+    }
+    if (isHalfDay) {
+      return NextResponse.json({ error: "Half day does not apply to Office Leave" }, { status: 400 });
+    }
+  }
 
   const { data: empDivRow } = await supabase
     .from("HRMS_employees")
@@ -316,8 +334,8 @@ export async function POST(request: NextRequest) {
     todayYmd: istTodayYmd(),
     approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
   });
-  const paidDays = split.paidDays;
-  const unpaidDays = split.unpaidDays;
+  const paidDays = isOfficeLeave ? 0 : split.paidDays;
+  const unpaidDays = isOfficeLeave ? 0 : split.unpaidDays;
 
   const now = new Date().toISOString();
   const autoApprove = isApprover(session.role);
@@ -335,6 +353,7 @@ export async function POST(request: NextRequest) {
         paid_days: paidDays,
         unpaid_days: unpaidDays,
         reason: reason || null,
+        attachment_url: attachmentUrl || null,
         status: autoApprove ? "approved" : "pending",
         approver_user_id: autoApprove ? session.id : null,
         approved_at: autoApprove ? now : null,
@@ -351,6 +370,30 @@ export async function POST(request: NextRequest) {
     await notifyLeaveRequestCreated(String((data as any).id));
   } catch (e) {
     console.warn("[leave-email] notify failed", e);
+  }
+
+  if (autoApprove && isOfficeLeave) {
+    try {
+      const holidays = await loadHolidaysForOfficeLeave({
+        supabase,
+        companyId: me.company_id,
+        employeeDivisionId,
+      });
+      const sync = await syncOfficeLeaveToAttendance({
+        supabase,
+        companyId: me.company_id,
+        employeeId: targetEmployeeId,
+        leaveRequestId: String((data as any).id),
+        startYmd: startDate,
+        endYmd: endDate,
+        attachmentUrl: attachmentUrl || null,
+        employeeDivisionId,
+        holidays,
+      });
+      return NextResponse.json({ request: data, officeLeaveSync: sync });
+    } catch (e) {
+      console.warn("[office-leave] attendance sync failed", e);
+    }
   }
 
   return NextResponse.json({ request: data });
@@ -380,7 +423,7 @@ export async function PATCH(request: NextRequest) {
   const { data: existing, error: fetchErr } = await supabase
     .from("HRMS_leave_requests")
     .select(
-      "id, company_id, employee_user_id, leave_type_id, start_date, end_date, total_days, status, HRMS_leave_types(id, is_paid, HRMS_leave_policies(*))",
+      "id, company_id, employee_id, employee_user_id, leave_type_id, start_date, end_date, total_days, status, attachment_url, HRMS_leave_types(id, code, is_paid, HRMS_leave_policies(*))",
     )
     .eq("id", id)
     .eq("company_id", me.company_id)
@@ -392,6 +435,11 @@ export async function PATCH(request: NextRequest) {
   let paidDaysUpdate: number | undefined;
   let unpaidDaysUpdate: number | undefined;
 
+  const ltRaw: any = (existing as any).HRMS_leave_types;
+  const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
+  const leaveTypeCode = String(ltObj?.code ?? "").toUpperCase();
+  const isOfficeLeave = isOfficeLeaveTypeCode(leaveTypeCode);
+
   if (action === "approve" && existing.status !== "approved") {
     const { data: empUser, error: empUserErr } = await supabase
       .from("HRMS_users")
@@ -400,10 +448,10 @@ export async function PATCH(request: NextRequest) {
       .maybeSingle();
     if (empUserErr) return NextResponse.json({ error: empUserErr.message }, { status: 400 });
 
-    const ltRaw: any = (existing as any).HRMS_leave_types;
-    const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
+    const ltRawInner: any = (existing as any).HRMS_leave_types;
+    const ltObjInner = Array.isArray(ltRawInner) ? ltRawInner[0] : ltRawInner;
     const leaveTypeId = String(existing.leave_type_id);
-    const pNested = ltObj?.HRMS_leave_policies;
+    const pNested = ltObjInner?.HRMS_leave_policies;
     const pRaw = Array.isArray(pNested) ? pNested[0] : pNested;
     const policy = leavePolicyFromRow(leaveTypeId, pRaw);
 
@@ -420,14 +468,14 @@ export async function PATCH(request: NextRequest) {
       totalDays: Number(existing.total_days) || 0,
       startDateYmd: String(existing.start_date).slice(0, 10),
       leaveTypeId,
-      isPaidLeaveType: ltObj?.is_paid !== false,
+      isPaidLeaveType: ltObjInner?.is_paid !== false,
       policy,
       joinDateYmd: empUser?.date_of_joining ? String(empUser.date_of_joining).slice(0, 10) : null,
       todayYmd: istTodayYmd(),
       approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
     });
-    paidDaysUpdate = split.paidDays;
-    unpaidDaysUpdate = split.unpaidDays;
+    paidDaysUpdate = isOfficeLeave ? 0 : split.paidDays;
+    unpaidDaysUpdate = isOfficeLeave ? 0 : split.unpaidDays;
   }
 
   const payload =
@@ -456,6 +504,54 @@ export async function PATCH(request: NextRequest) {
     await notifyLeaveRequestDecided(String((data as any).id));
   } catch (e) {
     console.warn("[leave-email] decision notify failed", e);
+  }
+
+  if (isOfficeLeave) {
+    try {
+      if (action === "approve") {
+        const { data: empDivRow } = await supabase
+          .from("HRMS_employees")
+          .select("division_id")
+          .eq("company_id", me.company_id)
+          .eq("id", existing.employee_id)
+          .maybeSingle();
+        const employeeDivisionId = (empDivRow as any)?.division_id
+          ? String((empDivRow as any).division_id)
+          : null;
+        const holidays = await loadHolidaysForOfficeLeave({
+          supabase,
+          companyId: me.company_id,
+          employeeDivisionId,
+        });
+        const sync = await syncOfficeLeaveToAttendance({
+          supabase,
+          companyId: me.company_id,
+          employeeId: String(existing.employee_id),
+          leaveRequestId: id,
+          startYmd: String(existing.start_date).slice(0, 10),
+          endYmd: String(existing.end_date).slice(0, 10),
+          attachmentUrl: (existing as any).attachment_url
+            ? String((existing as any).attachment_url)
+            : null,
+          employeeDivisionId,
+          holidays,
+        });
+        return NextResponse.json({ request: data, officeLeaveSync: sync });
+      }
+      if (action === "reject") {
+        await removeOfficeLeaveAttendance({
+          supabase,
+          companyId: me.company_id,
+          leaveRequestId: id,
+        });
+      }
+    } catch (e) {
+      console.warn("[office-leave] attendance sync failed", e);
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Failed to sync Office Leave attendance" },
+        { status: 400 },
+      );
+    }
   }
 
   return NextResponse.json({ request: data });

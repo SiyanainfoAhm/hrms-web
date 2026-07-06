@@ -4,6 +4,14 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
+import {
+  loadHalfDayLeaveDatesByUserId,
+  minimumCombinedBreakMinutesForWorkDate,
+} from "@/lib/halfDayLeaveAttendance";
+import {
+  isOfficeLeaveAttendanceLog,
+  officeLeaveMetrics,
+} from "@/lib/officeLeaveAttendance";
 import { attendanceEmployeeIdForUser } from "@/lib/attendanceEmployee";
 import { disconnectedSecondsFromSessions } from "@/lib/attendanceDisconnectedSeconds";
 import {
@@ -175,6 +183,9 @@ export async function GET(request: NextRequest) {
       check_out_lat,
       check_out_lng,
       notes,
+      is_office_leave,
+      office_leave_request_id,
+      office_leave_attachment_url,
       agent_active_minutes,
       agent_idle_minutes,
       agent_disconnected_minutes,
@@ -279,6 +290,14 @@ export async function GET(request: NextRequest) {
     ...new Set((emps ?? []).map((e: any) => e.user_id).filter(Boolean)),
   ].map(String);
 
+  const halfDayLeaveDatesByUser = await loadHalfDayLeaveDatesByUserId(
+    supabase,
+    me.company_id,
+    userIdsFromEmps,
+    startDate,
+    endDate,
+  );
+
   const { data: usersFromEmps, error: usersFromEmpsErr } = userIdsFromEmps.length
     ? await supabase
         .from("HRMS_users")
@@ -322,10 +341,53 @@ export async function GET(request: NextRequest) {
 
       if (u?.role === "super_admin") return null;
 
+      if (isOfficeLeaveAttendanceLog(log)) {
+        const ol = officeLeaveMetrics();
+        return {
+          logId: log.id,
+          employeeId: log.employee_id,
+          employeeName: u?.name ?? null,
+          employeeEmail: u?.email ?? "",
+          workDate: log.work_date,
+          checkInAt: log.check_in_at,
+          lunchCheckOutAt: null,
+          lunchCheckInAt: null,
+          teaCheckOutAt: null,
+          teaCheckInAt: null,
+          lunchBreakSegments: null,
+          teaBreakSegments: null,
+          checkOutAt: log.check_out_at,
+          totalHours: ol.grossMinutes / 60,
+          lunchBreakMinutes: ol.lunchBreakMinutes,
+          teaBreakMinutes: ol.teaBreakMinutes,
+          idleLunchMinutes: ol.lunchBreakMinutes,
+          idleTeaMinutes: 0,
+          manualBreakIdleMinutes: ol.manualBreakIdleMinutes,
+          grossMinutes: ol.grossMinutes,
+          activeMinutes: ol.activeMinutes,
+          idleMinutes: ol.idleMinutes,
+          meetsEightHourWork: ol.meetsEightHourWork,
+          lunchBreakOpen: false,
+          teaBreakOpen: false,
+          status: log.status,
+          inOffice: Boolean(log.in_office),
+          notes: log.notes ?? null,
+          screenshotCount: screenshotCountByLog.get(String(log.id)) ?? 0,
+          isOfficeLeave: true,
+          officeLeaveAttachmentUrl: log.office_leave_attachment_url ?? null,
+        };
+      }
+
       const useNowForOpenShift =
         !log.check_out_at && String(log.work_date ?? "") === todayIst && endDate === todayIst;
 
       const grossMin = grossMinutesFromAttendanceLog(log, { nowMs, useNowForOpenShift });
+      const userIdForLeave = emp?.user_id ? String(emp.user_id) : String(log.employee_id);
+      const workDateYmd = String(log.work_date ?? "").slice(0, 10);
+      const minBreakMinutes = minimumCombinedBreakMinutesForWorkDate(
+        workDateYmd,
+        halfDayLeaveDatesByUser.get(userIdForLeave),
+      );
 
       const nowIso = new Date(nowMs).toISOString();
       const { lunchMinutes: lunchIdleMinBase, teaMinutes: teaIdleMinBase } =
@@ -344,6 +406,7 @@ export async function GET(request: NextRequest) {
               lunchMinutes: lunchIdleMinBase,
               teaMinutes: teaIdleMinBase,
               grossWorkMinutes: grossMin,
+              minimumBreakMinutes: minBreakMinutes,
             })
           : {
               lunchBreakMinutes: lunchIdleMinBase,
@@ -508,6 +571,8 @@ export async function GET(request: NextRequest) {
         checkOutLng: log.check_out_lng ?? null,
         notes: log.notes ?? null,
         screenshotCount: screenshotCountByLog.get(String(log.id)) ?? 0,
+        isOfficeLeave: false,
+        officeLeaveAttachmentUrl: null,
       };
     })
     .filter(Boolean);
