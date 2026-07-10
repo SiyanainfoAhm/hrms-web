@@ -20,6 +20,23 @@ const OFFICE_LEAVE_TZ = "Asia/Kolkata";
 const OFFICE_LEAVE_CHECK_IN = "09:00";
 const OFFICE_LEAVE_CHECK_OUT = "18:00";
 
+export type OfficeLeaveSyncResult = {
+  synced: number;
+  skipped: string[];
+  removed: number;
+};
+
+export type OfficeLeaveBackfillSummary = {
+  leaveRequestsChecked: number;
+  datesEvaluated: number;
+  attendanceRowsCreated: number;
+  existingRowsSkipped: number;
+  weekendsSkipped: number;
+  holidaysSkipped: number;
+  realAttendancePreserved: number;
+  errors: string[];
+};
+
 export function isOfficeLeaveTypeCode(code: string | null | undefined): boolean {
   return String(code ?? "").trim().toUpperCase() === OFFICE_LEAVE_TYPE_CODE;
 }
@@ -39,6 +56,26 @@ export function officeLeaveWorkDatesInRange(args: {
   return eachYmdInRange(args.startYmd, args.endYmd).filter(
     (ymd) => !isWeekendYmd(ymd) && !holidaySet.has(ymd),
   );
+}
+
+/** Approved Office Leave working days inside a payroll/attendance window. */
+export function officeLeavePresentDatesInWindow(args: {
+  startYmd: string;
+  endYmd: string;
+  leaveStartYmd: string;
+  leaveEndYmd: string;
+  holidays: HolidayRow[];
+  employeeDivisionId: string | null | undefined;
+}): string[] {
+  const overlapStart = args.startYmd > args.leaveStartYmd ? args.startYmd : args.leaveStartYmd;
+  const overlapEnd = args.endYmd < args.leaveEndYmd ? args.endYmd : args.leaveEndYmd;
+  if (overlapEnd < overlapStart) return [];
+  return officeLeaveWorkDatesInRange({
+    startYmd: overlapStart,
+    endYmd: overlapEnd,
+    holidays: args.holidays,
+    employeeDivisionId: args.employeeDivisionId,
+  });
 }
 
 export function officeLeaveAttendancePatch(args: {
@@ -63,19 +100,19 @@ export function officeLeaveAttendancePatch(args: {
     lunch_check_in_at: null,
     tea_check_out_at: null,
     tea_check_in_at: null,
-    lunch_break_segments: null,
-    tea_break_segments: null,
+    lunch_break_segments: [] as { out: string; in: string }[],
+    tea_break_segments: [] as { out: string; in: string }[],
     status: "present",
     in_office: false,
     check_in_in_office: false,
     check_out_in_office: false,
-    office_note: null,
-    notes: "Office Leave",
+    office_note: "Office Leave",
+    notes: "Approved Office Leave",
     is_office_leave: true,
     office_leave_request_id: args.leaveRequestId,
     office_leave_attachment_url: args.attachmentUrl,
     agent_active_minutes: OFFICE_LEAVE_ACTIVE_MINUTES,
-    agent_idle_minutes: 0,
+    agent_idle_minutes: OFFICE_LEAVE_BREAK_MINUTES,
     agent_disconnected_minutes: 0,
     updated_at: updatedAt,
   };
@@ -98,10 +135,38 @@ export function officeLeaveMetrics() {
     lunchBreakMinutes: OFFICE_LEAVE_BREAK_MINUTES,
     teaBreakMinutes: 0,
     agentActiveMinutes: OFFICE_LEAVE_ACTIVE_MINUTES,
-    agentIdleMinutes: 0,
+    agentIdleMinutes: OFFICE_LEAVE_BREAK_MINUTES,
     disconnectedMinutes: 0,
     meetsEightHourWork: true,
   };
+}
+
+async function removeObsoleteSyntheticOfficeLeaveRows(args: {
+  supabase: SupabaseClient;
+  companyId: string;
+  leaveRequestId: string;
+  keepWorkDates: Set<string>;
+}): Promise<number> {
+  const { data: rows, error } = await args.supabase
+    .from("HRMS_attendance_logs")
+    .select("id, work_date")
+    .eq("company_id", args.companyId)
+    .eq("office_leave_request_id", args.leaveRequestId)
+    .eq("is_office_leave", true);
+  if (error) throw new Error(error.message);
+
+  const obsoleteIds = (rows ?? [])
+    .filter((row) => !args.keepWorkDates.has(String(row.work_date).slice(0, 10)))
+    .map((row) => row.id)
+    .filter(Boolean);
+  if (!obsoleteIds.length) return 0;
+
+  const { error: delErr } = await args.supabase
+    .from("HRMS_attendance_logs")
+    .delete()
+    .in("id", obsoleteIds);
+  if (delErr) throw new Error(delErr.message);
+  return obsoleteIds.length;
 }
 
 export async function syncOfficeLeaveToAttendance(args: {
@@ -114,13 +179,21 @@ export async function syncOfficeLeaveToAttendance(args: {
   attachmentUrl: string | null;
   employeeDivisionId: string | null | undefined;
   holidays: HolidayRow[];
-}): Promise<{ synced: number; skipped: string[] }> {
+}): Promise<OfficeLeaveSyncResult> {
   const workDates = officeLeaveWorkDatesInRange({
     startYmd: args.startYmd,
     endYmd: args.endYmd,
     holidays: args.holidays,
     employeeDivisionId: args.employeeDivisionId,
   });
+  const workDateSet = new Set(workDates);
+  const removed = await removeObsoleteSyntheticOfficeLeaveRows({
+    supabase: args.supabase,
+    companyId: args.companyId,
+    leaveRequestId: args.leaveRequestId,
+    keepWorkDates: workDateSet,
+  });
+
   const nowIso = new Date().toISOString();
   const skipped: string[] = [];
   let synced = 0;
@@ -164,7 +237,7 @@ export async function syncOfficeLeaveToAttendance(args: {
     synced += 1;
   }
 
-  return { synced, skipped };
+  return { synced, skipped, removed };
 }
 
 export async function removeOfficeLeaveAttendance(args: {
@@ -196,4 +269,137 @@ export async function loadHolidaysForOfficeLeave(args: {
   const { data, error } = await q;
   if (error) throw new Error(error.message);
   return (data ?? []) as HolidayRow[];
+}
+
+export async function backfillApprovedOfficeLeaveAttendance(args: {
+  supabase: SupabaseClient;
+  companyId: string;
+  leaveRequestId?: string;
+  employeeUserId?: string;
+}): Promise<OfficeLeaveBackfillSummary> {
+  const summary: OfficeLeaveBackfillSummary = {
+    leaveRequestsChecked: 0,
+    datesEvaluated: 0,
+    attendanceRowsCreated: 0,
+    existingRowsSkipped: 0,
+    weekendsSkipped: 0,
+    holidaysSkipped: 0,
+    realAttendancePreserved: 0,
+    errors: [],
+  };
+
+  let q = args.supabase
+    .from("HRMS_leave_requests")
+    .select(
+      "id, company_id, employee_id, employee_user_id, start_date, end_date, attachment_url, HRMS_leave_types(code)",
+    )
+    .eq("company_id", args.companyId)
+    .eq("status", "approved");
+  if (args.leaveRequestId) q = q.eq("id", args.leaveRequestId);
+  if (args.employeeUserId) q = q.eq("employee_user_id", args.employeeUserId);
+
+  const { data: leaveRows, error: leaveErr } = await q;
+  if (leaveErr) {
+    summary.errors.push(leaveErr.message);
+    return summary;
+  }
+
+  for (const row of leaveRows ?? []) {
+    const ltRaw: any = (row as any).HRMS_leave_types;
+    const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
+    if (!isOfficeLeaveTypeCode(ltObj?.code)) continue;
+
+    summary.leaveRequestsChecked += 1;
+    const leaveRequestId = String((row as any).id);
+    const employeeId = String((row as any).employee_id);
+    const startYmd = String((row as any).start_date).slice(0, 10);
+    const endYmd = String((row as any).end_date).slice(0, 10);
+    const attachmentUrl = (row as any).attachment_url ? String((row as any).attachment_url) : null;
+
+    const { data: empDivRow, error: divErr } = await args.supabase
+      .from("HRMS_employees")
+      .select("division_id")
+      .eq("company_id", args.companyId)
+      .eq("id", employeeId)
+      .maybeSingle();
+    if (divErr) {
+      summary.errors.push(`${leaveRequestId}: ${divErr.message}`);
+      continue;
+    }
+    const employeeDivisionId = (empDivRow as any)?.division_id
+      ? String((empDivRow as any).division_id)
+      : null;
+
+    let holidays: HolidayRow[] = [];
+    try {
+      holidays = await loadHolidaysForOfficeLeave({
+        supabase: args.supabase,
+        companyId: args.companyId,
+        employeeDivisionId,
+      });
+    } catch (e) {
+      summary.errors.push(
+        `${leaveRequestId}: ${e instanceof Error ? e.message : "Failed to load holidays"}`,
+      );
+      continue;
+    }
+
+    const holidaySet = buildHolidayYmdSet(holidays, employeeDivisionId);
+    for (const ymd of eachYmdInRange(startYmd, endYmd)) {
+      summary.datesEvaluated += 1;
+      if (isWeekendYmd(ymd)) {
+        summary.weekendsSkipped += 1;
+        continue;
+      }
+      if (holidaySet.has(ymd)) {
+        summary.holidaysSkipped += 1;
+        continue;
+      }
+
+      const { data: existing, error: exErr } = await args.supabase
+        .from("HRMS_attendance_logs")
+        .select("id, is_office_leave, check_in_at")
+        .eq("company_id", args.companyId)
+        .eq("employee_id", employeeId)
+        .eq("work_date", ymd)
+        .maybeSingle();
+      if (exErr) {
+        summary.errors.push(`${leaveRequestId}/${ymd}: ${exErr.message}`);
+        continue;
+      }
+      if (existing?.check_in_at && !existing.is_office_leave) {
+        summary.realAttendancePreserved += 1;
+        continue;
+      }
+      if (existing?.is_office_leave) {
+        summary.existingRowsSkipped += 1;
+        continue;
+      }
+
+      try {
+        const patch = officeLeaveAttendancePatch({
+          workDateYmd: ymd,
+          leaveRequestId,
+          attachmentUrl,
+        });
+        const { error: insErr } = await args.supabase.from("HRMS_attendance_logs").insert({
+          company_id: args.companyId,
+          employee_id: employeeId,
+          ...patch,
+          created_at: new Date().toISOString(),
+        });
+        if (insErr) {
+          summary.errors.push(`${leaveRequestId}/${ymd}: ${insErr.message}`);
+          continue;
+        }
+        summary.attendanceRowsCreated += 1;
+      } catch (e) {
+        summary.errors.push(
+          `${leaveRequestId}/${ymd}: ${e instanceof Error ? e.message : "Insert failed"}`,
+        );
+      }
+    }
+  }
+
+  return summary;
 }

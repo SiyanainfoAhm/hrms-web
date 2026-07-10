@@ -5,6 +5,11 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { leaveUnitsInWindow, overlapDaysInclusive } from "@/lib/leavePolicy";
+import {
+  officeLeavePresentDatesInWindow,
+  OFFICE_LEAVE_TYPE_CODE,
+} from "@/lib/officeLeaveAttendance";
+import type { HolidayRow } from "@/lib/leaveBookingDays";
 import { effectiveLunchBreakMinutes } from "@/lib/attendancePolicy";
 import {
   computeGovernmentMonthlyPayroll,
@@ -698,15 +703,35 @@ async function computeAttendanceDrivenPayDays(args: {
   // Map user -> employee_id for attendance logs
   const { data: employees, error: empErr } = await supabase
     .from("HRMS_employees")
-    .select("id, user_id")
+    .select("id, user_id, division_id")
     .eq("company_id", companyId)
     .in("user_id", userIds);
   if (empErr) throw new Error(empErr.message);
   const employeeIdByUser = new Map<string, string>();
+  const divisionIdByUser = new Map<string, string | null>();
   for (const e of employees ?? []) {
-    if (e?.user_id && e?.id) employeeIdByUser.set(e.user_id as string, e.id as string);
+    if (e?.user_id && e?.id) {
+      employeeIdByUser.set(e.user_id as string, e.id as string);
+      divisionIdByUser.set(
+        e.user_id as string,
+        (e as any).division_id ? String((e as any).division_id) : null,
+      );
+    }
   }
   const employeeIds = [...employeeIdByUser.values()];
+
+  const { data: holidayRows, error: holErr } = await supabase
+    .from("HRMS_holidays")
+    .select("holiday_date, holiday_end_date, division_id")
+    .eq("company_id", companyId);
+  if (holErr) throw new Error(holErr.message);
+  const companyHolidays = (holidayRows ?? []) as HolidayRow[];
+
+  const officeLeaveRows: Array<{
+    employee_user_id: string;
+    start_date: string;
+    end_date: string;
+  }> = [];
 
   // Approved leaves (paid/unpaid totals + leave day override)
   const { data: leaves, error: leaveErr } = await supabase
@@ -728,7 +753,14 @@ async function computeAttendanceDrivenPayDays(args: {
     const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
     const leaveCode = String(ltObj?.code ?? "").toUpperCase();
     // Office Leave is credited via attendance (9h gross), not as a leave day override.
-    if (leaveCode === "OL") continue;
+    if (leaveCode === OFFICE_LEAVE_TYPE_CODE) {
+      officeLeaveRows.push({
+        employee_user_id: uid,
+        start_date: String(l.start_date).slice(0, 10),
+        end_date: String(l.end_date).slice(0, 10),
+      });
+      continue;
+    }
     const r = computeLeavePaidUnpaidInWindow(l, periodStartYmd, periodEndExclusive);
     if (r.overlapDays <= 0) continue;
     // Keep paid/unpaid days as-is; may be fractional (e.g. 0.5 HL).
@@ -799,6 +831,29 @@ async function computeAttendanceDrivenPayDays(args: {
       set.add(workDate);
       presentDatesByUser.set(uid, set);
     }
+  }
+
+  // Safeguard: approved Office Leave working days count as present even if attendance row is missing.
+  for (const ol of officeLeaveRows) {
+    const uid = ol.employee_user_id;
+    if (!uid) continue;
+    const presentDates = presentDatesByUser.get(uid) || new Set<string>();
+    const leaveDates = leaveDaysByUser.get(uid);
+    const olDates = officeLeavePresentDatesInWindow({
+      startYmd: periodStartYmd,
+      endYmd: periodEndYmdInclusive,
+      leaveStartYmd: ol.start_date,
+      leaveEndYmd: ol.end_date,
+      holidays: companyHolidays,
+      employeeDivisionId: divisionIdByUser.get(uid) ?? null,
+    });
+    for (const ymd of olDates) {
+      if (leaveDates?.has(ymd)) continue;
+      if (presentDates.has(ymd)) continue;
+      presentDates.add(ymd);
+      presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + 1);
+    }
+    if (presentDates.size) presentDatesByUser.set(uid, presentDates);
   }
 
   return {

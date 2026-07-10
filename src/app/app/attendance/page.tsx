@@ -121,6 +121,10 @@ function BreakPunchesBlock({
   tz: AttendanceTimeZoneId;
   className?: string;
 }) {
+  if (r.isOfficeLeave) {
+    return <span className="text-xs font-medium text-sky-800">Office Leave</span>;
+  }
+
   const lunchSegs = r.lunchBreakSegments ?? [];
   const teaSegs = r.teaBreakSegments ?? [];
   const nodes: ReactNode[] = [];
@@ -232,7 +236,7 @@ function AttendanceRow({
         </td>
       )}
       <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
-        {formatTimeTz(r.checkInAt, tz)}
+        {r.isOfficeLeave ? "—" : formatTimeTz(r.checkInAt, tz)}
       </td>
       <td
         className="bg-white min-w-[200px] max-w-[280px] px-3 py-3 group-hover:bg-[var(--primary-soft)]/40"
@@ -241,7 +245,7 @@ function AttendanceRow({
         <BreakPunchesBlock r={r} tz={tz} />
       </td>
       <td className="bg-white px-3 py-3 tabular-nums text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
-        {formatTimeTz(r.checkOutAt, tz)}
+        {r.isOfficeLeave ? "—" : formatTimeTz(r.checkOutAt, tz)}
       </td>
       <td className="bg-white px-3 py-3 font-medium text-slate-800 group-hover:bg-[var(--primary-soft)]/40">
         {fmtHoursMin(r.grossMinutes)}
@@ -256,7 +260,7 @@ function AttendanceRow({
         {fmtHoursMin(idleTotal)}
       </td>
       <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">
-        {r.checkOutAt ? (
+        {r.isOfficeLeave || r.checkOutAt ? (
           r.meetsEightHourWork ? (
             <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
               Yes
@@ -271,7 +275,7 @@ function AttendanceRow({
       <td className="bg-white px-3 py-3 group-hover:bg-[var(--primary-soft)]/40">
         {r.isOfficeLeave ? (
           <span className="inline-flex rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-900">
-            Office leave
+            Office Leave
           </span>
         ) : r.inOffice ? (
           <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
@@ -366,11 +370,15 @@ function AttendanceMobileCard({
       <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 text-sm">
         <div>
           <dt className="text-xs text-slate-500">1. First in</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.checkInAt, tz)}</dd>
+          <dd className="tabular-nums font-medium text-slate-800">
+            {r.isOfficeLeave ? "—" : formatTimeTz(r.checkInAt, tz)}
+          </dd>
         </div>
         <div>
           <dt className="text-xs text-slate-500">2. Final out</dt>
-          <dd className="tabular-nums font-medium text-slate-800">{formatTimeTz(r.checkOutAt, tz)}</dd>
+          <dd className="tabular-nums font-medium text-slate-800">
+            {r.isOfficeLeave ? "—" : formatTimeTz(r.checkOutAt, tz)}
+          </dd>
         </div>
         <div className="col-span-2">
           <dt className="text-xs text-slate-500">Break punches (lunch &amp; tea)</dt>
@@ -399,7 +407,7 @@ function AttendanceMobileCard({
         <div>
           <dt className="text-xs text-slate-500">≥8h</dt>
           <dd>
-            {r.checkOutAt ? (
+            {r.isOfficeLeave || r.checkOutAt ? (
               r.meetsEightHourWork ? (
                 <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">
                   Yes

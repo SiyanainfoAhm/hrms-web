@@ -392,7 +392,16 @@ export async function POST(request: NextRequest) {
       });
       return NextResponse.json({ request: data, officeLeaveSync: sync });
     } catch (e) {
-      console.warn("[office-leave] attendance sync failed", e);
+      await supabase.from("HRMS_leave_requests").delete().eq("id", (data as any).id);
+      return NextResponse.json(
+        {
+          error:
+            e instanceof Error
+              ? `Office Leave approved but attendance sync failed: ${e.message}`
+              : "Office Leave approved but attendance sync failed",
+        },
+        { status: 400 },
+      );
     }
   }
 
@@ -546,7 +555,19 @@ export async function PATCH(request: NextRequest) {
         });
       }
     } catch (e) {
-      console.warn("[office-leave] attendance sync failed", e);
+      if (action === "approve") {
+        await supabase
+          .from("HRMS_leave_requests")
+          .update({
+            status: existing.status,
+            approver_user_id: null,
+            approved_at: null,
+            rejected_at: null,
+            rejection_reason: null,
+          })
+          .eq("id", id)
+          .eq("company_id", me.company_id);
+      }
       return NextResponse.json(
         { error: e instanceof Error ? e.message : "Failed to sync Office Leave attendance" },
         { status: 400 },
