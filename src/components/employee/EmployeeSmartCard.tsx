@@ -6,14 +6,37 @@ import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { coercePhoneString } from "@/lib/phoneDisplay";
 
-/** Visible card ≈ 300×240; export uses pixelRatio 3. */
-const CARD_ASPECT = "1.25 / 1";
-/** ISO/IEC 7810 ID-1 (credit card) size in mm. */
+/** width ÷ height — must match on-screen `aspectRatio`. Visible card ≈ 300×240px. */
+const CARD_ASPECT_RATIO = 1.25;
+const CARD_ASPECT = `${CARD_ASPECT_RATIO} / 1`;
+/** PDF page matches card proportions (taller than ID-1 credit card). */
 const PDF_PAGE_WIDTH_MM = 85.6;
-const PDF_PAGE_HEIGHT_MM = 54;
+const PDF_PAGE_HEIGHT_MM = PDF_PAGE_WIDTH_MM / CARD_ASPECT_RATIO;
 /** Outer margin so the card fills ~94% of the PDF page. */
 const PDF_MARGIN_MM = 1.6;
 const EXPORT_PIXEL_RATIO = 3;
+
+function getExportCaptureOptions(el: HTMLElement) {
+  const rect = el.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+  return {
+    cacheBust: true,
+    pixelRatio: EXPORT_PIXEL_RATIO,
+    width,
+    height,
+    backgroundColor: "#5b21b6",
+  } as const;
+}
+
+async function loadImageDimensions(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    img.onerror = () => reject(new Error("Image failed to load"));
+    img.src = dataUrl;
+  });
+}
 
 export type EmployeeSmartCardProps = {
   employeeName: string;
@@ -62,17 +85,10 @@ async function captureSmartCardPng(el: HTMLElement): Promise<string> {
   el.style.transition = "none";
 
   try {
+    const captureOptions = getExportCaptureOptions(el);
     // Double-capture: first warms fonts/images; second is the sharp export.
-    await toPng(el, {
-      cacheBust: true,
-      pixelRatio: EXPORT_PIXEL_RATIO,
-      backgroundColor: "#5b21b6",
-    });
-    return await toPng(el, {
-      cacheBust: true,
-      pixelRatio: EXPORT_PIXEL_RATIO,
-      backgroundColor: "#5b21b6",
-    });
+    await toPng(el, captureOptions);
+    return await toPng(el, captureOptions);
   } finally {
     el.style.boxShadow = prevShadow;
     el.style.filter = prevFilter;
@@ -166,9 +182,8 @@ export function EmployeeSmartCard({
 
       const { jsPDF } = await import("jspdf");
       const dataUrl = await captureSmartCardPng(el);
+      const { width: imgWpx, height: imgHpx } = await loadImageDimensions(dataUrl);
 
-      // ID-1 page size (≈85.6×54mm). Pass [width, height] with landscape.
-      // Verified: jsPDF yields getWidth=85.6, getHeight=54 for this pair.
       const pdf = new jsPDF({
         orientation: "landscape",
         unit: "mm",
@@ -179,7 +194,6 @@ export function EmployeeSmartCard({
       let pageW = pdf.internal.pageSize.getWidth();
       let pageH = pdf.internal.pageSize.getHeight();
 
-      // If orientation unexpectedly swapped, force correct landscape dims.
       if (pageW < pageH) {
         const tmp = pageW;
         pageW = pageH;
@@ -187,12 +201,27 @@ export function EmployeeSmartCard({
       }
 
       const margin = PDF_MARGIN_MM;
-      const imgW = pageW - margin * 2;
-      const imgH = pageH - margin * 2;
+      const maxW = pageW - margin * 2;
+      const maxH = pageH - margin * 2;
+      const imgAspect = imgWpx / imgHpx;
+      const boxAspect = maxW / maxH;
+
+      let imgW: number;
+      let imgH: number;
+      if (imgAspect > boxAspect) {
+        imgW = maxW;
+        imgH = maxW / imgAspect;
+      } else {
+        imgH = maxH;
+        imgW = maxH * imgAspect;
+      }
+
+      const x = margin + (maxW - imgW) / 2;
+      const y = margin + (maxH - imgH) / 2;
 
       pdf.setFillColor(255, 255, 255);
       pdf.rect(0, 0, pageW, pageH, "F");
-      pdf.addImage(dataUrl, "PNG", margin, margin, imgW, imgH, undefined, "FAST");
+      pdf.addImage(dataUrl, "PNG", x, y, imgW, imgH, undefined, "FAST");
 
       pdf.save(buildFilename("pdf", displayEmployeeNumber, displayName));
     } catch {
