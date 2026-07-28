@@ -8,6 +8,7 @@ import { AvatarMenu, type AvatarMenuUser } from "./AvatarMenu";
 import type { Actor } from "../../lib/permissions";
 import type { RoleId } from "../../config/roleConfig";
 import { getDemoUserFromStorage } from "../../lib/demoAuth";
+import { clearCurrentUserAvatar } from "../../lib/currentUserAvatarStore";
 
 export function HrmsShellPage({
   title,
@@ -45,6 +46,7 @@ export function HrmsShellPage({
           } catch {
             /* ignore */
           }
+          clearCurrentUserAvatar();
           localStorage.removeItem("demoUser");
           router.push("/auth/login");
         }}

@@ -9,8 +9,11 @@ const ALLOWED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const MAX_BYTES = 5 * 1024 * 1024;
 
 export type ProfileAvatarEditorProps = {
-  src: string;
-  alt: string;
+  userId: string;
+  name: string;
+  gender?: string | null;
+  profileImagePath?: string | null;
+  profileImageUrl?: string | null;
   size?: number;
   hasUploadedPhoto: boolean;
   disabled?: boolean;
@@ -23,8 +26,11 @@ export type ProfileAvatarEditorProps = {
 };
 
 export function ProfileAvatarEditor({
-  src,
-  alt,
+  userId,
+  name,
+  gender = null,
+  profileImagePath,
+  profileImageUrl,
   size = 80,
   hasUploadedPhoto,
   disabled = false,
@@ -116,8 +122,12 @@ export function ProfileAvatarEditor({
   return (
     <div ref={rootRef} className={cn("group relative shrink-0", className)} style={{ width: size, height: size }}>
       <InteractiveAvatar
-        src={src}
-        alt={alt}
+        userId={userId}
+        name={name}
+        gender={gender}
+        profileImagePath={profileImagePath}
+        profileImageUrl={profileImageUrl}
+        alt={name}
         size={size}
         waveOnHover={waveOnHover}
         initialGreeting={initialGreeting}

@@ -27,6 +27,8 @@ import { getRequestAppBaseUrl, sendInviteEmail } from "@/lib/inviteEmail";
 import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import bcrypt from "bcryptjs";
 
+import { publicUrlForStoragePath } from "@/lib/profilePictureStorage";
+
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
@@ -86,6 +88,10 @@ function mapRow(row: any, lookups?: {
   const departmentName = lookups?.departmentById?.get(row.department_id)?.name ?? "";
   const divisionName = lookups?.divisionById?.get(row.division_id)?.name ?? "";
   const shiftName = lookups?.shiftById?.get(row.shift_id)?.name ?? "";
+  const profileImagePath =
+    typeof row.profile_image_path === "string" && row.profile_image_path.trim()
+      ? row.profile_image_path.trim()
+      : null;
   return {
     id: row.id as string,
     email: row.email as string,
@@ -109,6 +115,9 @@ function mapRow(row: any, lookups?: {
     divisionName: divisionName || null,
     shiftId: row.shift_id ?? null,
     shiftName: shiftName || null,
+    gender: (row.gender ?? null) as string | null,
+    profileImagePath,
+    profileImageUrl: profileImagePath ? publicUrlForStoragePath(profileImagePath) : null,
   };
 }
 

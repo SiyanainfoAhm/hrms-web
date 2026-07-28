@@ -7,6 +7,7 @@ import type { EntityField, VisibilityRule } from "../../types/crud";
 import { cn } from "../../lib/cn";
 import { ProfileEditDialog } from "./ProfileEditDialog";
 import { ProfileFieldRow, ProfileSection } from "./ProfileBlocks";
+import { EmployeeAvatar } from "../common/EmployeeAvatar";
 
 export type ProfileUser = {
   id: string;
@@ -16,6 +17,9 @@ export type ProfileUser = {
   roleLabel?: string;
   email?: string;
   phone?: string;
+  gender?: string | null;
+  profileImagePath?: string | null;
+  profileImageUrl?: string | null;
   avatarUrl?: string;
 };
 
@@ -26,14 +30,6 @@ type ProfileSectionConfig = {
   visible?: VisibilityRule;
   rows: Array<{ label: string; value?: React.ReactNode; visible?: VisibilityRule }>;
 };
-
-function initials(u: ProfileUser | null | undefined) {
-  const name = (u?.firstName && u?.lastName ? `${u.firstName} ${u.lastName}` : u?.fullName)?.trim();
-  if (!name) return "U";
-  const parts = name.split(/\s+/).filter(Boolean);
-  if (parts.length === 1) return parts[0][0].toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
 
 export function ProfileTemplate<TValues extends Record<string, unknown>>({
   actor,
@@ -66,9 +62,14 @@ export function ProfileTemplate<TValues extends Record<string, unknown>>({
     <div className="p-6 sm:p-8 space-y-6">
       <div className="bg-white rounded-xl shadow border border-gray-100 p-6 flex items-start justify-between gap-4 flex-col sm:flex-row">
         <div className="flex items-center gap-4 min-w-0">
-          <div className="w-14 h-14 rounded-full bg-[var(--primary-soft)] text-[var(--primary)] border flex items-center justify-center font-bold text-xl">
-            {initials(user)}
-          </div>
+          <EmployeeAvatar
+            userId={user?.id ?? "me"}
+            name={name}
+            gender={user?.gender}
+            profileImagePath={user?.profileImagePath}
+            profileImageUrl={user?.profileImageUrl ?? user?.avatarUrl}
+            size={56}
+          />
           <div className="min-w-0">
             <div className="text-lg font-bold text-gray-900 truncate">{name}</div>
             <div className="text-sm text-gray-600 truncate">{user?.roleLabel ?? ""}</div>
@@ -118,4 +119,3 @@ export function ProfileTemplate<TValues extends Record<string, unknown>>({
     </div>
   );
 }
-

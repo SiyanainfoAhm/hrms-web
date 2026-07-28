@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { employeeAvatarUrl } from "@/lib/employeeAvatarUrl";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { PageHeader } from "@/components/common/PageHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { EmployeeSmartCard } from "@/components/employee/EmployeeSmartCard";
 import { ProfileAvatarEditor } from "@/components/employee/ProfileAvatarEditor";
 import { useToast } from "@/components/common/ToastProvider";
-import { resolveEmployeeAvatarSrc } from "@/lib/profilePictureStorage";
+import { resolveEmployeeAvatar } from "@/lib/resolveEmployeeAvatar";
+import { patchCurrentUserAvatar } from "@/lib/currentUserAvatarStore";
 import { supabase } from "@/lib/supabaseClient";
 import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
@@ -300,6 +300,14 @@ export function DashboardContent() {
                 }
               : null,
           );
+          if (meUser) {
+            patchCurrentUserAvatar({
+              fullName: meUser.name || undefined,
+              gender: meUser.gender ?? null,
+              profileImagePath: meUser.profileImagePath ?? null,
+              profileImageUrl: meUser.profileImageUrl ?? null,
+            });
+          }
           const meCompany = d.company as DashboardCompany | null | undefined;
           setCompany(
             meCompany
@@ -492,12 +500,11 @@ export function DashboardContent() {
 
   const displayName = name || "Employee";
   const greeting = getGreeting();
-  const resolvedAvatarUrl = resolveEmployeeAvatarSrc({
+  const resolvedAvatarUrl = resolveEmployeeAvatar({
     userId: id,
     gender: user?.gender ?? null,
     profileImagePath: user?.profileImagePath,
     profileImageUrl: user?.profileImageUrl,
-    fallbackAvatarUrl: employeeAvatarUrl,
   });
   const hasUploadedPhoto = Boolean(user?.profileImagePath);
 
@@ -603,8 +610,11 @@ export function DashboardContent() {
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
                 <div className="mb-5 flex items-center gap-4 overflow-visible">
                   <ProfileAvatarEditor
-                    src={resolvedAvatarUrl}
-                    alt={displayName}
+                    userId={id}
+                    name={displayName}
+                    gender={user?.gender ?? null}
+                    profileImagePath={user?.profileImagePath}
+                    profileImageUrl={user?.profileImageUrl}
                     size={80}
                     hasUploadedPhoto={hasUploadedPhoto}
                     waveOnHover
@@ -619,12 +629,20 @@ export function DashboardContent() {
                             }
                           : prev,
                       );
+                      patchCurrentUserAvatar({
+                        profileImagePath: profileImagePath || null,
+                        profileImageUrl,
+                      });
                       showToast("success", "Profile picture updated.");
                     }}
                     onRemoved={() => {
                       setUser((prev) =>
                         prev ? { ...prev, profileImagePath: null, profileImageUrl: null } : prev,
                       );
+                      patchCurrentUserAvatar({
+                        profileImagePath: null,
+                        profileImageUrl: null,
+                      });
                       showToast("success", "Profile picture removed.");
                     }}
                     onError={(message) => showToast("error", message)}

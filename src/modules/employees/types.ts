@@ -21,6 +21,9 @@ export type EmployeeListRow = {
   divisionName?: string | null;
   shiftName?: string | null;
   preboardingDocsComplete?: boolean;
+  gender?: string | null;
+  profileImagePath?: string | null;
+  profileImageUrl?: string | null;
 };
 
 export type EmployeeDetail = {

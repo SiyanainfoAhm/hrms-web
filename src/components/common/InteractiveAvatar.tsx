@@ -2,10 +2,15 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { EmployeeAvatar } from "@/components/common/EmployeeAvatar";
 
 export type InteractiveAvatarProps = {
-  src: string;
-  alt: string;
+  userId: string;
+  name: string;
+  gender?: string | null;
+  profileImagePath?: string | null;
+  profileImageUrl?: string | null;
+  alt?: string;
   /** Avatar diameter in px — matches existing dashboard h-20 (80px) by default. */
   size?: number;
   className?: string;
@@ -66,7 +71,11 @@ function AvatarHand({ className }: { className?: string }) {
 }
 
 export function InteractiveAvatar({
-  src,
+  userId,
+  name,
+  gender = null,
+  profileImagePath,
+  profileImageUrl,
   alt,
   size = 80,
   className,
@@ -206,15 +215,16 @@ export function InteractiveAvatar({
           <AvatarHand className="avatar-hand" />
         </div>
         <div className="avatar-circle">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={src}
+          <EmployeeAvatar
+            userId={userId}
+            name={name}
+            gender={gender}
+            profileImagePath={profileImagePath}
+            profileImageUrl={profileImageUrl}
             alt={alt}
-            width={size}
-            height={size}
-            className="h-full w-full rounded-full object-cover"
-            crossOrigin="anonymous"
-            draggable={false}
+            fill
+            bordered={false}
+            className="border-0"
           />
         </div>
       </div>

@@ -10,7 +10,9 @@ import { GenericSearchBar } from "../../components/crud/GenericSearchBar";
 import { FilterBar } from "../../components/crud/FilterBar";
 import { GenericDataTable } from "../../components/crud/GenericDataTable";
 import { ConfirmDialog } from "../../components/common/ConfirmDialog";
+import { EmployeeAvatar } from "../../components/common/EmployeeAvatar";
 import { CompanyDocumentsDialog } from "@/components/company/CompanyDocumentsDialog";
+import { clearCurrentUserAvatar } from "@/lib/currentUserAvatarStore";
 import type { Actor } from "../../lib/permissions";
 import type { RoleId } from "../../config/roleConfig";
 import type { TableColumn, RowAction } from "../../types/crud";
@@ -181,15 +183,14 @@ export function EmployeeDirectoryPage() {
         sortValue: (r) => r.name ?? r.email,
         render: (r) => (
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-full bg-[var(--primary-soft)] flex items-center justify-center font-bold text-[var(--primary)] border shrink-0">
-              {(r.name ?? r.email)
-                .split(/\s+/)
-                .slice(0, 2)
-                .map((p) => p[0])
-                .join("")
-                .toUpperCase()
-                .slice(0, 2)}
-            </div>
+            <EmployeeAvatar
+              userId={r.id}
+              name={r.name || r.email}
+              gender={r.gender}
+              profileImagePath={r.profileImagePath}
+              profileImageUrl={r.profileImageUrl}
+              size={32}
+            />
             <div className="min-w-0">
               <div className="font-semibold text-gray-900 truncate">{r.name || "—"}</div>
               <div className="text-xs text-gray-500 truncate">{r.email}</div>
@@ -478,6 +479,7 @@ export function EmployeeDirectoryPage() {
                 } catch {
                   /* ignore */
                 }
+                clearCurrentUserAvatar();
                 localStorage.removeItem("demoUser");
                 router.push("/auth/login");
               }}
