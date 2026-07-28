@@ -4,6 +4,7 @@ import { COOKIE_NAME, createSessionCookie, getCookieOptions, type SessionUser } 
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { publicUrlForStoragePath } from "@/lib/profilePictureStorage";
+import { coercePhoneString } from "@/lib/phoneDisplay";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -22,7 +23,7 @@ function mapUser(row: any) {
     authProvider: (row.auth_provider ?? "password") as "password" | "google",
     companyId: (row.company_id ?? null) as string | null,
     employeeCode: (row.employee_code ?? "") as string,
-    phone: (row.phone ?? "") as string,
+    phone: coercePhoneString(row.phone),
     dateOfBirth: row.date_of_birth ? String(row.date_of_birth) : "",
     dateOfJoining: row.date_of_joining ? String(row.date_of_joining) : "",
     currentAddressLine1: (row.current_address_line1 ?? "") as string,

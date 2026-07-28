@@ -17,6 +17,8 @@ import {
 } from "@/lib/privatePayslipDisplay";
 import { PrivatePayslipStatutoryIds } from "@/components/payslip/PrivatePayslipStatutoryIds";
 import { normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
+import { patchCurrentUserAvatar } from "@/lib/currentUserAvatarStore";
+import { coercePhoneOptional, coercePhoneString } from "@/lib/phoneDisplay";
 
 export function ProfileContent() {
   const { role } = useHrmsSession();
@@ -377,7 +379,7 @@ export function ProfileContent() {
           email: u?.email ?? "",
           name: u?.name ?? "",
           employeeCode: u?.employeeCode ?? "",
-          phone: u?.phone ?? "",
+          phone: coercePhoneString(u?.phone),
           gender: (["male", "female", "other"].includes(u?.gender) ? u.gender : "") as "" | "male" | "female" | "other",
           designation: u?.designation ?? "",
           designationId: u?.designationId ?? "",
@@ -411,6 +413,15 @@ export function ProfileContent() {
           employmentStatus: u?.employmentStatus ?? "preboarding",
           ctc: u?.ctc ?? null,
         } as any);
+        patchCurrentUserAvatar({
+          fullName: u?.name || undefined,
+          email: u?.email || undefined,
+          phone: coercePhoneOptional(u?.phone),
+          gender: u?.gender ?? null,
+          profileImagePath: u?.profileImagePath ?? null,
+          profileImageUrl: u?.profileImageUrl ?? null,
+          roleLabel: u?.role ?? undefined,
+        });
       } catch (e: any) {
         if (!cancelled) setError(e?.message || "Failed to load profile");
       } finally {
@@ -541,6 +552,14 @@ export function ProfileContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save profile");
+      const saved = data?.user;
+      if (saved) {
+        patchCurrentUserAvatar({
+          fullName: saved.name || undefined,
+          phone: coercePhoneOptional(saved.phone),
+          gender: saved.gender ?? null,
+        });
+      }
       setSuccess("Saved");
       router.refresh();
     } catch (e: any) {

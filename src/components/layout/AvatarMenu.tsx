@@ -6,6 +6,7 @@ import { cn } from "../../lib/cn";
 import { EmployeeAvatar } from "../common/EmployeeAvatar";
 import { useCurrentUserAvatar } from "../../hooks/useCurrentUserAvatar";
 import { clearCurrentUserAvatar } from "../../lib/currentUserAvatarStore";
+import { coercePhoneOptional } from "../../lib/phoneDisplay";
 
 export type AvatarMenuUser = {
   id: string;
@@ -13,6 +14,7 @@ export type AvatarMenuUser = {
   lastName?: string;
   fullName?: string;
   email?: string;
+  phone?: string;
   roleLabel?: string;
   gender?: string | null;
   profileImagePath?: string | null;
@@ -55,6 +57,7 @@ export function AvatarMenu({
       lastName: user?.lastName,
       fullName: liveUser?.fullName ?? user?.fullName,
       email: liveUser?.email ?? user?.email,
+      phone: liveUser?.phone ?? user?.phone,
       roleLabel: liveUser?.roleLabel ?? user?.roleLabel,
       gender: liveUser?.gender ?? user?.gender ?? null,
       profileImagePath: liveUser?.profileImagePath ?? user?.profileImagePath ?? null,
@@ -67,6 +70,8 @@ export function AvatarMenu({
     if (merged.firstName && merged.lastName) return `${merged.firstName} ${merged.lastName}`;
     return merged.fullName ?? "User";
   }, [merged]);
+
+  const displayPhone = coercePhoneOptional(merged?.phone);
 
   return (
     <div className="relative" ref={ref}>
@@ -102,6 +107,9 @@ export function AvatarMenu({
             <div className="min-w-0">
               <div className="font-semibold text-sm truncate">{displayName}</div>
               <div className="text-xs text-gray-500 truncate capitalize">{merged?.roleLabel ?? ""}</div>
+              {displayPhone ? (
+                <div className="text-xs text-gray-500 truncate">{displayPhone}</div>
+              ) : null}
             </div>
           </div>
 

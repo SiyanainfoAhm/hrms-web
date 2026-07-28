@@ -13,6 +13,7 @@ import { ConfirmDialog } from "../../components/common/ConfirmDialog";
 import { EmployeeAvatar } from "../../components/common/EmployeeAvatar";
 import { CompanyDocumentsDialog } from "@/components/company/CompanyDocumentsDialog";
 import { clearCurrentUserAvatar } from "@/lib/currentUserAvatarStore";
+import { coercePhoneString } from "@/lib/phoneDisplay";
 import type { Actor } from "../../lib/permissions";
 import type { RoleId } from "../../config/roleConfig";
 import type { TableColumn, RowAction } from "../../types/crud";
@@ -194,6 +195,9 @@ export function EmployeeDirectoryPage() {
             <div className="min-w-0">
               <div className="font-semibold text-gray-900 truncate">{r.name || "—"}</div>
               <div className="text-xs text-gray-500 truncate">{r.email}</div>
+              {coercePhoneString(r.phone) ? (
+                <div className="text-xs text-gray-500 truncate">{coercePhoneString(r.phone)}</div>
+              ) : null}
             </div>
           </div>
         )

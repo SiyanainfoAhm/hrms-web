@@ -4,9 +4,10 @@ import Image from "next/image";
 import { Download, FileImage, FileText } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
+import { coercePhoneString } from "@/lib/phoneDisplay";
 
-/** Visible card ≈ 300×189; export uses pixelRatio 3 → ~900×567. */
-const CARD_ASPECT = "1.586 / 1";
+/** Visible card ≈ 300×240; export uses pixelRatio 3. */
+const CARD_ASPECT = "1.25 / 1";
 /** ISO/IEC 7810 ID-1 (credit card) size in mm. */
 const PDF_PAGE_WIDTH_MM = 85.6;
 const PDF_PAGE_HEIGHT_MM = 54;
@@ -18,6 +19,8 @@ export type EmployeeSmartCardProps = {
   employeeName: string;
   employeeNumber?: string | null;
   designation?: string | null;
+  phone?: string | null;
+  email?: string | null;
   companyName?: string | null;
   companyLogoUrl?: string | null;
   avatarUrl: string;
@@ -88,6 +91,8 @@ export function EmployeeSmartCard({
   employeeName,
   employeeNumber,
   designation,
+  phone,
+  email,
   companyName,
   companyLogoUrl,
   avatarUrl,
@@ -103,6 +108,8 @@ export function EmployeeSmartCard({
   const displayName = employeeName.trim() || "Employee";
   const displayDesignation = designation?.trim() || "Employee";
   const displayEmployeeNumber = employeeNumber?.trim() || "";
+  const displayPhone = coercePhoneString(phone);
+  const displayEmail = (email ?? "").trim();
   const displayCompanyName = companyName?.trim() || "";
 
   useEffect(() => {
@@ -207,7 +214,7 @@ export function EmployeeSmartCard({
       >
         <div className="absolute inset-y-0 left-0 w-1 bg-white/25" aria-hidden="true" />
 
-        <div className="flex h-full flex-col gap-2.5 p-3 pl-3.5 text-white">
+        <div className="flex h-full flex-col gap-2 p-3 pl-3.5 text-white">
           <div className="flex items-center gap-2 border-b border-white/15 pb-2">
             {companyLogoUrl ? (
               <div className="relative h-6 w-6 shrink-0 overflow-hidden rounded bg-white/95 p-0.5">
@@ -247,13 +254,29 @@ export function EmployeeSmartCard({
             </div>
           </div>
 
-          <div className="mt-0.5 space-y-1.5">
+          <div className="mt-0.5 flex-1 space-y-1.5">
             {displayEmployeeNumber ? (
               <div>
                 <p className="text-[8px] font-semibold uppercase tracking-[0.14em] text-violet-200/80">
                   Employee ID
                 </p>
                 <p className="truncate text-[12px] font-semibold tracking-wide">{displayEmployeeNumber}</p>
+              </div>
+            ) : null}
+            {displayPhone ? (
+              <div>
+                <p className="text-[8px] font-semibold uppercase tracking-[0.14em] text-violet-200/80">
+                  Phone
+                </p>
+                <p className="truncate text-[12px] font-semibold tracking-wide">{displayPhone}</p>
+              </div>
+            ) : null}
+            {displayEmail ? (
+              <div>
+                <p className="text-[8px] font-semibold uppercase tracking-[0.14em] text-violet-200/80">
+                  Email
+                </p>
+                <p className="truncate text-[11px] font-semibold tracking-wide">{displayEmail}</p>
               </div>
             ) : null}
             {displayCompanyName ? (

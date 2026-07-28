@@ -2,11 +2,13 @@
 
 import { getDemoUserFromStorage } from "@/lib/demoAuth";
 import { publicUrlForStoragePath } from "@/lib/profilePictureStorage";
+import { coercePhoneOptional } from "@/lib/phoneDisplay";
 
 export type CurrentUserAvatarState = {
   id: string;
   fullName: string;
   email?: string;
+  phone?: string;
   roleLabel: string;
   gender: string | null;
   profileImagePath: string | null;
@@ -53,7 +55,7 @@ export function patchCurrentUserAvatar(
   patch: Partial<
     Pick<
       CurrentUserAvatarState,
-      "profileImagePath" | "profileImageUrl" | "gender" | "fullName" | "email" | "roleLabel"
+      "profileImagePath" | "profileImageUrl" | "gender" | "fullName" | "email" | "phone" | "roleLabel"
     >
   >,
 ): void {
@@ -120,6 +122,7 @@ export async function ensureCurrentUserAvatar(opts?: {
         id: String(user.id),
         fullName: (user.name as string | null) || seeded?.fullName || "User",
         email: (user.email as string | undefined) ?? seeded?.email,
+        phone: coercePhoneOptional(user.phone),
         roleLabel: (user.role as string | undefined) ?? seeded?.roleLabel ?? "employee",
         gender: (user.gender as string | null) ?? null,
         profileImagePath: (user.profileImagePath as string | null) ?? null,

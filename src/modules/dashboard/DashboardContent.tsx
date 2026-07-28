@@ -10,6 +10,7 @@ import { ProfileAvatarEditor } from "@/components/employee/ProfileAvatarEditor";
 import { useToast } from "@/components/common/ToastProvider";
 import { resolveEmployeeAvatar } from "@/lib/resolveEmployeeAvatar";
 import { patchCurrentUserAvatar } from "@/lib/currentUserAvatarStore";
+import { coercePhoneOptional, coercePhoneString } from "@/lib/phoneDisplay";
 import { supabase } from "@/lib/supabaseClient";
 import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
@@ -127,6 +128,8 @@ function SkeletonBar({ className }: { className?: string }) {
 type DashboardMeUser = {
   gender: string | null;
   name: string | null;
+  email: string;
+  phone: string;
   employeeCode: string;
   designation: string;
   profileImagePath: string | null;
@@ -293,6 +296,8 @@ export function DashboardContent() {
               ? {
                   gender: meUser.gender ?? null,
                   name: meUser.name ?? null,
+                  email: meUser.email ?? "",
+                  phone: coercePhoneString(meUser.phone),
                   employeeCode: meUser.employeeCode ?? "",
                   designation: meUser.designation ?? "",
                   profileImagePath: meUser.profileImagePath ?? null,
@@ -304,6 +309,7 @@ export function DashboardContent() {
             patchCurrentUserAvatar({
               fullName: meUser.name || undefined,
               gender: meUser.gender ?? null,
+              phone: coercePhoneOptional(meUser.phone),
               profileImagePath: meUser.profileImagePath ?? null,
               profileImageUrl: meUser.profileImageUrl ?? null,
             });
@@ -654,13 +660,15 @@ export function DashboardContent() {
                 </div>
 
                 {loading ? (
-                  <SkeletonBar className="mb-4 h-[189px] w-full max-w-[300px] rounded-[14px]" />
+                  <SkeletonBar className="mb-4 h-[240px] w-full max-w-[300px] rounded-[14px]" />
                 ) : (
                   <EmployeeSmartCard
                     className="mb-4"
                     employeeName={user?.name?.trim() || displayName}
                     employeeNumber={user?.employeeCode}
                     designation={user?.designation}
+                    phone={user?.phone}
+                    email={user?.email}
                     companyName={company?.name}
                     companyLogoUrl={company?.logoUrl}
                     avatarUrl={resolvedAvatarUrl}

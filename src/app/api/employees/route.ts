@@ -28,6 +28,7 @@ import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import bcrypt from "bcryptjs";
 
 import { publicUrlForStoragePath } from "@/lib/profilePictureStorage";
+import { coercePhoneString } from "@/lib/phoneDisplay";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -99,7 +100,7 @@ function mapRow(row: any, lookups?: {
     role: row.role as "super_admin" | "admin" | "hr" | "manager" | "employee",
     employmentStatus: (row.employment_status ?? "preboarding") as "preboarding" | "current" | "past",
     employeeCode: (row.employee_code ?? "") as string,
-    phone: (row.phone ?? "") as string,
+    phone: coercePhoneString(row.phone),
     dateOfJoining: row.date_of_joining ? String(row.date_of_joining) : "",
     offerDate: row.offer_date ? String(row.offer_date).slice(0, 10) : "",
     employmentType: (row.employment_type ?? "") as string,
