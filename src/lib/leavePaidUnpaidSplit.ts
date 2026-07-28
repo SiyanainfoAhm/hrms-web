@@ -1,11 +1,17 @@
 import {
   asOfYmdForLeaveEntitlementBooking,
-  computeEntitled,
-  computeUsedDaysForYear,
-  leaveYearStart,
+  leaveUnitsInWindow,
   type ApprovedLeave,
   type LeavePolicy,
 } from "@/lib/leavePolicy";
+import {
+  computeEntitledForPolicyPeriod,
+  computeUsedDaysForPolicyPeriod,
+  policySegmentsForRange,
+  toLeavePolicy,
+  type LeavePolicyVersionRow,
+  validateRequestEnabledAcrossRange,
+} from "@/lib/leavePolicyEffective";
 
 export type LeavePolicyRow = {
   accrual_method: string;
@@ -16,29 +22,33 @@ export type LeavePolicyRow = {
   reset_day: number | null;
   allow_carryover: boolean | null;
   carryover_limit: number | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
+  request_enabled?: boolean | null;
 };
 
-export function leavePolicyFromRow(leaveTypeId: string, pRaw: LeavePolicyRow | null | undefined): LeavePolicy | null {
+export function leavePolicyFromRow(
+  leaveTypeId: string,
+  pRaw: LeavePolicyRow | LeavePolicyVersionRow | null | undefined,
+): LeavePolicy | null {
   if (!pRaw) return null;
-  return {
+  return toLeavePolicy({
     leave_type_id: leaveTypeId,
-    accrual_method: pRaw.accrual_method as LeavePolicy["accrual_method"],
-    monthly_accrual_rate: pRaw.monthly_accrual_rate,
-    annual_quota: pRaw.annual_quota,
-    prorate_on_join: Boolean(pRaw.prorate_on_join),
-    reset_month: Number(pRaw.reset_month ?? 1),
-    reset_day: Number(pRaw.reset_day ?? 1),
-    allow_carryover: Boolean(pRaw.allow_carryover),
-    carryover_limit: pRaw.carryover_limit,
-  };
+    ...pRaw,
+  });
 }
+
+export { validateRequestEnabledAcrossRange };
 
 export function computeLeavePaidUnpaidSplit(args: {
   totalDays: number;
   startDateYmd: string;
+  endDateYmd?: string;
   leaveTypeId: string;
   isPaidLeaveType: boolean;
   policy: LeavePolicy | null;
+  /** All versions for this leave type (company-scoped). Enables cross-period splitting. */
+  policyVersions?: LeavePolicyVersionRow[] | null;
   joinDateYmd: string | null;
   todayYmd: string;
   approvedLeaves: ApprovedLeave[];
@@ -50,9 +60,20 @@ export function computeLeavePaidUnpaidSplit(args: {
   remainingBeforeBooking: number | null;
   asOfYmd: string;
 } {
-  const { totalDays, startDateYmd, leaveTypeId, isPaidLeaveType, policy, joinDateYmd, todayYmd, approvedLeaves } =
-    args;
+  const {
+    totalDays,
+    startDateYmd,
+    endDateYmd,
+    leaveTypeId,
+    isPaidLeaveType,
+    policy,
+    policyVersions,
+    joinDateYmd,
+    todayYmd,
+    approvedLeaves,
+  } = args;
   const totalSafe = Math.max(0, Number(totalDays) || 0);
+  const endYmd = (endDateYmd || startDateYmd).slice(0, 10);
 
   if (!isPaidLeaveType) {
     return {
@@ -63,6 +84,62 @@ export function computeLeavePaidUnpaidSplit(args: {
       remainingBeforeBooking: null,
       asOfYmd: todayYmd,
     };
+  }
+
+  if (policyVersions && policyVersions.length > 0) {
+    const segments = policySegmentsForRange(policyVersions, leaveTypeId, startDateYmd, endYmd);
+    if (segments.length > 0) {
+      let paidDays = 0;
+      let entitledSum = 0;
+      let usedSum = 0;
+      let hasFinite = false;
+      const joinDate = joinDateYmd ? new Date(joinDateYmd + "T00:00:00Z") : null;
+      const asOfYmd = asOfYmdForLeaveEntitlementBooking(startDateYmd, todayYmd);
+
+      for (const seg of segments) {
+        const segEndExclusive = (() => {
+          const d = new Date(seg.endYmd + "T00:00:00Z");
+          d.setUTCDate(d.getUTCDate() + 1);
+          return d;
+        })();
+        const spanUnits = leaveUnitsInWindow(
+          startDateYmd,
+          endYmd,
+          totalSafe,
+          new Date(seg.startYmd + "T00:00:00Z"),
+          segEndExclusive,
+        ).unitsInWindow;
+
+        const asOf = new Date(
+          asOfYmdForLeaveEntitlementBooking(seg.startYmd, todayYmd) + "T00:00:00Z",
+        );
+        const entitled = computeEntitledForPolicyPeriod(seg.policy, joinDate, asOf);
+        const usedBeforeBooking = computeUsedDaysForPolicyPeriod(
+          approvedLeaves,
+          leaveTypeId,
+          seg.policy,
+          asOf,
+        );
+        const remaining = entitled == null ? null : Math.max(0, entitled - usedBeforeBooking);
+        const paidSeg = remaining == null ? spanUnits : Math.min(spanUnits, remaining);
+        paidDays += paidSeg;
+        if (entitled != null) {
+          hasFinite = true;
+          entitledSum += entitled;
+          usedSum += usedBeforeBooking;
+        }
+      }
+
+      const paidClamped = Math.min(totalSafe, Math.round(paidDays * 1000) / 1000);
+      return {
+        paidDays: paidClamped,
+        unpaidDays: Math.max(0, totalSafe - paidClamped),
+        entitled: hasFinite ? entitledSum : null,
+        usedBeforeBooking: usedSum,
+        remainingBeforeBooking: hasFinite ? Math.max(0, entitledSum - usedSum) : null,
+        asOfYmd,
+      };
+    }
   }
 
   if (!policy) {
@@ -79,13 +156,9 @@ export function computeLeavePaidUnpaidSplit(args: {
   const asOfYmd = asOfYmdForLeaveEntitlementBooking(startDateYmd, todayYmd);
   const asOf = new Date(asOfYmd + "T00:00:00Z");
   const joinDate = joinDateYmd ? new Date(joinDateYmd + "T00:00:00Z") : null;
-  const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
-  const yearEndExclusive = new Date(
-    Date.UTC(yearStart.getUTCFullYear() + 1, yearStart.getUTCMonth(), yearStart.getUTCDate(), 0, 0, 0, 0),
-  );
 
-  const entitled = computeEntitled(policy, joinDate, asOf);
-  const usedBeforeBooking = computeUsedDaysForYear(approvedLeaves, leaveTypeId, yearStart, yearEndExclusive);
+  const entitled = computeEntitledForPolicyPeriod(policy, joinDate, asOf);
+  const usedBeforeBooking = computeUsedDaysForPolicyPeriod(approvedLeaves, leaveTypeId, policy, asOf);
   const remainingBeforeBooking = entitled == null ? null : Math.max(0, entitled - usedBeforeBooking);
   const paidDays =
     remainingBeforeBooking == null ? totalSafe : Math.min(totalSafe, remainingBeforeBooking);

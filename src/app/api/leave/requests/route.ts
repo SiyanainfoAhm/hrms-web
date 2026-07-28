@@ -6,7 +6,8 @@ import { supabase } from "@/lib/supabaseClient";
 import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import { istTodayYmd } from "@/lib/istCalendar";
 import { type ApprovedLeave } from "@/lib/leavePolicy";
-import { computeLeavePaidUnpaidSplit, leavePolicyFromRow } from "@/lib/leavePaidUnpaidSplit";
+import { computeLeavePaidUnpaidSplit, leavePolicyFromRow, validateRequestEnabledAcrossRange } from "@/lib/leavePaidUnpaidSplit";
+import { selectPolicyForDate } from "@/lib/leavePolicyEffective";
 import { notifyLeaveRequestCreated, notifyLeaveRequestDecided } from "@/lib/hrmsTransactionNotify";
 import { computeLeaveBookingSummary, type HolidayRow } from "@/lib/leaveBookingDays";
 import {
@@ -311,9 +312,22 @@ export async function POST(request: NextRequest) {
   }
 
   // Compute paid vs unpaid days for payroll: excess beyond balance = unpaid
-  const pRaw = Array.isArray((lt as any).HRMS_leave_policies)
-    ? (lt as any).HRMS_leave_policies[0]
-    : (lt as any).HRMS_leave_policies;
+  const policyVersions = Array.isArray((lt as any).HRMS_leave_policies)
+    ? ((lt as any).HRMS_leave_policies as any[])
+    : (lt as any).HRMS_leave_policies
+      ? [(lt as any).HRMS_leave_policies]
+      : [];
+
+  const enabledErr = validateRequestEnabledAcrossRange(
+    policyVersions,
+    leaveTypeId,
+    startDate,
+    endDate,
+    String((lt as any)?.name ?? ""),
+  );
+  if (enabledErr) return NextResponse.json({ error: enabledErr }, { status: 400 });
+
+  const pRaw = selectPolicyForDate(policyVersions, leaveTypeId, startDate);
   const policy = leavePolicyFromRow(leaveTypeId, pRaw);
 
   const { data: approvedLeaves, error: usedErr } = await supabase
@@ -327,9 +341,11 @@ export async function POST(request: NextRequest) {
   const split = computeLeavePaidUnpaidSplit({
     totalDays,
     startDateYmd: startDate,
+    endDateYmd: endDate,
     leaveTypeId,
     isPaidLeaveType: lt.is_paid !== false,
     policy,
+    policyVersions,
     joinDateYmd: targetJoinDate,
     todayYmd: istTodayYmd(),
     approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
@@ -461,7 +477,20 @@ export async function PATCH(request: NextRequest) {
     const ltObjInner = Array.isArray(ltRawInner) ? ltRawInner[0] : ltRawInner;
     const leaveTypeId = String(existing.leave_type_id);
     const pNested = ltObjInner?.HRMS_leave_policies;
-    const pRaw = Array.isArray(pNested) ? pNested[0] : pNested;
+    const policyVersions = Array.isArray(pNested) ? pNested : pNested ? [pNested] : [];
+    const startYmd = String(existing.start_date).slice(0, 10);
+    const endYmd = String(existing.end_date).slice(0, 10);
+
+    const enabledErr = validateRequestEnabledAcrossRange(
+      policyVersions,
+      leaveTypeId,
+      startYmd,
+      endYmd,
+      String(ltObjInner?.name ?? ""),
+    );
+    if (enabledErr) return NextResponse.json({ error: enabledErr }, { status: 400 });
+
+    const pRaw = selectPolicyForDate(policyVersions, leaveTypeId, startYmd);
     const policy = leavePolicyFromRow(leaveTypeId, pRaw);
 
     const { data: approvedLeaves, error: usedErr } = await supabase
@@ -475,10 +504,12 @@ export async function PATCH(request: NextRequest) {
 
     const split = computeLeavePaidUnpaidSplit({
       totalDays: Number(existing.total_days) || 0,
-      startDateYmd: String(existing.start_date).slice(0, 10),
+      startDateYmd: startYmd,
+      endDateYmd: endYmd,
       leaveTypeId,
       isPaidLeaveType: ltObjInner?.is_paid !== false,
       policy,
+      policyVersions,
       joinDateYmd: empUser?.date_of_joining ? String(empUser.date_of_joining).slice(0, 10) : null,
       todayYmd: istTodayYmd(),
       approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],

@@ -1,23 +1,18 @@
 import {
-  computeEntitled,
-  computeUsedDaysForYear,
-  leaveYearStart,
   type ApprovedLeave,
   type LeavePolicy,
 } from "@/lib/leavePolicy";
+import {
+  computeEntitledForPolicyPeriod,
+  computeUsedDaysForPolicyPeriod,
+  policyEntitlementWindow,
+  selectCurrentPolicies,
+  selectPolicyForDate,
+  toLeavePolicy,
+  type LeavePolicyVersionRow,
+} from "@/lib/leavePolicyEffective";
 
-export type LeavePolicyWithTypeRow = {
-  leave_type_id: string;
-  accrual_method: string;
-  monthly_accrual_rate: number | null;
-  annual_quota: number | null;
-  prorate_on_join: boolean;
-  reset_month: number | null;
-  reset_day: number | null;
-  allow_carryover: boolean | null;
-  carryover_limit: number | null;
-  HRMS_leave_types?: { name?: string; is_paid?: boolean; code?: string | null; payslip_slot?: string | null } | null;
-};
+export type LeavePolicyWithTypeRow = LeavePolicyVersionRow;
 
 export type LeaveBalanceComputedRow = {
   leaveTypeId: string;
@@ -27,6 +22,11 @@ export type LeaveBalanceComputedRow = {
   entitled: number | null;
   used: number;
   remaining: number | null;
+  requestEnabled: boolean;
+  periodStart: string;
+  periodEndInclusive: string | null;
+  effectiveFrom: string;
+  effectiveTo: string | null;
 };
 
 export function computeLeaveBalanceRows(
@@ -38,27 +38,18 @@ export function computeLeaveBalanceRows(
   const asOf = new Date(asOfYmd + "T00:00:00Z");
   const joinDate = joinDateStr ? new Date(joinDateStr + "T00:00:00Z") : null;
 
-  return (policies ?? []).map((p) => {
-    const policy: LeavePolicy = {
-      leave_type_id: p.leave_type_id,
-      accrual_method: p.accrual_method as LeavePolicy["accrual_method"],
-      monthly_accrual_rate: p.monthly_accrual_rate,
-      annual_quota: p.annual_quota,
-      prorate_on_join: Boolean(p.prorate_on_join),
-      reset_month: Number(p.reset_month ?? 1),
-      reset_day: Number(p.reset_day ?? 1),
-      allow_carryover: Boolean(p.allow_carryover),
-      carryover_limit: p.carryover_limit,
-    };
+  // One balance row per leave type using the version in force on asOf.
+  const current = selectCurrentPolicies(policies ?? [], asOfYmd);
 
-    const yearStart = leaveYearStart(asOf, policy.reset_month, policy.reset_day);
-    const yearEndExclusive = new Date(
-      Date.UTC(yearStart.getUTCFullYear() + 1, yearStart.getUTCMonth(), yearStart.getUTCDate(), 0, 0, 0, 0),
-    );
-
-    const entitled = computeEntitled(policy, joinDate, asOf);
-    const used = computeUsedDaysForYear(approvedLeaves, p.leave_type_id, yearStart, yearEndExclusive);
+  return current.map((p) => {
+    const policy: LeavePolicy = toLeavePolicy(p);
+    const { start, endExclusive } = policyEntitlementWindow(policy, asOf);
+    const entitled = computeEntitledForPolicyPeriod(policy, joinDate, asOf);
+    const used = computeUsedDaysForPolicyPeriod(approvedLeaves, p.leave_type_id, policy, asOf);
     const remaining = entitled == null ? null : Math.max(0, entitled - used);
+    const periodEndInclusive = new Date(endExclusive.getTime() - 24 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
 
     return {
       leaveTypeId: p.leave_type_id,
@@ -68,8 +59,22 @@ export function computeLeaveBalanceRows(
       entitled,
       used,
       remaining,
+      requestEnabled: policy.request_enabled !== false,
+      periodStart: start.toISOString().slice(0, 10),
+      periodEndInclusive,
+      effectiveFrom: policy.effective_from || "2000-01-01",
+      effectiveTo: policy.effective_to ?? null,
     };
   });
+}
+
+/** Resolve the single policy version for a type on a date (for booking). */
+export function resolvePolicyRowForDate(
+  policies: LeavePolicyWithTypeRow[],
+  leaveTypeId: string,
+  ymd: string,
+): LeavePolicyWithTypeRow | null {
+  return selectPolicyForDate(policies, leaveTypeId, ymd);
 }
 
 export type GovernmentLeavePayslipDisplay = {

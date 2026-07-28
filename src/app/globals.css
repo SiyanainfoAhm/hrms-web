@@ -170,3 +170,175 @@ textarea:focus-visible {
   color: white;
 }
 
+/* Interactive employee avatar — calm by default, waves on hover / first load */
+.interactive-avatar {
+  --avatar-size: 80px;
+  --avatar-primary: var(--primary);
+
+  position: relative;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.interactive-avatar .avatar-character {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-origin: center center;
+}
+
+.interactive-avatar .avatar-circle {
+  position: relative;
+  z-index: 2;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface);
+  border: 2px solid color-mix(in srgb, var(--avatar-primary) 45%, transparent);
+  box-shadow: 0 2px 10px color-mix(in srgb, var(--avatar-primary) 14%, transparent);
+  transition: transform 220ms ease-out;
+}
+
+.interactive-avatar.is-interacting .avatar-character {
+  transform: scale(1.025) rotate(-1deg);
+}
+
+.interactive-avatar .avatar-hand-wrapper {
+  position: absolute;
+  right: -4px;
+  bottom: 0;
+  width: 30px;
+  height: 42px;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(10px, 14px);
+}
+
+.interactive-avatar .avatar-hand {
+  width: 100%;
+  height: 100%;
+  transform-origin: 42% 88%;
+  display: block;
+}
+
+.interactive-avatar .avatar-hand-wrapper--wave {
+  animation: avatar-hand-emerge 1.5s ease-in-out forwards;
+}
+
+@keyframes avatar-hand-emerge {
+  0% {
+    opacity: 0;
+    transform: translate(10px, 14px);
+  }
+  8% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  82% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(10px, 14px);
+  }
+}
+
+.interactive-avatar .avatar-hand-wrapper--wave .avatar-hand {
+  animation: avatar-hand-wave 1.5s ease-in-out forwards;
+}
+
+@keyframes avatar-hand-wave {
+  0%,
+  12% {
+    transform: rotate(0deg);
+  }
+  18% {
+    transform: rotate(-12deg);
+  }
+  28% {
+    transform: rotate(15deg);
+  }
+  38% {
+    transform: rotate(-10deg);
+  }
+  48% {
+    transform: rotate(12deg);
+  }
+  58% {
+    transform: rotate(-8deg);
+  }
+  68% {
+    transform: rotate(10deg);
+  }
+  78%,
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+.interactive-avatar.idle-tilt .avatar-character {
+  animation: avatar-idle-tilt 0.65s ease-in-out;
+}
+
+.interactive-avatar.idle-lift .avatar-character {
+  animation: avatar-idle-lift 0.65s ease-in-out;
+}
+
+.interactive-avatar.idle-scale .avatar-character {
+  animation: avatar-idle-scale 0.65s ease-in-out;
+}
+
+@keyframes avatar-idle-tilt {
+  0%,
+  100% {
+    transform: rotate(0deg);
+  }
+  50% {
+    transform: rotate(1.5deg);
+  }
+}
+
+@keyframes avatar-idle-lift {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-1px);
+  }
+}
+
+@keyframes avatar-idle-scale {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.012);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .interactive-avatar .avatar-hand-wrapper--wave,
+  .interactive-avatar .avatar-hand-wrapper--wave .avatar-hand {
+    animation: none !important;
+  }
+
+  .interactive-avatar.is-interacting .avatar-character,
+  .interactive-avatar.idle-tilt .avatar-character,
+  .interactive-avatar.idle-lift .avatar-character,
+  .interactive-avatar.idle-scale .avatar-character {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  .interactive-avatar .avatar-hand-wrapper {
+    display: none;
+  }
+}
+

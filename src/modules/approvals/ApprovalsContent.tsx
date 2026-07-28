@@ -110,7 +110,13 @@ export function ApprovalsContent() {
   const [editMonthlyRate, setEditMonthlyRate] = useState("1");
   const [editAnnualQuota, setEditAnnualQuota] = useState("12");
   const [editProrateOnJoin, setEditProrateOnJoin] = useState(true);
+  const [editEffectiveFrom, setEditEffectiveFrom] = useState("");
+  const [editEffectiveTo, setEditEffectiveTo] = useState("");
+  const [editRequestEnabled, setEditRequestEnabled] = useState(true);
   const [savingPolicy, setSavingPolicy] = useState(false);
+  const [policyHistoryFor, setPolicyHistoryFor] = useState<null | { leaveTypeId: string; name: string }>(null);
+  const [policyHistoryRows, setPolicyHistoryRows] = useState<any[]>([]);
+  const [policyHistoryLoading, setPolicyHistoryLoading] = useState(false);
 
   const [deleteTypeFor, setDeleteTypeFor] = useState<null | { leaveTypeId: string; name: string }>(null);
   const [deletingType, setDeletingType] = useState(false);
@@ -647,6 +653,8 @@ export function ApprovalsContent() {
           prorateOnJoin: Boolean(newProrateOnJoin),
           resetMonth: 1,
           resetDay: 1,
+          effectiveFrom: "2000-01-01",
+          requestEnabled: true,
         }),
       });
       const policyData = await policyRes.json();
@@ -670,8 +678,27 @@ export function ApprovalsContent() {
     }
   }
 
+  function currentPolicyForType(t: any): any | null {
+    const list = Array.isArray(t?.HRMS_leave_policies)
+      ? t.HRMS_leave_policies
+      : t?.HRMS_leave_policies
+        ? [t.HRMS_leave_policies]
+        : [];
+    if (!list.length) return null;
+    const today = new Date().toISOString().slice(0, 10);
+    const active = list.filter((p: any) => {
+      const from = String(p.effective_from ?? "2000-01-01").slice(0, 10);
+      const to = p.effective_to != null ? String(p.effective_to).slice(0, 10) : null;
+      return from <= today && (to == null || to >= today);
+    });
+    const pool = active.length ? active : list;
+    return [...pool].sort((a: any, b: any) =>
+      String(b.effective_from ?? "").localeCompare(String(a.effective_from ?? "")),
+    )[0];
+  }
+
   function openEditPolicy(t: any) {
-    const p = Array.isArray(t.HRMS_leave_policies) ? t.HRMS_leave_policies[0] : t.HRMS_leave_policies;
+    const p = currentPolicyForType(t);
     setEditPolicyFor({ leaveTypeId: t.id, name: t.name });
     setEditTypeName(String(t.name ?? ""));
     const ps = t.payslip_slot != null && String(t.payslip_slot).trim() ? String(t.payslip_slot).trim().toUpperCase() : "";
@@ -681,6 +708,28 @@ export function ApprovalsContent() {
     setEditMonthlyRate(String(p?.monthly_accrual_rate ?? "1"));
     setEditAnnualQuota(String(p?.annual_quota ?? "12"));
     setEditProrateOnJoin(Boolean(p?.prorate_on_join ?? true));
+    setEditEffectiveFrom(new Date().toISOString().slice(0, 10));
+    setEditEffectiveTo("");
+    setEditRequestEnabled(p?.request_enabled !== false);
+  }
+
+  async function openPolicyHistory(t: any) {
+    setPolicyHistoryFor({ leaveTypeId: t.id, name: t.name });
+    setPolicyHistoryLoading(true);
+    setPolicyHistoryRows([]);
+    try {
+      const res = await fetch(
+        `/api/leave/policies?leaveTypeId=${encodeURIComponent(t.id)}&history=1`,
+      );
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to load policy history");
+      setPolicyHistoryRows(data.policies ?? []);
+    } catch (e: any) {
+      showToast("error", e?.message || "Failed to load policy history");
+      setPolicyHistoryFor(null);
+    } finally {
+      setPolicyHistoryLoading(false);
+    }
   }
 
   async function savePolicy() {
@@ -714,13 +763,16 @@ export function ApprovalsContent() {
           prorateOnJoin: Boolean(editProrateOnJoin),
           resetMonth: 1,
           resetDay: 1,
+          effectiveFrom: editEffectiveFrom,
+          effectiveTo: editEffectiveTo.trim() ? editEffectiveTo.trim() : null,
+          requestEnabled: Boolean(editRequestEnabled),
         }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to save policy");
       await refreshLeaveData();
       setEditPolicyFor(null);
-      showToast("success", "Policy saved");
+      showToast("success", "New policy version saved");
     } catch (e: any) {
       setError(e?.message || "Failed to save policy");
       showToast("error", e?.message || "Failed to save policy");
@@ -1003,7 +1055,7 @@ export function ApprovalsContent() {
                 <div>
                   <h2 className="mb-1 text-lg font-semibold text-slate-900">Leave types & policy (company-wise)</h2>
                   <p className="muted">
-                    Configure accrual/quota rules per leave type. Balances reset every year on Jan 1.
+                    Configure accrual/quota rules per leave type. Saving creates a new effective-dated version so history is preserved.
                   </p>
                 </div>
                 <button type="button" className="btn btn-outline" onClick={() => setManageTypesOpen(true)}>
@@ -1021,12 +1073,16 @@ export function ApprovalsContent() {
                       <th className="px-3 py-2">Accrual</th>
                       <th className="px-3 py-2">Monthly</th>
                       <th className="px-3 py-2">Annual quota</th>
+                      <th className="px-3 py-2">Effective</th>
+                      <th className="px-3 py-2">Requests</th>
                       <th className="px-3 py-2">Action</th>
                     </tr>
                   </thead>
                   <tbody>
                     {typeRows.map((t: any) => {
-                      const p = Array.isArray(t.HRMS_leave_policies) ? t.HRMS_leave_policies[0] : t.HRMS_leave_policies;
+                      const p = currentPolicyForType(t);
+                      const effFrom = p?.effective_from ? String(p.effective_from).slice(0, 10) : "—";
+                      const effTo = p?.effective_to != null ? String(p.effective_to).slice(0, 10) : "open";
                       return (
                         <tr key={t.id} className="border-t border-slate-200">
                           <td className="px-3 py-2">{t.name}</td>
@@ -1037,10 +1093,17 @@ export function ApprovalsContent() {
                           <td className="px-3 py-2">{p?.accrual_method ?? "-"}</td>
                           <td className="px-3 py-2">{p?.monthly_accrual_rate ?? "-"}</td>
                           <td className="px-3 py-2">{p?.annual_quota ?? "-"}</td>
+                          <td className="px-3 py-2 text-xs text-slate-600">
+                            {effFrom} → {effTo}
+                          </td>
+                          <td className="px-3 py-2">{p?.request_enabled === false ? "Blocked" : "Allowed"}</td>
                           <td className="px-3 py-2">
                             <div className="flex flex-wrap gap-2">
                               <button type="button" className="btn btn-outline" onClick={() => openEditPolicy(t)}>
-                                Edit policy
+                                New version
+                              </button>
+                              <button type="button" className="btn btn-outline" onClick={() => void openPolicyHistory(t)}>
+                                History
                               </button>
                               {isSuperAdmin && (
                                 <button
@@ -1296,7 +1359,9 @@ export function ApprovalsContent() {
                               : "border-slate-300 focus:border-emerald-500 focus:ring-emerald-500"
                           }`}
                         >
-                          {types.map((t) => (
+                          {typeRows
+                            .filter((t: any) => currentPolicyForType(t)?.request_enabled !== false)
+                            .map((t: any) => (
                             <option key={t.id} value={t.id}>
                               {t.name}
                             </option>
@@ -1597,12 +1662,45 @@ export function ApprovalsContent() {
               <button type="button" className="absolute inset-0 bg-black/40" aria-label="Close dialog" onClick={() => setEditPolicyFor(null)} />
               <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-xl">
                 <div className="border-b border-slate-200 px-5 py-4">
-                  <h3 className="text-base font-semibold text-slate-900">Edit policy</h3>
-                  <p className="mt-1 text-sm text-slate-500">{editPolicyFor.name}</p>
+                  <h3 className="text-base font-semibold text-slate-900">New policy version</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {editPolicyFor.name} — previous version is closed the day before the new effective date. History is kept.
+                  </p>
                 </div>
 
                 <div className="p-5 space-y-4">
                   <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Effective from</label>
+                      <input
+                        type="date"
+                        value={editEffectiveFrom}
+                        onChange={(e) => setEditEffectiveFrom(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Effective to (optional)</label>
+                      <input
+                        type="date"
+                        value={editEffectiveTo}
+                        onChange={(e) => setEditEffectiveTo(e.target.value)}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                      />
+                      <p className="mt-1 text-xs text-slate-500">Leave blank for open-ended / until the next version.</p>
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-sm font-medium text-slate-700">Allow new requests</label>
+                      <select
+                        value={editRequestEnabled ? "yes" : "no"}
+                        onChange={(e) => setEditRequestEnabled(e.target.value === "yes")}
+                        className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-[var(--primary)] focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
+                      >
+                        <option value="yes">Yes</option>
+                        <option value="no">No</option>
+                      </select>
+                    </div>
                     <div>
                       <label className="mb-1 block text-sm font-medium text-slate-700">Display name</label>
                       <input
@@ -1687,10 +1785,67 @@ export function ApprovalsContent() {
                         Cancel
                       </button>
                       <button type="button" className="btn btn-primary" onClick={savePolicy} disabled={savingPolicy}>
-                        {savingPolicy ? "Saving..." : "Save"}
+                        {savingPolicy ? "Saving..." : "Save new version"}
                       </button>
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {policyHistoryFor && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/40"
+                aria-label="Close dialog"
+                onClick={() => setPolicyHistoryFor(null)}
+              />
+              <div role="dialog" aria-modal="true" className="relative z-10 w-full max-w-2xl rounded-xl border border-slate-200 bg-white shadow-xl">
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-base font-semibold text-slate-900">Policy history</h3>
+                  <p className="mt-1 text-sm text-slate-500">{policyHistoryFor.name}</p>
+                </div>
+                <div className="max-h-[70vh] overflow-auto p-5">
+                  {policyHistoryLoading ? (
+                    <p className="text-sm text-slate-500">Loading…</p>
+                  ) : policyHistoryRows.length === 0 ? (
+                    <p className="text-sm text-slate-500">No versions found.</p>
+                  ) : (
+                    <table className="w-full text-left text-sm">
+                      <thead className="text-slate-600">
+                        <tr>
+                          <th className="px-2 py-2">Effective</th>
+                          <th className="px-2 py-2">Accrual</th>
+                          <th className="px-2 py-2">Quota</th>
+                          <th className="px-2 py-2">Requests</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {policyHistoryRows.map((p: any) => (
+                          <tr key={p.id} className="border-t border-slate-100">
+                            <td className="px-2 py-2 text-xs">
+                              {String(p.effective_from ?? "—").slice(0, 10)} →{" "}
+                              {p.effective_to != null ? String(p.effective_to).slice(0, 10) : "open"}
+                            </td>
+                            <td className="px-2 py-2">{p.accrual_method}</td>
+                            <td className="px-2 py-2">
+                              {p.accrual_method === "monthly"
+                                ? `${p.monthly_accrual_rate ?? "—"}/mo (cap ${p.annual_quota ?? "—"})`
+                                : p.annual_quota ?? "—"}
+                            </td>
+                            <td className="px-2 py-2">{p.request_enabled === false ? "Blocked" : "Allowed"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <div className="border-t border-slate-200 px-5 py-3 text-right">
+                  <button type="button" className="btn btn-outline" onClick={() => setPolicyHistoryFor(null)}>
+                    Close
+                  </button>
                 </div>
               </div>
             </div>

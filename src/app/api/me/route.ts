@@ -3,12 +3,17 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME, createSessionCookie, getCookieOptions, type SessionUser } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { publicUrlForStoragePath } from "@/lib/profilePictureStorage";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
 }
 
 function mapUser(row: any) {
+  const profileImagePath =
+    typeof row.profile_image_path === "string" && row.profile_image_path.trim()
+      ? row.profile_image_path.trim()
+      : null;
   return {
     id: row.id as string,
     email: row.email as string,
@@ -50,6 +55,8 @@ function mapUser(row: any) {
     uanNumber: (row.uan_number ?? "") as string,
     pfNumber: (row.pf_number ?? row.cpf_number ?? "") as string,
     esicNumber: (row.esic_number ?? "") as string,
+    profileImagePath,
+    profileImageUrl: profileImagePath ? publicUrlForStoragePath(profileImagePath) : null,
   };
 }
 
@@ -60,7 +67,25 @@ export async function GET() {
 
   const { data, error } = await supabase.from("HRMS_users").select("*").eq("id", session.id).single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-  return NextResponse.json({ user: mapUser(data) });
+
+  let company: { name: string; logoUrl: string | null; code: string | null } | null = null;
+  if (data.company_id) {
+    const { data: companyRow } = await supabase
+      .from("HRMS_companies")
+      .select("name, logo_url, code")
+      .eq("id", data.company_id)
+      .maybeSingle();
+    if (companyRow) {
+      const rawLogo = companyRow.logo_url;
+      company = {
+        name: String(companyRow.name ?? ""),
+        logoUrl: typeof rawLogo === "string" && rawLogo.trim() ? rawLogo.trim() : null,
+        code: companyRow.code != null && String(companyRow.code).trim() ? String(companyRow.code).trim() : null,
+      };
+    }
+  }
+
+  return NextResponse.json({ user: mapUser(data), company });
 }
 
 export async function PUT(request: NextRequest) {

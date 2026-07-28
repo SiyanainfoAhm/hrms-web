@@ -16,6 +16,12 @@ export type LeavePolicy = {
   reset_day: number; // 1-31 (validated by caller)
   allow_carryover: boolean;
   carryover_limit: number | null;
+  /** Inclusive start of this policy version (yyyy-mm-dd). */
+  effective_from?: string;
+  /** Inclusive end of this policy version; null = open-ended. */
+  effective_to?: string | null;
+  /** When false, new requests are blocked while this version applies. */
+  request_enabled?: boolean;
 };
 
 export type ApprovedLeave = {

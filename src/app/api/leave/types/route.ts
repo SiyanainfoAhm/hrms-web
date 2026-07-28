@@ -156,8 +156,24 @@ export async function GET() {
     ].filter(Boolean) as any[];
 
     if (policies.length) {
-      const { error: polErr } = await supabase.from("HRMS_leave_policies").upsert(policies, { onConflict: "company_id,leave_type_id" });
-      if (polErr) return NextResponse.json({ error: polErr.message }, { status: 400 });
+      // Insert only when no policy version exists yet for the type (effective-dated model).
+      for (const pol of policies) {
+        const { count } = await supabase
+          .from("HRMS_leave_policies")
+          .select("id", { count: "exact", head: true })
+          .eq("company_id", me.company_id)
+          .eq("leave_type_id", pol.leave_type_id);
+        if ((count ?? 0) > 0) continue;
+        const { error: polErr } = await supabase.from("HRMS_leave_policies").insert([
+          {
+            ...pol,
+            effective_from: "2000-01-01",
+            effective_to: null,
+            request_enabled: true,
+          },
+        ]);
+        if (polErr) return NextResponse.json({ error: polErr.message }, { status: 400 });
+      }
     }
 
     // Re-run original query (respects employee paid-only filter)
@@ -186,18 +202,27 @@ export async function GET() {
       .select("id")
       .maybeSingle();
     if (!olErr && olType?.id) {
-      await supabase.from("HRMS_leave_policies").upsert(
-        {
-          company_id: me.company_id,
-          leave_type_id: olType.id,
-          accrual_method: "none",
-          annual_quota: null,
-          prorate_on_join: false,
-          reset_month: 1,
-          reset_day: 1,
-        },
-        { onConflict: "company_id,leave_type_id" },
-      );
+      const { count } = await supabase
+        .from("HRMS_leave_policies")
+        .select("id", { count: "exact", head: true })
+        .eq("company_id", me.company_id)
+        .eq("leave_type_id", olType.id);
+      if ((count ?? 0) === 0) {
+        await supabase.from("HRMS_leave_policies").insert([
+          {
+            company_id: me.company_id,
+            leave_type_id: olType.id,
+            accrual_method: "none",
+            annual_quota: null,
+            prorate_on_join: false,
+            reset_month: 1,
+            reset_day: 1,
+            effective_from: "2000-01-01",
+            effective_to: null,
+            request_enabled: true,
+          },
+        ]);
+      }
       const refreshed = await query;
       data = refreshed.data ?? [];
     }

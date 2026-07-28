@@ -2,11 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import Image from "next/image";
+import { employeeAvatarUrl } from "@/lib/employeeAvatarUrl";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
 import { PageHeader } from "@/components/common/PageHeader";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
+import { EmployeeSmartCard } from "@/components/employee/EmployeeSmartCard";
+import { ProfileAvatarEditor } from "@/components/employee/ProfileAvatarEditor";
 import { useToast } from "@/components/common/ToastProvider";
+import { resolveEmployeeAvatarSrc } from "@/lib/profilePictureStorage";
 import { supabase } from "@/lib/supabaseClient";
 import type { AttendanceTimeZoneId } from "@/lib/attendanceTimeZone";
 import { IST_TZ, timeZoneLabel } from "@/lib/attendanceTimeZone";
@@ -116,23 +119,31 @@ function fmtHoursMin(min: number | null | undefined): string {
   return `${h}h ${m}m`;
 }
 
-function AvatarUrl({ userId, gender }: { userId: string; gender: string | null }) {
-  const seed = encodeURIComponent(userId);
-  const base = `https://api.dicebear.com/9.x/personas/svg?seed=${seed}&backgroundColor=0d9488`;
-  if (gender === "female") {
-    return `${base}&hair=bobCut,long,pigtails,curlyBun,straightBun,bobBangs&facialHairProbability=0`;
-  }
-  return `${base}&hair=bald,buzzcut,shortCombover,fade,mohawk,balding&facialHairProbability=50`;
-}
 
 function SkeletonBar({ className }: { className?: string }) {
   return <div className={`animate-pulse rounded-lg bg-slate-200/80 ${className ?? ""}`} />;
 }
 
+type DashboardMeUser = {
+  gender: string | null;
+  name: string | null;
+  employeeCode: string;
+  designation: string;
+  profileImagePath: string | null;
+  profileImageUrl: string | null;
+};
+
+type DashboardCompany = {
+  name: string;
+  logoUrl: string | null;
+  code: string | null;
+};
+
 export function DashboardContent() {
   const { role, name, id } = useHrmsSession();
   const { showToast } = useToast();
-  const [user, setUser] = useState<{ gender: string | null } | null>(null);
+  const [user, setUser] = useState<DashboardMeUser | null>(null);
+  const [company, setCompany] = useState<DashboardCompany | null>(null);
   const [leaveBalances, setLeaveBalances] = useState<{ leaveTypeName: string; used: number; remaining: number | null; isPaid: boolean }[]>([]);
   const [payslips, setPayslips] = useState<{ periodFormatted: string; generatedAt: string; payDays: number | null }[]>([]);
   const [upcomingHolidays, setUpcomingHolidays] = useState<
@@ -276,7 +287,29 @@ export function DashboardContent() {
         ]);
         if (!cancelled && meRes.ok) {
           const d = await meRes.json();
-          setUser(d.user ?? null);
+          const meUser = d.user as DashboardMeUser | undefined;
+          setUser(
+            meUser
+              ? {
+                  gender: meUser.gender ?? null,
+                  name: meUser.name ?? null,
+                  employeeCode: meUser.employeeCode ?? "",
+                  designation: meUser.designation ?? "",
+                  profileImagePath: meUser.profileImagePath ?? null,
+                  profileImageUrl: meUser.profileImageUrl ?? null,
+                }
+              : null,
+          );
+          const meCompany = d.company as DashboardCompany | null | undefined;
+          setCompany(
+            meCompany
+              ? {
+                  name: meCompany.name ?? "",
+                  logoUrl: meCompany.logoUrl ?? null,
+                  code: meCompany.code ?? null,
+                }
+              : null,
+          );
         }
         if (!cancelled && balanceRes.ok) {
           const d = await balanceRes.json();
@@ -459,6 +492,14 @@ export function DashboardContent() {
 
   const displayName = name || "Employee";
   const greeting = getGreeting();
+  const resolvedAvatarUrl = resolveEmployeeAvatarSrc({
+    userId: id,
+    gender: user?.gender ?? null,
+    profileImagePath: user?.profileImagePath,
+    profileImageUrl: user?.profileImageUrl,
+    fallbackAvatarUrl: employeeAvatarUrl,
+  });
+  const hasUploadedPhoto = Boolean(user?.profileImagePath);
 
   // Employee-focused dashboard (attractive layout from reference)
   if (role === "employee") {
@@ -560,20 +601,54 @@ export function DashboardContent() {
             {/* Left: Profile + Leave summary */}
             <div className="lg:col-span-1">
               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-                <div className="mb-6 flex items-center gap-4">
-                  <Image
-                    unoptimized
-                    src={AvatarUrl({ userId: id, gender: user?.gender ?? null })}
-                    alt=""
-                    width={80}
-                    height={80}
-                    className="h-20 w-20 rounded-full object-cover ring-2 ring-slate-200"
+                <div className="mb-5 flex items-center gap-4 overflow-visible">
+                  <ProfileAvatarEditor
+                    src={resolvedAvatarUrl}
+                    alt={displayName}
+                    size={80}
+                    hasUploadedPhoto={hasUploadedPhoto}
+                    waveOnHover
+                    initialGreeting
+                    onUploaded={({ profileImagePath, profileImageUrl }) => {
+                      setUser((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              profileImagePath: profileImagePath || null,
+                              profileImageUrl: profileImageUrl,
+                            }
+                          : prev,
+                      );
+                      showToast("success", "Profile picture updated.");
+                    }}
+                    onRemoved={() => {
+                      setUser((prev) =>
+                        prev ? { ...prev, profileImagePath: null, profileImageUrl: null } : prev,
+                      );
+                      showToast("success", "Profile picture removed.");
+                    }}
+                    onError={(message) => showToast("error", message)}
                   />
-                  <div>
-                    <h2 className="text-lg font-bold text-slate-900">{displayName}</h2>
+                  <div className="min-w-0">
+                    <h2 className="truncate text-lg font-bold text-slate-900">{displayName}</h2>
                     <p className="text-sm text-slate-500">Employee</p>
                   </div>
                 </div>
+
+                {loading ? (
+                  <SkeletonBar className="mb-4 h-[189px] w-full max-w-[300px] rounded-[14px]" />
+                ) : (
+                  <EmployeeSmartCard
+                    className="mb-4"
+                    employeeName={user?.name?.trim() || displayName}
+                    employeeNumber={user?.employeeCode}
+                    designation={user?.designation}
+                    companyName={company?.name}
+                    companyLogoUrl={company?.logoUrl}
+                    avatarUrl={resolvedAvatarUrl}
+                    onDownloadError={(message) => showToast("error", message)}
+                  />
+                )}
 
                 <div className="space-y-4">
                   {loading ? (

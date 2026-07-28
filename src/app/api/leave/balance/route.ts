@@ -5,7 +5,7 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { istTodayYmd } from "@/lib/istCalendar";
 import { computeLeaveBalanceRows } from "@/lib/leaveBalancesCompute";
-import { asOfYmdForLeaveEntitlementBooking, leaveYearStart } from "@/lib/leavePolicy";
+import { asOfYmdForLeaveEntitlementBooking } from "@/lib/leavePolicy";
 
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -44,8 +44,8 @@ export async function GET(request: NextRequest) {
   const asOfYmd = asOfParam
     ? asOfYmdForLeaveEntitlementBooking(asOfParam, todayYmd)
     : todayYmd;
-  const asOf = new Date(asOfYmd + "T00:00:00Z");
 
+  // Load ALL versions for the company — balance picker selects the version in force on asOf.
   let policiesQuery = supabase
     .from("HRMS_leave_policies")
     .select("*, HRMS_leave_types(id, name, is_paid, code, payslip_slot)")
@@ -74,26 +74,20 @@ export async function GET(request: NextRequest) {
     asOfYmd,
   );
 
-  const balances = rows.map((row) => {
-    const p = (policies ?? []).find((x: any) => x.leave_type_id === row.leaveTypeId);
-    const pol = p as any;
-    const periodStartStr = p
-      ? leaveYearStart(asOf, Number(pol?.reset_month ?? 1), Number(pol?.reset_day ?? 1)).toISOString().slice(0, 10)
-      : asOfYmd;
-
-    return {
-      leaveTypeId: row.leaveTypeId,
-      leaveTypeName: row.leaveTypeName,
-      payslipSlot: row.payslipSlot,
-      isPaid: row.isPaid,
-      accrualMethod: p?.accrual_method,
-      entitled: row.entitled,
-      used: row.used,
-      remaining: row.remaining,
-      periodStart: periodStartStr,
-    };
-  });
+  const balances = rows.map((row) => ({
+    leaveTypeId: row.leaveTypeId,
+    leaveTypeName: row.leaveTypeName,
+    payslipSlot: row.payslipSlot,
+    isPaid: row.isPaid,
+    entitled: row.entitled,
+    used: row.used,
+    remaining: row.remaining,
+    requestEnabled: row.requestEnabled,
+    periodStart: row.periodStart,
+    periodEnd: row.periodEndInclusive,
+    effectiveFrom: row.effectiveFrom,
+    effectiveTo: row.effectiveTo,
+  }));
 
   return NextResponse.json({ balances });
 }
-
