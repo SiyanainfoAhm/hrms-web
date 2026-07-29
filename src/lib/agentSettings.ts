@@ -1,4 +1,4 @@
-export const SCREENSHOT_INTERVAL_SECONDS_OPTIONS = [300, 180, 60, 30] as const;
+export const SCREENSHOT_INTERVAL_SECONDS_OPTIONS = [300, 60] as const;
 export const MIN_ALLOWED_INTERVAL_SECONDS_OPTIONS = [60, 30] as const;
 
 export type ScreenshotIntervalSeconds = (typeof SCREENSHOT_INTERVAL_SECONDS_OPTIONS)[number];
@@ -29,6 +29,13 @@ type AgentSettingsRow = {
   updated_at?: string;
 };
 
+export function normalizeScreenshotIntervalSeconds(value: number): ScreenshotIntervalSeconds {
+  if (SCREENSHOT_INTERVAL_SECONDS_OPTIONS.includes(value as ScreenshotIntervalSeconds)) {
+    return value as ScreenshotIntervalSeconds;
+  }
+  return 300;
+}
+
 export function resolveDefaultAgentSettings(companyId: string): AgentSettings {
   return {
     companyId,
@@ -43,7 +50,7 @@ export function mapAgentSettingsRow(row: AgentSettingsRow | null, companyId: str
   return {
     id: row.id,
     companyId: row.company_id,
-    screenshotIntervalSeconds: row.screenshot_interval_seconds as ScreenshotIntervalSeconds,
+    screenshotIntervalSeconds: normalizeScreenshotIntervalSeconds(row.screenshot_interval_seconds),
     minAllowedIntervalSeconds: row.min_allowed_interval_seconds as MinAllowedIntervalSeconds,
     isActive: row.is_active,
     createdAt: row.created_at,
@@ -52,9 +59,9 @@ export function mapAgentSettingsRow(row: AgentSettingsRow | null, companyId: str
 }
 
 export function deriveMinAllowedIntervalSeconds(
-  screenshotIntervalSeconds: ScreenshotIntervalSeconds,
+  _screenshotIntervalSeconds: ScreenshotIntervalSeconds,
 ): MinAllowedIntervalSeconds {
-  return screenshotIntervalSeconds === 30 ? 30 : 60;
+  return 60;
 }
 
 export function agentSettingsRowFromPayload(
@@ -91,7 +98,7 @@ export function validateAgentSettingsPayload(
   const isActive = raw.isActive ?? raw.is_active;
 
   if (!SCREENSHOT_INTERVAL_SECONDS_OPTIONS.includes(screenshotIntervalSeconds as ScreenshotIntervalSeconds)) {
-    return { ok: false, error: "Screenshot interval must be 300, 180, 60, or 30 seconds." };
+    return { ok: false, error: "Screenshot interval must be 300 or 60 seconds." };
   }
   if (typeof isActive !== "boolean") {
     return { ok: false, error: "Active flag must be true or false." };
