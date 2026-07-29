@@ -1,4 +1,4 @@
-export const SCREENSHOT_INTERVAL_SECONDS_OPTIONS = [300, 60] as const;
+export const SCREENSHOT_INTERVAL_SECONDS_OPTIONS = [300, 180, 60, 30] as const;
 export const MIN_ALLOWED_INTERVAL_SECONDS_OPTIONS = [60, 30] as const;
 
 export type ScreenshotIntervalSeconds = (typeof SCREENSHOT_INTERVAL_SECONDS_OPTIONS)[number];
@@ -59,8 +59,10 @@ export function mapAgentSettingsRow(row: AgentSettingsRow | null, companyId: str
 }
 
 export function deriveMinAllowedIntervalSeconds(
-  _screenshotIntervalSeconds: ScreenshotIntervalSeconds,
+  screenshotIntervalSeconds: ScreenshotIntervalSeconds,
 ): MinAllowedIntervalSeconds {
+  if (screenshotIntervalSeconds === 30) return 30;
+  if (screenshotIntervalSeconds === 60) return 60;
   return 60;
 }
 
@@ -74,7 +76,7 @@ export function agentSettingsRowFromPayload(
   is_active: boolean;
   updated_at: string;
 } {
-  const screenshotIntervalSeconds = payload.screenshotIntervalSeconds as ScreenshotIntervalSeconds;
+  const screenshotIntervalSeconds = normalizeScreenshotIntervalSeconds(payload.screenshotIntervalSeconds);
   return {
     company_id: companyId,
     screenshot_interval_seconds: screenshotIntervalSeconds,
@@ -98,7 +100,7 @@ export function validateAgentSettingsPayload(
   const isActive = raw.isActive ?? raw.is_active;
 
   if (!SCREENSHOT_INTERVAL_SECONDS_OPTIONS.includes(screenshotIntervalSeconds as ScreenshotIntervalSeconds)) {
-    return { ok: false, error: "Screenshot interval must be 300 or 60 seconds." };
+    return { ok: false, error: "Screenshot interval must be 300, 180, 60, or 30 seconds." };
   }
   if (typeof isActive !== "boolean") {
     return { ok: false, error: "Active flag must be true or false." };
