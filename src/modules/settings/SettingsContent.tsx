@@ -8,6 +8,7 @@ import { SkeletonList, SkeletonTable, SkeletonText } from "@/components/common/S
 import { normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
 import Image from "next/image";
 import { AccountDeletionRequestsPanel } from "@/components/settings/AccountDeletionRequestsPanel";
+import { DesktopAgentSettingsPanel } from "@/components/settings/DesktopAgentSettingsPanel";
 import type { RoleId } from "@/config/roleConfig";
 import {
   CUSTOM_ROLE_ACCESS_LEVELS,
@@ -38,7 +39,7 @@ export function SettingsContent() {
   );
 
   const [activeTab, setActiveTab] = useState<
-    "company" | "shifts" | "roles" | "org" | "designations" | "payroll" | "deletion"
+    "company" | "shifts" | "roles" | "org" | "designations" | "payroll" | "deletion" | "agent"
   >("company");
 
   const [company, setCompany] = useState<any | null>(null);
@@ -1177,6 +1178,15 @@ export function SettingsContent() {
             {isSuperAdmin && (
               <button
                 type="button"
+                onClick={() => setActiveTab("agent")}
+                className={`btn ${activeTab === "agent" ? "btn-primary" : "btn-outline"}`}
+              >
+                Desktop Agent
+              </button>
+            )}
+            {isSuperAdmin && (
+              <button
+                type="button"
                 onClick={() => setActiveTab("deletion")}
                 className={`btn ${activeTab === "deletion" ? "btn-primary" : "btn-outline"}`}
               >
@@ -1678,6 +1688,8 @@ export function SettingsContent() {
           )}
 
           {activeTab === "deletion" && isSuperAdmin && <AccountDeletionRequestsPanel />}
+
+          {activeTab === "agent" && isSuperAdmin && <DesktopAgentSettingsPanel />}
 
           {activeTab === "shifts" && (
             <div className="card space-y-3">
