@@ -16,7 +16,6 @@ export type AgentSettings = {
 
 export type AgentSettingsUpsertPayload = {
   screenshotIntervalSeconds: number;
-  minAllowedIntervalSeconds: number;
   isActive: boolean;
 };
 
@@ -52,6 +51,12 @@ export function mapAgentSettingsRow(row: AgentSettingsRow | null, companyId: str
   };
 }
 
+export function deriveMinAllowedIntervalSeconds(
+  screenshotIntervalSeconds: ScreenshotIntervalSeconds,
+): MinAllowedIntervalSeconds {
+  return screenshotIntervalSeconds === 30 ? 30 : 60;
+}
+
 export function agentSettingsRowFromPayload(
   companyId: string,
   payload: AgentSettingsUpsertPayload,
@@ -62,10 +67,11 @@ export function agentSettingsRowFromPayload(
   is_active: boolean;
   updated_at: string;
 } {
+  const screenshotIntervalSeconds = payload.screenshotIntervalSeconds as ScreenshotIntervalSeconds;
   return {
     company_id: companyId,
-    screenshot_interval_seconds: payload.screenshotIntervalSeconds,
-    min_allowed_interval_seconds: payload.minAllowedIntervalSeconds,
+    screenshot_interval_seconds: screenshotIntervalSeconds,
+    min_allowed_interval_seconds: deriveMinAllowedIntervalSeconds(screenshotIntervalSeconds),
     is_active: payload.isActive,
     updated_at: new Date().toISOString(),
   };
@@ -82,32 +88,21 @@ export function validateAgentSettingsPayload(
   const screenshotIntervalSeconds = Number(
     raw.screenshotIntervalSeconds ?? raw.screenshot_interval_seconds,
   );
-  const minAllowedIntervalSeconds = Number(
-    raw.minAllowedIntervalSeconds ?? raw.min_allowed_interval_seconds,
-  );
   const isActive = raw.isActive ?? raw.is_active;
 
   if (!SCREENSHOT_INTERVAL_SECONDS_OPTIONS.includes(screenshotIntervalSeconds as ScreenshotIntervalSeconds)) {
     return { ok: false, error: "Screenshot interval must be 300, 180, 60, or 30 seconds." };
   }
-  if (!MIN_ALLOWED_INTERVAL_SECONDS_OPTIONS.includes(minAllowedIntervalSeconds as MinAllowedIntervalSeconds)) {
-    return { ok: false, error: "Minimum allowed interval must be 60 or 30 seconds." };
-  }
-  if (screenshotIntervalSeconds < minAllowedIntervalSeconds) {
-    return {
-      ok: false,
-      error: "Screenshot interval cannot be shorter than the minimum allowed interval.",
-    };
-  }
   if (typeof isActive !== "boolean") {
     return { ok: false, error: "Active flag must be true or false." };
   }
 
+  const interval = screenshotIntervalSeconds as ScreenshotIntervalSeconds;
+
   return {
     ok: true,
     value: {
-      screenshotIntervalSeconds,
-      minAllowedIntervalSeconds,
+      screenshotIntervalSeconds: interval,
       isActive,
     },
   };

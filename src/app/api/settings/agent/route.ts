@@ -41,7 +41,6 @@ async function ensureAgentSettings(companyId: string) {
   const defaults = resolveDefaultAgentSettings(companyId);
   const row = agentSettingsRowFromPayload(companyId, {
     screenshotIntervalSeconds: defaults.screenshotIntervalSeconds,
-    minAllowedIntervalSeconds: defaults.minAllowedIntervalSeconds,
     isActive: defaults.isActive,
   });
 

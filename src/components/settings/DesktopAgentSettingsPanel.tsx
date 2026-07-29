@@ -7,7 +7,6 @@ import { SkeletonText } from "@/components/common/Skeleton";
 import {
   type AgentSettings,
   type ScreenshotIntervalSeconds,
-  type MinAllowedIntervalSeconds,
 } from "@/lib/agentSettings";
 import { getAgentSettings, upsertAgentSettings } from "@/services/agentSettingsService";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
@@ -17,11 +16,6 @@ const SCREENSHOT_OPTIONS: { value: ScreenshotIntervalSeconds; label: string }[] 
   { value: 180, label: "3 minutes (180 seconds)" },
   { value: 60, label: "1 minute (60 seconds)" },
   { value: 30, label: "30 seconds" },
-];
-
-const MIN_INTERVAL_OPTIONS: { value: MinAllowedIntervalSeconds; label: string }[] = [
-  { value: 60, label: "1 minute (recommended)" },
-  { value: 30, label: "30 seconds (strict mode)" },
 ];
 
 export function DesktopAgentSettingsPanel() {
@@ -36,7 +30,6 @@ export function DesktopAgentSettingsPanel() {
   const [confirm30Open, setConfirm30Open] = useState(false);
 
   const [screenshotIntervalSeconds, setScreenshotIntervalSeconds] = useState<ScreenshotIntervalSeconds>(300);
-  const [minAllowedIntervalSeconds, setMinAllowedIntervalSeconds] = useState<MinAllowedIntervalSeconds>(60);
   const [isActive, setIsActive] = useState(true);
 
   const load = useCallback(async () => {
@@ -47,7 +40,6 @@ export function DesktopAgentSettingsPanel() {
       const data = await getAgentSettings();
       setSettings(data);
       setScreenshotIntervalSeconds(data.screenshotIntervalSeconds);
-      setMinAllowedIntervalSeconds(data.minAllowedIntervalSeconds);
       setIsActive(data.isActive);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load desktop agent settings");
@@ -65,20 +57,12 @@ export function DesktopAgentSettingsPanel() {
       showToast("error", "Only Super Admin can update desktop agent settings.");
       return;
     }
-    if (screenshotIntervalSeconds < minAllowedIntervalSeconds) {
-      const msg = "Screenshot interval cannot be shorter than the minimum allowed interval.";
-      setError(msg);
-      showToast("error", msg);
-      return;
-    }
-
     const companyId = settings?.companyId ?? "";
     setSaving(true);
     setError(null);
     try {
       const saved = await upsertAgentSettings(companyId, {
         screenshotIntervalSeconds,
-        minAllowedIntervalSeconds,
         isActive,
       });
       setSettings(saved);
@@ -139,23 +123,6 @@ export function DesktopAgentSettingsPanel() {
               </select>
             </label>
 
-            <label className="block text-sm">
-              <span className="text-slate-600">Minimum allowed interval</span>
-              <select
-                className="mt-1 w-full max-w-md rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                value={minAllowedIntervalSeconds}
-                onChange={(e) =>
-                  setMinAllowedIntervalSeconds(Number(e.target.value) as MinAllowedIntervalSeconds)
-                }
-              >
-                {MIN_INTERVAL_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-
             <label className="flex items-center gap-2 text-sm text-slate-700">
               <input
                 type="checkbox"
@@ -183,7 +150,7 @@ export function DesktopAgentSettingsPanel() {
       <ConfirmDialog
         open={confirm30Open}
         title="Confirm 30-second screenshot interval"
-        description="30 seconds can increase Azure storage, upload bandwidth, Supabase rows, and employee system load, especially for users with multiple monitors. Use only when strict monitoring is required."
+        description="30 seconds can increase storage, upload bandwidth, Supabase rows, and employee system load, especially for users with multiple monitors. Use only when strict monitoring is required."
         confirmText="Confirm and Save"
         cancelText="Cancel"
         danger
