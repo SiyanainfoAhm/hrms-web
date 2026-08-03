@@ -11,6 +11,12 @@ import {
 } from "@/lib/governmentPayroll";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig } from "@/lib/payrollConfig";
 import { statutoryIdPatchFromBody } from "@/lib/payrollEligibility";
+import {
+  payrollMonthLabelFromYmd,
+  type PayrollMasterChangeRow,
+} from "@/lib/payrollMasterEmail";
+import { sendPayrollMasterUpdatedEmail } from "@/services/payrollNotificationService";
+import { getPublicAppUrl } from "@/lib/publicAppUrl";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -39,6 +45,168 @@ function dayBeforeUtc(ymdDate: string): string {
   if (Number.isNaN(d.getTime())) return "";
   d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+function moneyLabel(v: unknown): string {
+  if (v == null || v === "") return "—";
+  const n = Number(v);
+  if (!Number.isFinite(n)) return String(v);
+  return `₹${Math.round(n).toLocaleString("en-IN")}`;
+}
+
+function textLabel(v: unknown): string {
+  if (v == null || v === "") return "—";
+  return String(v);
+}
+
+function boolLabel(v: unknown): string {
+  if (v === true) return "Yes";
+  if (v === false) return "No";
+  return "—";
+}
+
+function pushMasterFieldChange(
+  out: PayrollMasterChangeRow[],
+  employeeName: string,
+  field: string,
+  previousValue: string,
+  newValue: string,
+) {
+  if (previousValue === newValue) return;
+  out.push({ employeeName, field, previousValue, newValue });
+}
+
+function buildPrivateMasterDiff(
+  employeeName: string,
+  oldRow: Record<string, unknown> | null,
+  next: {
+    grossSalary: number;
+    ctc: number;
+    takeHome: number;
+    pfEmployee: number;
+    pfEmployer: number;
+    esicEmployee: number;
+    esicEmployer: number;
+    pt: number;
+    tds: number;
+    advanceBonus: number;
+    effectiveStartDate: string;
+  },
+): PayrollMasterChangeRow[] {
+  const changes: PayrollMasterChangeRow[] = [];
+  const old = oldRow ?? null;
+  pushMasterFieldChange(changes, employeeName, "Gross", moneyLabel(old?.gross_salary), moneyLabel(next.grossSalary));
+  pushMasterFieldChange(changes, employeeName, "CTC", moneyLabel(old?.ctc), moneyLabel(next.ctc));
+  pushMasterFieldChange(changes, employeeName, "Take home", moneyLabel(old?.take_home), moneyLabel(next.takeHome));
+  pushMasterFieldChange(changes, employeeName, "PF (employee)", moneyLabel(old?.pf_employee), moneyLabel(next.pfEmployee));
+  pushMasterFieldChange(changes, employeeName, "PF (employer)", moneyLabel(old?.pf_employer), moneyLabel(next.pfEmployer));
+  pushMasterFieldChange(changes, employeeName, "ESIC (employee)", moneyLabel(old?.esic_employee), moneyLabel(next.esicEmployee));
+  pushMasterFieldChange(changes, employeeName, "ESIC (employer)", moneyLabel(old?.esic_employer), moneyLabel(next.esicEmployer));
+  pushMasterFieldChange(changes, employeeName, "PT", moneyLabel(old?.pt), moneyLabel(next.pt));
+  pushMasterFieldChange(changes, employeeName, "TDS", moneyLabel(old?.tds), moneyLabel(next.tds));
+  pushMasterFieldChange(changes, employeeName, "Incentive / Advance bonus", moneyLabel(old?.advance_bonus), moneyLabel(next.advanceBonus));
+  pushMasterFieldChange(
+    changes,
+    employeeName,
+    "Effective start",
+    textLabel(old?.effective_start_date),
+    textLabel(next.effectiveStartDate),
+  );
+  return changes;
+}
+
+function buildGovernmentMasterDiff(
+  employeeName: string,
+  oldRow: Record<string, unknown> | null,
+  next: {
+    grossBasic: number;
+    takeHome: number;
+    pt: number;
+    tds: number;
+    advanceBonus: number;
+    effectiveStartDate: string;
+  },
+): PayrollMasterChangeRow[] {
+  const changes: PayrollMasterChangeRow[] = [];
+  const old = oldRow ?? null;
+  pushMasterFieldChange(
+    changes,
+    employeeName,
+    "Gross basic",
+    moneyLabel(old?.gross_basic ?? old?.gross_salary),
+    moneyLabel(next.grossBasic),
+  );
+  pushMasterFieldChange(changes, employeeName, "CTC / Gross", moneyLabel(old?.ctc), moneyLabel(next.grossBasic));
+  pushMasterFieldChange(changes, employeeName, "Take home / Net", moneyLabel(old?.take_home), moneyLabel(next.takeHome));
+  pushMasterFieldChange(changes, employeeName, "PT", moneyLabel(old?.pt), moneyLabel(next.pt));
+  pushMasterFieldChange(changes, employeeName, "TDS", moneyLabel(old?.tds), moneyLabel(next.tds));
+  pushMasterFieldChange(changes, employeeName, "Incentive / Advance bonus", moneyLabel(old?.advance_bonus), moneyLabel(next.advanceBonus));
+  pushMasterFieldChange(
+    changes,
+    employeeName,
+    "Effective start",
+    textLabel(old?.effective_start_date),
+    textLabel(next.effectiveStartDate),
+  );
+  return changes;
+}
+
+async function notifyPayrollMasterUpdate(args: {
+  companyId: string;
+  employeeUserId: string;
+  employeeName: string | null;
+  employeeEmail: string | null;
+  updatedByName: string | null;
+  updatedByEmail: string;
+  effectiveStartDate: string;
+  changes: PayrollMasterChangeRow[];
+  newValuesSummary: string;
+}): Promise<{ emailSent: boolean }> {
+  try {
+    const { data: companyRow } = await supabase
+      .from("HRMS_companies")
+      .select("name")
+      .eq("id", args.companyId)
+      .maybeSingle();
+    const companyName =
+      (companyRow as { name?: string | null } | null)?.name?.trim() ||
+      "Siyana Info Solution Private Limited";
+    const payrollMonth = payrollMonthLabelFromYmd(args.effectiveStartDate);
+    // Always use the field-diff table; empty changes means values were unchanged.
+    const hasExactDiff = true;
+    const res = await sendPayrollMasterUpdatedEmail({
+      companyName,
+      updatedByName: args.updatedByName,
+      updatedByEmail: args.updatedByEmail,
+      payrollMonth,
+      affectedEmployees: [
+        {
+          employeeName: args.employeeName || "Employee",
+          employeeEmail: args.employeeEmail,
+          updatedFields:
+            args.changes.length > 0
+              ? [...new Set(args.changes.map((c) => c.field))]
+              : ["Payroll master"],
+          newValuesSummary: args.newValuesSummary,
+        },
+      ],
+      changes: args.changes,
+      hasExactDiff,
+      hrmsUrl: getPublicAppUrl(),
+    });
+    if (!res.ok) {
+      if (process.env.NODE_ENV === "development") {
+        console.error("[payroll/master] HR notification failed:", res.error);
+      }
+      return { emailSent: false };
+    }
+    return { emailSent: true };
+  } catch (e) {
+    if (process.env.NODE_ENV === "development") {
+      console.error("[payroll/master] HR notification error:", e);
+    }
+    return { emailSent: false };
+  }
 }
 
 export async function GET(request: NextRequest) {
@@ -282,16 +450,21 @@ export async function PATCH(request: NextRequest) {
 
   const { data: target } = await supabase
     .from("HRMS_users")
-    .select("id, company_id, employment_status, government_pay_level")
+    .select("id, company_id, employment_status, government_pay_level, name, email")
     .eq("id", userId)
     .single();
   if (!target || target.company_id !== me.company_id || target.employment_status !== "current") {
     return NextResponse.json({ error: "Invalid employee" }, { status: 400 });
   }
 
+  const employeeName = (target as { name?: string | null }).name ?? null;
+  const employeeEmail = (target as { email?: string | null }).email ?? null;
+
   const { data: oldMaster } = await supabase
     .from("HRMS_payroll_master")
-    .select("id, effective_start_date")
+    .select(
+      "id, effective_start_date, payroll_mode, gross_salary, gross_basic, ctc, take_home, pf_employee, pf_employer, esic_employee, esic_employer, pt, tds, advance_bonus, pf_eligible, esic_eligible",
+    )
     .eq("employee_user_id", userId)
     .is("effective_end_date", null)
     .maybeSingle();
@@ -396,7 +569,7 @@ export async function PATCH(request: NextRequest) {
       deductionDefaults: masterRowToDeductionDefaults(ded),
     });
 
-    await supabase.from("HRMS_payroll_master").insert([
+    const { error: govInsErr } = await supabase.from("HRMS_payroll_master").insert([
       {
         company_id: me.company_id,
         employee_user_id: userId,
@@ -433,6 +606,7 @@ export async function PATCH(request: NextRequest) {
         created_by: session.id,
       },
     ]);
+    if (govInsErr) return NextResponse.json({ error: govInsErr.message }, { status: 400 });
 
     await supabase
       .from("HRMS_users")
@@ -445,7 +619,27 @@ export async function PATCH(request: NextRequest) {
       })
       .eq("id", userId);
 
-    return NextResponse.json({ ok: true });
+    const changes = buildGovernmentMasterDiff(employeeName || "Employee", (oldMaster as any) ?? null, {
+      grossBasic,
+      takeHome: preview.netSalary,
+      pt: ded.pt_default,
+      tds: tdsVal,
+      advanceBonus: advanceBonusVal,
+      effectiveStartDate,
+    });
+    const { emailSent } = await notifyPayrollMasterUpdate({
+      companyId: me.company_id,
+      employeeUserId: userId,
+      employeeName,
+      employeeEmail,
+      updatedByName: session.name,
+      updatedByEmail: session.email,
+      effectiveStartDate,
+      changes,
+      newValuesSummary: `Gross ${moneyLabel(grossBasic)}, Net ${moneyLabel(preview.netSalary)}, PT ${moneyLabel(ded.pt_default)}, TDS ${moneyLabel(tdsVal)}`,
+    });
+
+    return NextResponse.json({ ok: true, emailSent });
   }
 
   const { data: company } = await supabase
@@ -499,7 +693,7 @@ export async function PATCH(request: NextRequest) {
     personal: calcPersonal,
   };
 
-  await supabase.from("HRMS_payroll_master").insert([
+  const { error: privInsErr } = await supabase.from("HRMS_payroll_master").insert([
     {
       company_id: me.company_id,
       employee_user_id: userId,
@@ -523,6 +717,7 @@ export async function PATCH(request: NextRequest) {
       ...salaryComponents,
     },
   ]);
+  if (privInsErr) return NextResponse.json({ error: privInsErr.message }, { status: 400 });
 
   await supabase
     .from("HRMS_users")
@@ -536,5 +731,48 @@ export async function PATCH(request: NextRequest) {
     })
     .eq("id", userId);
 
-  return NextResponse.json({ ok: true });
+  const changes = buildPrivateMasterDiff(employeeName || "Employee", (oldMaster as any) ?? null, {
+    grossSalary,
+    ctc,
+    takeHome,
+    pfEmployee: pfEmp,
+    pfEmployer: pfEmpr,
+    esicEmployee: esicEmp,
+    esicEmployer: esicEmpr,
+    pt: ptStored,
+    tds: tdsVal,
+    advanceBonus: advanceBonusVal,
+    effectiveStartDate,
+  });
+  // Include eligibility flips in the diff when previous row exists.
+  if (oldMaster) {
+    pushMasterFieldChange(
+      changes,
+      employeeName || "Employee",
+      "PF eligible",
+      boolLabel((oldMaster as any).pf_eligible),
+      boolLabel(pfEligible),
+    );
+    pushMasterFieldChange(
+      changes,
+      employeeName || "Employee",
+      "ESIC eligible",
+      boolLabel((oldMaster as any).esic_eligible),
+      boolLabel(esicEligible),
+    );
+  }
+
+  const { emailSent } = await notifyPayrollMasterUpdate({
+    companyId: me.company_id,
+    employeeUserId: userId,
+    employeeName,
+    employeeEmail,
+    updatedByName: session.name,
+    updatedByEmail: session.email,
+    effectiveStartDate,
+    changes,
+    newValuesSummary: `CTC ${moneyLabel(ctc)}, Gross ${moneyLabel(grossSalary)}, Take home ${moneyLabel(takeHome)}, PF ${moneyLabel(pfEmp)}, ESIC ${moneyLabel(esicEmp)}, PT ${moneyLabel(ptStored)}, TDS ${moneyLabel(tdsVal)}`,
+  });
+
+  return NextResponse.json({ ok: true, emailSent });
 }

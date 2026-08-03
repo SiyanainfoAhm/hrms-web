@@ -86,6 +86,7 @@ export type GovernmentRunPreviewRow = {
   employeeEmail: string;
   payDays: number;
   unpaidLeaveDays: number;
+  payrollFullMonthOverride?: boolean;
   grossMonthly?: number;
   grossPay: number;
   netPay: number;
@@ -245,6 +246,14 @@ export function GovernmentRunPreviewTable({
                   ) : null}
                   <td className={tdL} title={r.employeeEmail || undefined}>
                     <span className="font-medium text-slate-900">{r.employeeName || r.employeeEmail || "—"}</span>
+                    {r.payrollFullMonthOverride ? (
+                      <span
+                        className="ml-1 inline-block align-middle rounded bg-sky-100 px-1 py-0 text-[10px] font-medium text-sky-900"
+                        title="Full month override — pay days use calendar month length, not attendance"
+                      >
+                        Full month override
+                      </span>
+                    ) : null}
                   </td>
                   <td className={tdL}>
                     {readOnly ? (
@@ -257,10 +266,10 @@ export function GovernmentRunPreviewTable({
                         type="number"
                         min={0}
                         step={0.5}
-                        max={effectiveRunDay ?? daysInMonth}
+                        max={r.payrollFullMonthOverride ? daysInMonth : (effectiveRunDay ?? daysInMonth)}
                         value={r.payDays}
                         onChange={(e) => {
-                          const cap = effectiveRunDay ?? daysInMonth;
+                          const cap = r.payrollFullMonthOverride ? daysInMonth : (effectiveRunDay ?? daysInMonth);
                           onUpdate(
                             r.employeeUserId,
                             "payDays",

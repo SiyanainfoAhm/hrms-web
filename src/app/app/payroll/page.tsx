@@ -779,6 +779,7 @@ function PayrollPageContent() {
       rawPayDays?: number;
       attendanceQualifyingDays?: number;
       payDaysSuppressedMinAttendance?: boolean;
+      payrollFullMonthOverride?: boolean;
       unpaidLeaveDays: number;
       grossPay: number;
       pfEligible?: boolean;
@@ -820,6 +821,7 @@ function PayrollPageContent() {
       rawPayDays?: number;
       attendanceQualifyingDays?: number;
       payDaysSuppressedMinAttendance?: boolean;
+      payrollFullMonthOverride?: boolean;
       unpaidLeaveDays: number;
       grossMonthly?: number;
       grossPay: number;
@@ -1223,7 +1225,7 @@ function PayrollPageContent() {
       preview?.workingDaysThroughRunDay ??
       preview?.effectiveRunDay ??
       30;
-    const payDaysMax = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
+    const payDaysMaxDefault = preview?.effectiveRunDay ?? preview?.workingDaysThroughRunDay ?? preview?.daysInMonth ?? 31;
     const govPayDaysMax = preview?.daysInMonth ?? 31;
     setEditableRows((prev) =>
       prev.map((row) => {
@@ -1232,9 +1234,10 @@ function PayrollPageContent() {
         if (row.payrollMode === "government" && row.govRecalc) {
           const dim = Math.max(1, Math.floor(Number(payDenom) || 30));
           const gr0 = row.govRecalc;
+          const rowGovPayDaysMax = row.payrollFullMonthOverride ? dim : govPayDaysMax;
 
           const applyGovCompute = (gr: GovRecalcPayload, payDaysVal: number) => {
-            const capped = normalizePayDaysHalfStepAndClamp(payDaysVal, govPayDaysMax);
+            const capped = normalizePayDaysHalfStepAndClamp(payDaysVal, rowGovPayDaysMax);
             const unpaidDays = Math.max(0, dim - capped);
             const gm = row.governmentMonthly as Record<string, unknown> | null | undefined;
             const optionalEarnings = govOptionalFromComputedMonthly(gm);
@@ -1419,6 +1422,9 @@ function PayrollPageContent() {
           return next;
         }
         if (field === "payDays") {
+          const payDaysMax = row.payrollFullMonthOverride
+            ? (preview?.daysInMonth ?? payDaysMaxDefault)
+            : payDaysMaxDefault;
           const newPayDays = normalizePayDaysHalfStepAndClamp(value, payDaysMax);
           const grossMonthly =
             row.grossMonthly ?? Math.round((row.grossPay * payDenom) / (row.payDays || row.rawPayDays || 1));
@@ -1974,7 +1980,11 @@ function PayrollPageContent() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to update");
-        showToast("success", "Payroll master updated");
+        if (data?.emailSent) {
+          showToast("success", "Payroll master updated and HR notification sent.");
+        } else {
+          showToast("info", "Payroll master updated, but email notification could not be sent.");
+        }
         const refresh = await fetch("/api/payroll/master");
         const refreshData = await refresh.json();
         if (refresh.ok) setMasters(refreshData.masters || []);
@@ -2005,7 +2015,11 @@ function PayrollPageContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update");
-      showToast("success", "Payroll master updated");
+      if (data?.emailSent) {
+        showToast("success", "Payroll master updated and HR notification sent.");
+      } else {
+        showToast("info", "Payroll master updated, but email notification could not be sent.");
+      }
       const refresh = await fetch("/api/payroll/master");
       const refreshData = await refresh.json();
       if (refresh.ok) setMasters(refreshData.masters || []);
@@ -2127,7 +2141,11 @@ function PayrollPageContent() {
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data?.error || "Failed to update");
-        showToast("success", "Payroll master updated");
+        if (data?.emailSent) {
+          showToast("success", "Payroll master updated and HR notification sent.");
+        } else {
+          showToast("info", "Payroll master updated, but email notification could not be sent.");
+        }
         setEditMasterOpen(null);
         const refresh = await fetch("/api/payroll/master");
         const refreshData = await refresh.json();
@@ -2177,7 +2195,11 @@ function PayrollPageContent() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Failed to update");
-      showToast("success", "Payroll master updated");
+      if (data?.emailSent) {
+        showToast("success", "Payroll master updated and HR notification sent.");
+      } else {
+        showToast("info", "Payroll master updated, but email notification could not be sent.");
+      }
       setEditMasterOpen(null);
       const refresh = await fetch("/api/payroll/master");
       const refreshData = await refresh.json();
@@ -3853,6 +3875,14 @@ function PayrollPageContent() {
                                   title={r.employeeName || r.employeeEmail || undefined}
                                 >
                                   <span className="align-middle">{r.employeeName || r.employeeEmail || "—"}</span>
+                                  {r.payrollFullMonthOverride ? (
+                                    <span
+                                      className="ml-1 inline-block align-middle rounded bg-sky-100 px-1 py-0 text-[10px] font-medium text-sky-900"
+                                      title="Full month override — pay days use calendar month length, not attendance"
+                                    >
+                                      Full month override
+                                    </span>
+                                  ) : null}
                                   {r.payslipPending ? (
                                     <span className="ml-1 inline-block align-middle rounded bg-amber-100 px-1 py-0 text-[10px] font-medium text-amber-900">
                                       Pending slip
@@ -3871,7 +3901,11 @@ function PayrollPageContent() {
                                         type="number"
                                         min={0}
                                         step={0.5}
-                                        max={preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31}
+                                        max={
+                                          r.payrollFullMonthOverride
+                                            ? (preview?.daysInMonth ?? 31)
+                                            : (preview?.effectiveRunDay ?? preview?.daysInMonth ?? 31)
+                                        }
                                         value={r.payDays}
                                         onChange={(e) =>
                                           updateEditableRow(r.employeeUserId, "payDays", parseFloat(e.target.value) || 0)

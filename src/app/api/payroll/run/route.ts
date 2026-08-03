@@ -492,6 +492,24 @@ function resolveEmployeePayDaysFromAttendance(args: {
   return { payDays, unpaidLeaveDays, attendanceQualifyingDays, holidayPayDays, weekendPayDays };
 }
 
+/** Full calendar-month pay days for employees with payroll_full_month_override (ignores attendance / run-day window). */
+function fullMonthOverridePayDayCalc(daysInMonth: number): {
+  payDays: number;
+  unpaidLeaveDays: number;
+  attendanceQualifyingDays: number;
+  holidayPayDays: number;
+  weekendPayDays: number;
+} {
+  const payDays = Math.max(1, daysInMonth);
+  return {
+    payDays,
+    unpaidLeaveDays: 0,
+    attendanceQualifyingDays: 0,
+    holidayPayDays: 0,
+    weekendPayDays: 0,
+  };
+}
+
 /** Company holidays (single or multi-day) that fall inside [rangeStartYmd, rangeEndYmd]. */
 async function loadCompanyHolidayDateSet(
   companyId: string,
@@ -967,7 +985,7 @@ async function computeFreshPayrollPreviewFromMasters(
   const userIds = masters.map((m: any) => m.employee_user_id);
   const { data: users } = await supabase
     .from("HRMS_users")
-    .select("id, name, email, date_of_joining, date_of_leaving, role, government_pay_level, pf_eligible, esic_eligible")
+    .select("id, name, email, date_of_joining, date_of_leaving, role, government_pay_level, pf_eligible, esic_eligible, payroll_full_month_override")
     .in("id", userIds);
 
   const userById = new Map((users ?? []).map((u: any) => [u.id, u]));
@@ -1041,30 +1059,33 @@ async function computeFreshPayrollPreviewFromMasters(
         ? new Set<string>([...holidaySets.global, ...(divSet ? [...divSet] : [])])
         : new Set<string>();
     const plRemaining = isFuturePeriod ? 0 : plRemainingByUser.get(m.employee_user_id) || 0;
-    const payDayCalc = isFuturePeriod
-      ? {
-          payDays: Math.max(
-            0,
-            eligibleCalendarDays - (unpaidLeaveDaysByUser.get(m.employee_user_id) || 0),
-          ),
-          unpaidLeaveDays: unpaidLeaveDaysByUser.get(m.employee_user_id) || 0,
-          attendanceQualifyingDays: 0,
-          holidayPayDays: 0,
-          weekendPayDays: 0,
-        }
-      : resolveEmployeePayDaysFromAttendance({
-          userId: m.employee_user_id,
-          eligibleCalendarDays,
-          eligStartYmd,
-          eligEndYmd,
-          unionHolidaySet,
-          presentDaysByUser,
-          paidLeaveDaysByUser,
-          unpaidLeaveDaysByUser,
-          presentDatesByUser,
-          leaveDaysByUser,
-          plRemaining,
-        });
+    const fullMonthOverride = u.payroll_full_month_override === true;
+    const payDayCalc = fullMonthOverride
+      ? fullMonthOverridePayDayCalc(daysInMonth)
+      : isFuturePeriod
+        ? {
+            payDays: Math.max(
+              0,
+              eligibleCalendarDays - (unpaidLeaveDaysByUser.get(m.employee_user_id) || 0),
+            ),
+            unpaidLeaveDays: unpaidLeaveDaysByUser.get(m.employee_user_id) || 0,
+            attendanceQualifyingDays: 0,
+            holidayPayDays: 0,
+            weekendPayDays: 0,
+          }
+        : resolveEmployeePayDaysFromAttendance({
+            userId: m.employee_user_id,
+            eligibleCalendarDays,
+            eligStartYmd,
+            eligEndYmd,
+            unionHolidaySet,
+            presentDaysByUser,
+            paidLeaveDaysByUser,
+            unpaidLeaveDaysByUser,
+            presentDatesByUser,
+            leaveDaysByUser,
+            plRemaining,
+          });
     const { payDays, unpaidLeaveDays, attendanceQualifyingDays } = payDayCalc;
     const rawPayDays = payDays;
 
@@ -1108,6 +1129,7 @@ async function computeFreshPayrollPreviewFromMasters(
         rawPayDays: paidDaysGov,
         attendanceQualifyingDays,
         payDaysSuppressedMinAttendance: false,
+        payrollFullMonthOverride: fullMonthOverride,
         unpaidLeaveDays,
         grossMonthly: Math.round(grossBasic),
         grossPay: comp.totalEarnings,
@@ -1209,6 +1231,7 @@ async function computeFreshPayrollPreviewFromMasters(
       rawPayDays,
       attendanceQualifyingDays,
       payDaysSuppressedMinAttendance: false,
+      payrollFullMonthOverride: fullMonthOverride,
       unpaidLeaveDays,
       grossMonthly: Math.round(grossMonthly),
       grossPay,
@@ -1687,7 +1710,7 @@ export async function POST(request: NextRequest) {
     const { data: usersCm, error: usersCmErr } = await supabase
       .from("HRMS_users")
       .select(
-        "id, name, email, date_of_joining, date_of_leaving, role, bank_name, bank_account_number, bank_ifsc, government_pay_level, pf_eligible, esic_eligible",
+        "id, name, email, date_of_joining, date_of_leaving, role, bank_name, bank_account_number, bank_ifsc, government_pay_level, pf_eligible, esic_eligible, payroll_full_month_override",
       )
       .in("id", userIdsCm);
     if (usersCmErr) return NextResponse.json({ error: usersCmErr.message }, { status: 400 });
@@ -1766,19 +1789,22 @@ export async function POST(request: NextRequest) {
       const divSet = divId ? holidaySetsCm.byDivision.get(divId) : undefined;
       const unionHolidaySet = new Set<string>([...holidaySetsCm.global, ...(divSet ? [...divSet] : [])]);
       const plRemaining = plRemainingByUserCm.get(m.employee_user_id) || 0;
-      const payDayCalc = resolveEmployeePayDaysFromAttendance({
-        userId: m.employee_user_id,
-        eligibleCalendarDays,
-        eligStartYmd,
-        eligEndYmd,
-        unionHolidaySet,
-        presentDaysByUser: presCm,
-        paidLeaveDaysByUser: paidCm,
-        unpaidLeaveDaysByUser: unpaidCm,
-        presentDatesByUser: presDatesCm,
-        leaveDaysByUser: leaveDaysCm,
-        plRemaining,
-      });
+      const fullMonthOverride = u.payroll_full_month_override === true;
+      const payDayCalc = fullMonthOverride
+        ? fullMonthOverridePayDayCalc(daysInMonth)
+        : resolveEmployeePayDaysFromAttendance({
+            userId: m.employee_user_id,
+            eligibleCalendarDays,
+            eligStartYmd,
+            eligEndYmd,
+            unionHolidaySet,
+            presentDaysByUser: presCm,
+            paidLeaveDaysByUser: paidCm,
+            unpaidLeaveDaysByUser: unpaidCm,
+            presentDatesByUser: presDatesCm,
+            leaveDaysByUser: leaveDaysCm,
+            plRemaining,
+          });
       const { payDays, unpaidLeaveDays: unpaidLeaveDaysResolved } = payDayCalc;
       unpaidLeaveDays = unpaidLeaveDaysResolved;
 
@@ -2084,7 +2110,7 @@ export async function POST(request: NextRequest) {
   const { data: users, error: usersErr } = await supabase
     .from("HRMS_users")
     .select(
-      "id, name, email, date_of_joining, date_of_leaving, role, bank_name, bank_account_number, bank_ifsc, government_pay_level, pf_eligible, esic_eligible",
+      "id, name, email, date_of_joining, date_of_leaving, role, bank_name, bank_account_number, bank_ifsc, government_pay_level, pf_eligible, esic_eligible, payroll_full_month_override",
     )
     .in("id", userIds);
   if (usersErr) return NextResponse.json({ error: usersErr.message }, { status: 400 });
@@ -2312,19 +2338,22 @@ export async function POST(request: NextRequest) {
       const divSet = divId ? holidaySetsPost.byDivision.get(divId) : undefined;
       const unionHolidaySet = new Set<string>([...holidaySetsPost.global, ...(divSet ? [...divSet] : [])]);
       const plRemaining = plRemainingByUser.get(m.employee_user_id) || 0;
-      const payDayCalc = resolveEmployeePayDaysFromAttendance({
-        userId: m.employee_user_id,
-        eligibleCalendarDays,
-        eligStartYmd,
-        eligEndYmd,
-        unionHolidaySet,
-        presentDaysByUser,
-        paidLeaveDaysByUser,
-        unpaidLeaveDaysByUser,
-        presentDatesByUser,
-        leaveDaysByUser,
-        plRemaining,
-      });
+      const fullMonthOverride = u.payroll_full_month_override === true;
+      const payDayCalc = fullMonthOverride
+        ? fullMonthOverridePayDayCalc(daysInMonth)
+        : resolveEmployeePayDaysFromAttendance({
+            userId: m.employee_user_id,
+            eligibleCalendarDays,
+            eligStartYmd,
+            eligEndYmd,
+            unionHolidaySet,
+            presentDaysByUser,
+            paidLeaveDaysByUser,
+            unpaidLeaveDaysByUser,
+            presentDatesByUser,
+            leaveDaysByUser,
+            plRemaining,
+          });
       const { payDays, unpaidLeaveDays: unpaidLeaveDaysResolved } = payDayCalc;
       unpaidLeaveDays = unpaidLeaveDaysResolved;
 
