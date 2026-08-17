@@ -130,7 +130,26 @@ export function AttendanceScreenshotsDialog({
         const data = await res.json();
         if (cancelled) return;
         if (!res.ok) throw new Error(data?.error || "Failed to load screenshots");
-        setItems(Array.isArray(data.screenshots) ? data.screenshots : []);
+        const list = Array.isArray(data.screenshots) ? data.screenshots : [];
+        if (process.env.NODE_ENV === "development") {
+          console.debug("[AttendanceScreenshotsDialog]", {
+            logId,
+            employeeName,
+            screenshotRowsFound: list.length,
+            resolved: list.map((s: Screenshot & { urlSource?: string }) => ({
+              id: s.id,
+              urlSource: s.urlSource ?? "(prod)",
+              urlHost: (() => {
+                try {
+                  return new URL(s.url).host;
+                } catch {
+                  return null;
+                }
+              })(),
+            })),
+          });
+        }
+        setItems(list);
       } catch (e: unknown) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load screenshots");
       } finally {

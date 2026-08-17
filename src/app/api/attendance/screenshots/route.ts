@@ -4,6 +4,12 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import {
+  inlineScreenshotUrl,
+  isAbsoluteHttpUrl,
+  pickScreenshotUrlFields,
+  type ScreenshotUrlSource,
+} from "@/lib/attendanceScreenshotUrl";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,8 +23,9 @@ export const dynamic = "force-dynamic";
  * company scope: an HR/admin from company A cannot read screenshots
  * stored against a log that belongs to company B.
  *
- * Each item is returned with a short-lived signed URL so we don't have
- * to expose the storage bucket as public.
+ * URL resolution (migration-safe):
+ *   file_url → storage_path (if http) → file_path (if http) →
+ *   signed/public URL from storage_bucket + object key
  */
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -50,7 +57,7 @@ export async function GET(request: NextRequest) {
 
   const { data: log, error: logErr } = await supabase
     .from("HRMS_attendance_logs")
-    .select("id, company_id")
+    .select("id, company_id, employee_id")
     .eq("id", logId)
     .maybeSingle();
   if (logErr) return NextResponse.json({ error: logErr.message }, { status: 400 });
@@ -58,54 +65,67 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
-  const { data: rows, error } = await supabase
-    .from("HRMS_activity_screenshots")
-    .select(
-      "id, captured_at, trigger_type, storage_bucket, storage_path, app_name, window_title, mouse_active, keyboard_active, idle_seconds",
-    )
-    .eq("company_id", me.company_id)
-    .eq("attendance_log_id", logId)
-    .order("captured_at", { ascending: true });
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  let rows: any[] | null = null;
+  {
+    const full = await supabaseAdmin
+      .from("HRMS_activity_screenshots")
+      .select(
+        "id, captured_at, trigger_type, storage_bucket, storage_path, file_url, file_path, app_name, window_title, mouse_active, keyboard_active, idle_seconds",
+      )
+      .eq("company_id", me.company_id)
+      .eq("attendance_log_id", logId)
+      .order("captured_at", { ascending: true });
 
-  /**
-   * The desktop agent stores `storage_path` in one of two shapes:
-   *
-   *   1. A relative object key inside a Supabase Storage bucket
-   *      (e.g. `HRMS/attendance screenshots/<company>/...`). For these
-   *      we ask Supabase for a short-lived signed URL.
-   *
-   *   2. The **fully-qualified Azure Blob URL** of an externally-hosted
-   *      screenshot, including its own SAS token (e.g.
-   *      `https://hrms2026.blob.core.windows.net/attendance/<company>/...?sp=racwd&sig=...`).
-   *      For these we MUST use the URL as-is — feeding it back through
-   *      `createSignedUrls` produces broken paths like
-   *      `…/storage/v1/object/public/attendance/https://hrms2026.blob…`.
-   */
-  function isAbsoluteUrl(p: string): boolean {
-    return /^https?:\/\//i.test(p);
+    if (full.error && /file_url|file_path|column/i.test(String(full.error.message || ""))) {
+      const fallback = await supabaseAdmin
+        .from("HRMS_activity_screenshots")
+        .select(
+          "id, captured_at, trigger_type, storage_bucket, storage_path, app_name, window_title, mouse_active, keyboard_active, idle_seconds",
+        )
+        .eq("company_id", me.company_id)
+        .eq("attendance_log_id", logId)
+        .order("captured_at", { ascending: true });
+      if (fallback.error) {
+        return NextResponse.json({ error: fallback.error.message }, { status: 400 });
+      }
+      rows = fallback.data;
+    } else if (full.error) {
+      return NextResponse.json({ error: full.error.message }, { status: 400 });
+    } else {
+      rows = full.data;
+    }
   }
 
-  type ItemRef = { id: string; path: string };
-  const byBucket = new Map<string, ItemRef[]>();
+  type ItemRef = { id: string; path: string; bucket: string; source: ScreenshotUrlSource };
+  const toSign: ItemRef[] = [];
   const urlByRowId = new Map<string, string>();
+  const sourceByRowId = new Map<string, ScreenshotUrlSource>();
 
   for (const r of rows ?? []) {
     const id = String((r as any).id);
-    const bucket = String((r as any).storage_bucket || "photomedia");
-    const path = String((r as any).storage_path || "");
-    if (!path) continue;
+    const picked = pickScreenshotUrlFields(r as any);
+    sourceByRowId.set(id, picked.source);
 
-    if (isAbsoluteUrl(path)) {
-      // Absolute URL — already self-authenticating via its embedded
-      // SAS token. Use it directly.
-      urlByRowId.set(id, path);
+    if (picked.url && isAbsoluteHttpUrl(picked.url)) {
+      urlByRowId.set(id, picked.url);
       continue;
     }
 
-    const list = byBucket.get(bucket) ?? [];
-    list.push({ id, path });
-    byBucket.set(bucket, list);
+    if (picked.objectKey) {
+      toSign.push({
+        id,
+        path: picked.objectKey,
+        bucket: picked.bucket,
+        source: picked.source,
+      });
+    }
+  }
+
+  const byBucket = new Map<string, ItemRef[]>();
+  for (const item of toSign) {
+    const list = byBucket.get(item.bucket) ?? [];
+    list.push(item);
+    byBucket.set(item.bucket, list);
   }
 
   for (const [bucket, items] of byBucket.entries()) {
@@ -116,7 +136,6 @@ export async function GET(request: NextRequest) {
       .createSignedUrls(paths, SIGNED_URL_TTL_SECONDS);
     if (Array.isArray(signed)) {
       signed.forEach((s, idx) => {
-        // Different supabase-js versions: `signedUrl` (current) vs `signedURL` (older).
         const raw = s as { signedUrl?: string | null; signedURL?: string | null };
         const u = raw?.signedUrl ?? raw?.signedURL;
         if (u) urlByRowId.set(items[idx].id, u);
@@ -124,31 +143,18 @@ export async function GET(request: NextRequest) {
     }
     for (const item of items) {
       if (urlByRowId.has(item.id)) continue;
-      // Fallback: public URL for buckets that allow it.
       const { data: pub } = supabaseAdmin.storage.from(bucket).getPublicUrl(item.path);
       if (pub?.publicUrl) urlByRowId.set(item.id, pub.publicUrl);
     }
   }
 
-  // Strip any `download` directive from URLs so `<img>` can render them
-  // inline (with it the storage proxy returns Content-Disposition:
-  // attachment and browsers refuse to paint the bytes as an image).
-  function inlineUrl(u: string): string {
-    try {
-      const url = new URL(u);
-      url.searchParams.delete("download");
-      return url.toString();
-    } catch {
-      return u;
-    }
-  }
-
   const screenshots = (rows ?? [])
     .map((r: any) => {
-      const url = urlByRowId.get(String(r.id));
+      const id = String(r.id);
+      const url = urlByRowId.get(id);
       if (!url) return null;
-      return {
-        id: String(r.id),
+      const item: Record<string, unknown> = {
+        id,
         capturedAt: r.captured_at ? new Date(r.captured_at).toISOString() : null,
         triggerType: r.trigger_type ?? null,
         appName: r.app_name ?? null,
@@ -156,10 +162,24 @@ export async function GET(request: NextRequest) {
         mouseActive: Boolean(r.mouse_active),
         keyboardActive: Boolean(r.keyboard_active),
         idleSeconds: Number(r.idle_seconds) || 0,
-        url: inlineUrl(url),
+        url: inlineScreenshotUrl(url),
       };
+      if (process.env.NODE_ENV === "development") {
+        item.urlSource = sourceByRowId.get(id) ?? null;
+      }
+      return item;
     })
     .filter(Boolean);
+
+  if (process.env.NODE_ENV === "development") {
+    console.debug("[attendance/screenshots]", {
+      logId,
+      employeeId: (log as any).employee_id,
+      rowsFound: (rows ?? []).length,
+      withUrl: screenshots.length,
+      sources: screenshots.map((s: any) => ({ id: s.id, urlSource: s.urlSource })),
+    });
+  }
 
   return NextResponse.json({ screenshots });
 }

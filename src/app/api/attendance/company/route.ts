@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { effectiveCombinedBreakBreakdown } from "@/lib/attendancePolicy";
 import {
   loadHalfDayLeaveDatesByUserId,
@@ -20,6 +21,74 @@ import {
   grossMinutesFromAttendanceLog,
   lunchTeaBreakMinutesBase,
 } from "@/lib/attendanceBreakUtils";
+import { screenshotRowHasMedia } from "@/lib/attendanceScreenshotUrl";
+
+/**
+ * Count screenshots per attendance log. Uses the service role so RLS cannot
+ * hide agent-written rows from managerial company attendance.
+ *
+ * Media may live in `file_url`, `storage_path` (Azure URL or key), or
+ * `file_path` — we count any row that has at least one of those.
+ */
+async function loadScreenshotCountByLogId(
+  companyId: string,
+  logIds: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (!logIds.length) return counts;
+
+  const LOG_CHUNK = 80;
+  const PAGE = 1000;
+
+  for (let i = 0; i < logIds.length; i += LOG_CHUNK) {
+    const chunk = logIds.slice(i, i + LOG_CHUNK);
+    let from = 0;
+
+    for (;;) {
+      const { data, error } = await supabaseAdmin
+        .from("HRMS_activity_screenshots")
+        .select("id, attendance_log_id, storage_path, file_url, file_path")
+        .eq("company_id", companyId)
+        .in("attendance_log_id", chunk)
+        .range(from, from + PAGE - 1);
+
+      if (error) {
+        // Older DBs may lack file_url / file_path — fall back to storage_path only.
+        const msg = String(error.message || "");
+        if (/file_url|file_path|column/i.test(msg)) {
+          const fallback = await supabaseAdmin
+            .from("HRMS_activity_screenshots")
+            .select("id, attendance_log_id, storage_path")
+            .eq("company_id", companyId)
+            .in("attendance_log_id", chunk)
+            .range(from, from + PAGE - 1);
+          if (fallback.error) throw fallback.error;
+          for (const s of fallback.data ?? []) {
+            const k = String((s as any).attendance_log_id ?? "");
+            if (!k || !screenshotRowHasMedia(s as any)) continue;
+            counts.set(k, (counts.get(k) ?? 0) + 1);
+          }
+          if ((fallback.data ?? []).length < PAGE) break;
+          from += PAGE;
+          continue;
+        }
+        throw error;
+      }
+
+      for (const s of data ?? []) {
+        const k = String((s as any).attendance_log_id ?? "");
+        if (!k || !(s as any).id) continue;
+        if (!screenshotRowHasMedia(s as any)) continue;
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+
+      if ((data ?? []).length < PAGE) break;
+      from += PAGE;
+    }
+  }
+
+  return counts;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -238,28 +307,24 @@ export async function GET(request: NextRequest) {
 
   /**
    * Fetch screenshot counts per attendance log so the table can show a
-   * "Screenshots (N)" trigger only when there's something to view. We use
-   * a lightweight `id, attendance_log_id` projection here and tally on the
-   * server. The actual signed URLs are loaded on demand from the
-   * `/api/attendance/screenshots` endpoint when the dialog opens.
+   * "View (N)" trigger only when there's something to view. Service-role
+   * read + pagination; actual image URLs load on demand from
+   * `/api/attendance/screenshots`.
    */
-  const { data: screenshotRefs, error: screenshotRefsErr } = logIds.length
-    ? await supabase
-        .from("HRMS_activity_screenshots")
-        .select("id, attendance_log_id")
-        .eq("company_id", me.company_id)
-        .in("attendance_log_id", logIds)
-    : { data: [], error: null };
-
-  if (screenshotRefsErr) {
-    return NextResponse.json({ error: screenshotRefsErr.message }, { status: 400 });
+  let screenshotCountByLog = new Map<string, number>();
+  try {
+    screenshotCountByLog = await loadScreenshotCountByLogId(me.company_id, logIds);
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to load screenshot counts";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const screenshotCountByLog = new Map<string, number>();
-  for (const s of screenshotRefs ?? []) {
-    const k = String((s as any).attendance_log_id ?? "");
-    if (!k) continue;
-    screenshotCountByLog.set(k, (screenshotCountByLog.get(k) ?? 0) + 1);
+  if (process.env.NODE_ENV === "development" && logIds.length) {
+    console.debug("[attendance/company] screenshot counts", {
+      logCount: logIds.length,
+      logsWithScreenshots: [...screenshotCountByLog.entries()].filter(([, n]) => n > 0).length,
+      sample: [...screenshotCountByLog.entries()].slice(0, 5),
+    });
   }
 
   const sessionsByLog = new Map<string, any[]>();
