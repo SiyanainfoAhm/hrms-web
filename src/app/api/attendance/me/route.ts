@@ -311,13 +311,18 @@ export async function GET(request: NextRequest) {
     const disconnectedSeconds = calculatedDisconnectedSeconds;
 
     /**
-     * Active = SUM(active_seconds) from HRMS_activity_sessions, capped ≤ Gross.
-     * Idle  = Gross − Active − Lunch/Tea.
+     * Active = SUM(active_seconds) from HRMS_activity_sessions,
+     *          capped at Gross − Lunch/Tea (breaks are not active work).
+     * Idle  = Lunch/Tea + leftover (Gross − Active − Lunch/Tea).
      */
     const activeMinutesRaw = isPurged
       ? Math.max(0, Number(log.agent_active_minutes) || 0)
       : Math.max(0, Math.floor(activityActiveSeconds / 60));
-    const activeMinutes = clampActivityMinutesToGross(activeMinutesRaw, grossMin);
+    const activeMinutes = clampActivityMinutesToGross(
+      activeMinutesRaw,
+      grossMin,
+      manualBreakIdleMinutes,
+    );
     const idleMinutes = idleMinutesFromGrossActiveBreak({
       grossMinutes: grossMin,
       activeMinutes,

@@ -571,9 +571,9 @@ export function DashboardContent() {
         : punchedInOpen
           ? Math.max(0, Math.round((elapsedMs - lunchTotalMs - teaTotalMs) / 60000))
           : 0;
-    // Defensive cap: gross and active are minute-rounded from independent
-    // sources and can drift by ~1 minute, so guarantee active ≤ gross.
-    const activeMin = Math.min(rawActiveMin, grossMin);
+    const breakMin = Math.max(0, Math.round((lunchTotalMs + teaTotalMs) / 60000));
+    // Active cannot include lunch/tea; cap at Gross − Break.
+    const activeMin = Math.min(rawActiveMin, Math.max(0, grossMin - breakMin));
     const activeMeetsPresent = activeMin >= 8 * 60;
     const lunchRunning = punchedInOpen && !!attLog?.lunch_break_started_at;
     const teaRunning = punchedInOpen && !!attLog?.tea_break_started_at;
