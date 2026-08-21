@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { formatInTimeZone, fromZonedTime } from "date-fns-tz";
+import { formatInTimeZone } from "date-fns-tz";
 
 export const IST_TZ = "Asia/Kolkata" as const;
 export const US_EASTERN_TZ = "America/New_York" as const;
@@ -23,29 +23,6 @@ export function timeZoneLabel(tz: AttendanceTimeZoneId): string {
 
 export function ymdInTimeZone(d: Date, tz: AttendanceTimeZoneId): string {
   return formatInTimeZone(d, tz, "yyyy-MM-dd");
-}
-
-/**
- * Convert a calendar day (YYYY-MM-DD) in `tz` to an inclusive UTC timestamptz
- * range. Use for filtering `timestamptz` columns (e.g. captured_at).
- *
- * Do not use `new Date("YYYY-MM-DD")` — that parses as UTC midnight and shifts
- * IST days by −5:30.
- *
- * Example (IST):
- *   2026-08-17 → [2026-08-16T18:30:00.000Z, 2026-08-17T18:30:00.000Z)
- */
-export function ymdDayUtcRange(
-  ymd: string,
-  tz: AttendanceTimeZoneId = IST_TZ,
-): { startUtcIso: string; endUtcIsoExclusive: string } {
-  const day = String(ymd).slice(0, 10);
-  const start = fromZonedTime(`${day}T00:00:00`, tz);
-  const endExclusive = new Date(start.getTime() + 24 * 60 * 60 * 1000);
-  return {
-    startUtcIso: start.toISOString(),
-    endUtcIsoExclusive: endExclusive.toISOString(),
-  };
 }
 
 export function hmMinutesInTimeZone(d: Date, tz: AttendanceTimeZoneId): number {

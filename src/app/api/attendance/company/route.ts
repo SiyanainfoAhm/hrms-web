@@ -23,10 +23,79 @@ import {
 } from "@/lib/attendanceBreakUtils";
 import {
   aggregateActivitySeconds,
+  clampActivityMinutesToGross,
   groupSessionsByLogId,
+  idleMinutesFromGrossActiveBreak,
 } from "@/lib/attendanceActivityAggregate";
-import { loadScreenshotCountByLogId } from "@/lib/attendanceScreenshotCounts";
-import { IST_TZ, ymdDayUtcRange } from "@/lib/attendanceTimeZone";
+import { loadActivitySessionsForLogIds } from "@/lib/attendanceActivitySessions";
+import { screenshotRowHasMedia } from "@/lib/attendanceScreenshotUrl";
+
+/**
+ * Count screenshots per attendance log. Uses the service role so RLS cannot
+ * hide agent-written rows from managerial company attendance.
+ *
+ * Media may live in `file_url`, `storage_path` (Azure URL or key), or
+ * `file_path` — we count any row that has at least one of those.
+ */
+async function loadScreenshotCountByLogId(
+  companyId: string,
+  logIds: string[],
+): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (!logIds.length) return counts;
+
+  const LOG_CHUNK = 80;
+  const PAGE = 1000;
+
+  for (let i = 0; i < logIds.length; i += LOG_CHUNK) {
+    const chunk = logIds.slice(i, i + LOG_CHUNK);
+    let from = 0;
+
+    for (;;) {
+      const { data, error } = await supabaseAdmin
+        .from("HRMS_activity_screenshots")
+        .select("id, attendance_log_id, storage_path, file_url, file_path")
+        .eq("company_id", companyId)
+        .in("attendance_log_id", chunk)
+        .range(from, from + PAGE - 1);
+
+      if (error) {
+        // Older DBs may lack file_url / file_path — fall back to storage_path only.
+        const msg = String(error.message || "");
+        if (/file_url|file_path|column/i.test(msg)) {
+          const fallback = await supabaseAdmin
+            .from("HRMS_activity_screenshots")
+            .select("id, attendance_log_id, storage_path")
+            .eq("company_id", companyId)
+            .in("attendance_log_id", chunk)
+            .range(from, from + PAGE - 1);
+          if (fallback.error) throw fallback.error;
+          for (const s of fallback.data ?? []) {
+            const k = String((s as any).attendance_log_id ?? "");
+            if (!k || !screenshotRowHasMedia(s as any)) continue;
+            counts.set(k, (counts.get(k) ?? 0) + 1);
+          }
+          if ((fallback.data ?? []).length < PAGE) break;
+          from += PAGE;
+          continue;
+        }
+        throw error;
+      }
+
+      for (const s of data ?? []) {
+        const k = String((s as any).attendance_log_id ?? "");
+        if (!k || !(s as any).id) continue;
+        if (!screenshotRowHasMedia(s as any)) continue;
+        counts.set(k, (counts.get(k) ?? 0) + 1);
+      }
+
+      if ((data ?? []).length < PAGE) break;
+      from += PAGE;
+    }
+  }
+
+  return counts;
+}
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -229,58 +298,40 @@ export async function GET(request: NextRequest) {
 
   const logIds = (logs ?? []).map((l: any) => String(l.id));
 
-  /**
-   * Activity sessions + screenshots are agent-written. Read with the admin
-   * client (falls back to anon when SERVICE_ROLE is unset) and key strictly
-   * by attendance_log_id so we never mix sessions across punch-ins.
-   */
-  const { data: sessions, error: sessionErr } = logIds.length
-    ? await supabaseAdmin
-        .from("HRMS_activity_sessions")
-        .select(
-          "attendance_log_id, started_at, ended_at, last_heartbeat_at, active_seconds, idle_seconds, disconnected_seconds",
-        )
-        .in("attendance_log_id", logIds)
-    : { data: [], error: null };
-
-  if (sessionErr) {
-    return NextResponse.json({ error: sessionErr.message }, { status: 400 });
+  let sessions: Awaited<ReturnType<typeof loadActivitySessionsForLogIds>> = [];
+  try {
+    sessions = logIds.length
+      ? await loadActivitySessionsForLogIds(supabaseAdmin, logIds)
+      : [];
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to load activity sessions";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
+  /**
+   * Fetch screenshot counts per attendance log so the table can show a
+   * "View (N)" trigger only when there's something to view. Service-role
+   * read + pagination; actual image URLs load on demand from
+   * `/api/attendance/screenshots`.
+   */
   let screenshotCountByLog = new Map<string, number>();
   try {
-    screenshotCountByLog = await loadScreenshotCountByLogId(supabaseAdmin, {
-      logIds,
-      // Soft scope: count by log id first. company_id filter can hide rows if
-      // the agent wrote a null/mismatched company_id — log ids are already
-      // company-scoped via HRMS_attendance_logs above.
-      companyId: null,
-    });
+    screenshotCountByLog = await loadScreenshotCountByLogId(me.company_id, logIds);
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Failed to load screenshot counts";
     return NextResponse.json({ error: message }, { status: 400 });
   }
 
   if (process.env.NODE_ENV === "development" && logIds.length) {
-    const dayRange =
-      startDate === endDate ? ymdDayUtcRange(startDate, IST_TZ) : null;
-    console.debug("[attendance/company] activity summary", {
-      startDate,
-      endDate,
-      istDayUtcRange: dayRange,
+    console.debug("[attendance/company] screenshot counts", {
       logCount: logIds.length,
-      sessionRows: (sessions ?? []).length,
+      sessionRows: sessions.length,
       logsWithScreenshots: [...screenshotCountByLog.entries()].filter(([, n]) => n > 0).length,
-      sample: (logs ?? []).slice(0, 5).map((l: any) => ({
-        employee_id: l.employee_id,
-        attendance_log_id: l.id,
-        work_date: l.work_date,
-        screenshot_count: screenshotCountByLog.get(String(l.id)) ?? 0,
-      })),
+      sample: [...screenshotCountByLog.entries()].slice(0, 5),
     });
   }
 
-  const sessionsByLog = groupSessionsByLogId(sessions ?? []);
+  const sessionsByLog = groupSessionsByLogId(sessions);
 
   const { data: emps, error: empErr } = await supabase
     .from("HRMS_employees")
@@ -434,15 +485,13 @@ export async function GET(request: NextRequest) {
       /**
        * Once `activity_purged_at` is set the raw session rows for this
        * log have been removed by the retention cron. Use the persisted
-       * summary columns on the attendance log instead — they were
-       * frozen at that moment so the displayed active time stays
-       * stable forever.
+       * summary columns on the attendance log instead.
        */
       const isPurged = log.activity_purged_at != null;
 
       const activity = aggregateActivitySeconds(logSessions);
-      const agentActiveSecondsLive = activity.activeSeconds;
-      const agentIdleSecondsLive = activity.idleSeconds;
+      const activityActiveSeconds = activity.activeSeconds;
+      const activityIdleSeconds = activity.idleSeconds;
       const storedDisconnectedSeconds = activity.disconnectedSecondsStored;
 
       const breakWindows = breakWindowsFromLog(log, nowMs);
@@ -457,64 +506,46 @@ export async function GET(request: NextRequest) {
             breakWindows,
           );
 
-      /**
-       * Use calculated disconnected seconds because it excludes lunch/tea windows.
-       * Using max(stored, calculated) can double-count lunch/tea as disconnected.
-       */
+      /** Audit only — never fold disconnect gaps into displayed Idle. */
       const disconnectedSeconds = calculatedDisconnectedSeconds;
 
-      const agentActiveMinutes = isPurged
+      /**
+       * Active = SUM(active_seconds) from HRMS_activity_sessions, capped ≤ Gross.
+       * Idle  = Gross − Active − Lunch/Tea  (remainder of the shift).
+       * agent idle_seconds kept as audit only (agentIdleMinutes).
+       */
+      const activeMinutesRaw = isPurged
         ? Math.max(0, Number(log.agent_active_minutes) || 0)
-        : Math.max(0, Math.round(agentActiveSecondsLive / 60));
+        : Math.max(0, Math.floor(activityActiveSeconds / 60));
+      const activeMinutes = clampActivityMinutesToGross(activeMinutesRaw, grossMin);
+      const idleMinutes = idleMinutesFromGrossActiveBreak({
+        grossMinutes: grossMin,
+        activeMinutes,
+        breakMinutes: manualBreakIdleMinutes,
+      });
+
+      const agentActiveMinutes = activeMinutes;
       const agentIdleMinutes = isPurged
         ? Math.max(0, Number(log.agent_idle_minutes) || 0)
-        : Math.max(0, Math.round(agentIdleSecondsLive / 60));
-      // Floor: short post-punch-in gaps (common before the first session heartbeat)
-      // must not round up to a full minute of "idle" in the first few gross minutes.
+        : Math.max(0, Math.floor(activityIdleSeconds / 60));
       const disconnectedMinutes = Math.max(0, Math.floor(disconnectedSeconds / 60));
-
       const storedDisconnectedMinutes = isPurged
         ? Math.max(0, Number(log.agent_disconnected_minutes) || 0)
         : Math.max(0, Math.floor(storedDisconnectedSeconds / 60));
 
-      const idleMinutes =
-        grossMin != null
-          ? Math.max(
-              0,
-              manualBreakIdleMinutes + agentIdleMinutes + disconnectedMinutes,
-            )
-          : null;
+      const grossSeconds = grossMin != null ? Math.max(0, grossMin) * 60 : null;
 
-      /**
-       * Prefer live agent activity (SUM active_seconds after overlap dedupe)
-       * when the desktop agent has reported sessions for this log. Otherwise
-       * fall back to gross − breaks − idle − disconnected.
-       */
-      const calculatedActiveMinutes =
-        grossMin != null
-          ? Math.max(0, grossMin - (idleMinutes ?? 0))
-          : null;
-
-      const hasLiveAgentActivity =
-        !isPurged && activity.dedupedSessionCount > 0 && agentActiveSecondsLive > 0;
-
-      const activeMinutes = hasLiveAgentActivity
-        ? agentActiveMinutes
-        : calculatedActiveMinutes;
-
-      if (process.env.NODE_ENV === "development") {
-        console.debug("[attendance/company] row activity", {
-          employee_id: log.employee_id,
-          attendance_log_id: log.id,
-          screenshot_count: screenshotCountByLog.get(String(log.id)) ?? 0,
-          sessions_raw: activity.sessionCount,
-          sessions_deduped: activity.dedupedSessionCount,
-          active_seconds: agentActiveSecondsLive,
-          idle_seconds: agentIdleSecondsLive,
-          active_minutes: activeMinutes,
-          url_source_hint: "storage_path|file_url|file_path via getScreenshotUrl",
-        });
-      }
+      console.debug("[attendance/company] activity totals", {
+        attendance_log_id: log.id,
+        employeeName: u?.name ?? null,
+        gross_seconds: grossSeconds,
+        activity_active_seconds: activityActiveSeconds,
+        activity_idle_seconds: activityIdleSeconds,
+        break_minutes: manualBreakIdleMinutes,
+        final_active_minutes: activeMinutes,
+        final_idle_minutes: idleMinutes,
+        sessions_count: activity.sessionCount,
+      });
 
       return {
         logId: log.id,

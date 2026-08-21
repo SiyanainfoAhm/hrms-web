@@ -11,8 +11,6 @@ import {
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 import { autoCloseForgottenPunchOuts } from "@/lib/attendanceAutoPunchOut";
 import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
-import { upsertAttendanceState } from "@/lib/attendanceStateSync";
-import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 async function workDateForUser(args: { companyId: string; attendanceEmployeeId: string }): Promise<{
   workDate: string;
@@ -96,7 +94,7 @@ function asSegments(raw: unknown): { out: string; in: string }[] {
   return [];
 }
 
-async function syncAttendanceState(args: {
+async function upsertAttendanceState(args: {
   companyId: string;
   employeeId: string;
   attendanceLogId: string | null;
@@ -104,8 +102,21 @@ async function syncAttendanceState(args: {
   status: "ACTIVE" | "LUNCH" | "BREAK" | "INACTIVE";
   updatedAtIso: string;
 }) {
-  // Prefer service role so RLS cannot leave the desktop agent on a stale log id.
-  await upsertAttendanceState(supabaseAdmin, args);
+  try {
+    await supabase.from("HRMS_attendance_state").upsert(
+      {
+        company_id: args.companyId,
+        employee_id: args.employeeId,
+        attendance_log_id: args.attendanceLogId,
+        work_date: args.workDate,
+        status: args.status,
+        updated_at: args.updatedAtIso,
+      } as any,
+      { onConflict: "company_id,employee_id" },
+    );
+  } catch {
+    // best-effort: do not block attendance actions
+  }
 }
 async function closeOpenActivitySessions(args: {
   companyId: string;
@@ -312,7 +323,7 @@ export async function POST(request: NextRequest) {
           : (updated as any).tea_break_started_at
             ? "BREAK"
             : "ACTIVE";
-    await syncAttendanceState({
+    await upsertAttendanceState({
       companyId: meCompanyId,
       employeeId: attendanceEmployeeId,
       attendanceLogId: String((updated as any).id ?? row.id),
@@ -392,7 +403,7 @@ export async function POST(request: NextRequest) {
       .single();
     if (insErr) return NextResponse.json({ error: insErr.message }, { status: 400 });
 
-    await syncAttendanceState({
+    await upsertAttendanceState({
       companyId: meCompanyId,
       employeeId: attendanceEmployeeId,
       attendanceLogId: String((inserted as any).id ?? ""),
@@ -408,7 +419,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Punch in first before punching out." }, { status: 400 });
   }
   if (existing?.check_out_at && !allowRepunchOut) {
-    await syncAttendanceState({
+    await upsertAttendanceState({
       companyId: meCompanyId,
       employeeId: attendanceEmployeeId,
       attendanceLogId: String(existing.id),
@@ -524,7 +535,7 @@ export async function POST(request: NextRequest) {
 
   const finalAttendanceLogId = String((updated as any).id ?? existing.id);
 
-  await syncAttendanceState({
+  await upsertAttendanceState({
     companyId: meCompanyId,
     employeeId: attendanceEmployeeId,
     attendanceLogId: finalAttendanceLogId,

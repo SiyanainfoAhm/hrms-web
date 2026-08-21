@@ -1,8 +1,9 @@
 /**
  * Aggregate desktop-agent activity for an attendance log.
  *
- * The agent sometimes opens parallel near-duplicate sessions (multi-process /
- * restart). Blind SUM(active_seconds) overcounts — collapse overlaps first.
+ * Active  = SUM(HRMS_activity_sessions.active_seconds)  (capped at Gross)
+ * Idle    = max(0, Gross − Active − Lunch/Tea break)
+ * Gross   = from HRMS_attendance_logs punch times
  */
 
 export type ActivitySessionRow = {
@@ -15,72 +16,59 @@ export type ActivitySessionRow = {
   disconnected_seconds?: number | null;
 };
 
-const OVERLAP_START_SLACK_MS = 5_000;
-
-function sessionEndMs(s: ActivitySessionRow): number | null {
-  const raw = s.ended_at ?? s.last_heartbeat_at;
-  if (!raw) return null;
-  const ms = new Date(String(raw)).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-function sessionStartMs(s: ActivitySessionRow): number | null {
-  if (!s.started_at) return null;
-  const ms = new Date(String(s.started_at)).getTime();
-  return Number.isFinite(ms) ? ms : null;
-}
-
-/**
- * Keep the strongest session in each overlapping cluster, then sum.
- */
-export function aggregateActivitySeconds(sessions: ActivitySessionRow[]): {
+export type ActivityAggregateResult = {
   activeSeconds: number;
   idleSeconds: number;
   disconnectedSecondsStored: number;
   sessionCount: number;
-  dedupedSessionCount: number;
-} {
-  const normalized = sessions
-    .map((s) => {
-      const start = sessionStartMs(s);
-      const end = sessionEndMs(s);
-      return {
-        start,
-        end: end ?? start,
-        active: Math.max(0, Number(s.active_seconds) || 0),
-        idle: Math.max(0, Number(s.idle_seconds) || 0),
-        disconnected: Math.max(0, Number(s.disconnected_seconds) || 0),
-      };
-    })
-    .filter((s) => s.start != null)
-    .sort((a, b) => Number(a.start) - Number(b.start));
+};
 
-  const kept: typeof normalized = [];
+/** Raw SUM across every session row for the attendance_log_id. */
+export function aggregateActivitySeconds(
+  sessions: ActivitySessionRow[],
+): ActivityAggregateResult {
+  let activeSeconds = 0;
+  let idleSeconds = 0;
+  let disconnectedSecondsStored = 0;
 
-  for (const s of normalized) {
-    const prev = kept[kept.length - 1];
-    if (
-      prev &&
-      s.start != null &&
-      prev.start != null &&
-      s.start <= Number(prev.end) + OVERLAP_START_SLACK_MS
-    ) {
-      prev.end = Math.max(Number(prev.end), Number(s.end ?? s.start));
-      prev.active = Math.max(prev.active, s.active);
-      prev.idle = Math.max(prev.idle, s.idle);
-      prev.disconnected = Math.max(prev.disconnected, s.disconnected);
-      continue;
-    }
-    kept.push({ ...s });
+  for (const s of sessions) {
+    activeSeconds += Math.max(0, Number(s.active_seconds) || 0);
+    idleSeconds += Math.max(0, Number(s.idle_seconds) || 0);
+    disconnectedSecondsStored += Math.max(0, Number(s.disconnected_seconds) || 0);
   }
 
   return {
-    activeSeconds: kept.reduce((sum, s) => sum + s.active, 0),
-    idleSeconds: kept.reduce((sum, s) => sum + s.idle, 0),
-    disconnectedSecondsStored: kept.reduce((sum, s) => sum + s.disconnected, 0),
-    sessionCount: normalized.length,
-    dedupedSessionCount: kept.length,
+    activeSeconds,
+    idleSeconds,
+    disconnectedSecondsStored,
+    sessionCount: sessions.length,
   };
+}
+
+/** Active must never exceed Gross (guards against duplicate session rows). */
+export function clampActivityMinutesToGross(
+  minutes: number,
+  grossMinutes: number | null | undefined,
+): number {
+  const n = Math.max(0, Math.floor(Number(minutes) || 0));
+  if (grossMinutes == null || !Number.isFinite(grossMinutes)) return n;
+  return Math.min(n, Math.max(0, Math.floor(grossMinutes)));
+}
+
+/**
+ * Total Idle on Company Attendance:
+ *   Idle = max(0, Gross − Active − Lunch/Tea)
+ */
+export function idleMinutesFromGrossActiveBreak(args: {
+  grossMinutes: number | null | undefined;
+  activeMinutes: number;
+  breakMinutes: number;
+}): number | null {
+  if (args.grossMinutes == null || !Number.isFinite(args.grossMinutes)) return null;
+  const gross = Math.max(0, Math.floor(args.grossMinutes));
+  const active = Math.max(0, Math.floor(args.activeMinutes));
+  const brk = Math.max(0, Math.floor(args.breakMinutes));
+  return Math.max(0, gross - active - brk);
 }
 
 export function groupSessionsByLogId(

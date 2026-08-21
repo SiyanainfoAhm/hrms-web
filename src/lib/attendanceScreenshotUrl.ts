@@ -65,29 +65,6 @@ export function screenshotRowHasMedia(row: ScreenshotUrlRow): boolean {
 }
 
 /**
- * Prefer media refs in this order (agent currently stores Azure URLs in
- * `storage_path`; older rows may use `file_url` / `file_path`).
- */
-export function getScreenshotUrl(row: ScreenshotUrlRow): string | null {
-  const fileUrl = String(row.file_url || "").trim();
-  if (fileUrl) return fileUrl;
-  const storagePath = String(row.storage_path || "").trim();
-  if (storagePath) return storagePath;
-  const filePath = String(row.file_path || "").trim();
-  return filePath || null;
-}
-
-export function getScreenshotUrlSource(row: ScreenshotUrlRow): ScreenshotUrlSource {
-  const fileUrl = String(row.file_url || "").trim();
-  if (fileUrl) return "file_url";
-  const storagePath = String(row.storage_path || "").trim();
-  if (storagePath) return "storage_path";
-  const filePath = String(row.file_path || "").trim();
-  if (filePath) return "file_path";
-  return null;
-}
-
-/**
  * Strip Content-Disposition=attachment style `download` query params so
  * browsers can paint the bytes in an <img>.
  */

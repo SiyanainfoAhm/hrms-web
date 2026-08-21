@@ -16,8 +16,6 @@ import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 import {
   computeWorkDateForNow,
   getAttendanceContextForUser,
-  IST_TZ,
-  ymdDayUtcRange,
 } from "@/lib/attendanceTimeZone";
 import { disconnectedSecondsFromSessions } from "@/lib/attendanceDisconnectedSeconds";
 import {
@@ -28,9 +26,11 @@ import {
 } from "@/lib/attendanceBreakUtils";
 import {
   aggregateActivitySeconds,
+  clampActivityMinutesToGross,
   groupSessionsByLogId,
+  idleMinutesFromGrossActiveBreak,
 } from "@/lib/attendanceActivityAggregate";
-import { repairOpenAttendanceState } from "@/lib/attendanceStateSync";
+import { loadActivitySessionsForLogIds } from "@/lib/attendanceActivitySessions";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 /** YYYY-MM-DD */
@@ -149,46 +149,17 @@ export async function GET(request: NextRequest) {
 
   const logIds = (logs ?? []).map((l: any) => String(l.id));
 
-  const { data: sessions, error: sessionErr } = logIds.length
-    ? await supabaseAdmin
-        .from("HRMS_activity_sessions")
-        .select(
-          "attendance_log_id, started_at, ended_at, last_heartbeat_at, active_seconds, idle_seconds, disconnected_seconds",
-        )
-        .in("attendance_log_id", logIds)
-    : { data: [], error: null };
-
-  if (sessionErr) {
-    return NextResponse.json({ error: sessionErr.message }, { status: 400 });
+  let sessions: Awaited<ReturnType<typeof loadActivitySessionsForLogIds>> = [];
+  try {
+    sessions = logIds.length
+      ? await loadActivitySessionsForLogIds(supabaseAdmin, logIds)
+      : [];
+  } catch (e: unknown) {
+    const message = e instanceof Error ? e.message : "Failed to load activity sessions";
+    return NextResponse.json({ error: message }, { status: 400 });
   }
 
-  const sessionsByLog = groupSessionsByLogId(sessions ?? []);
-
-  // Keep desktop agent pointed at today's open log (screenshots / sessions).
-  const openToday = (logs ?? []).find(
-    (l: any) =>
-      String(l.work_date ?? "").slice(0, 10) === startDate &&
-      l.check_in_at &&
-      !l.check_out_at,
-  );
-  if (openToday) {
-    await repairOpenAttendanceState(supabaseAdmin, {
-      companyId: gate.companyId,
-      employeeId: gate.attendanceEmployeeId,
-      openLog: openToday as any,
-    });
-  }
-
-  if (process.env.NODE_ENV === "development" && logIds.length) {
-    console.debug("[attendance/me] activity", {
-      employee_id: gate.attendanceEmployeeId,
-      startDate,
-      endDate,
-      istDayUtcRange: startDate === endDate ? ymdDayUtcRange(startDate, IST_TZ) : null,
-      logIds,
-      sessionRows: (sessions ?? []).length,
-    });
-  }
+  const sessionsByLog = groupSessionsByLogId(sessions);
 
   const { data: u, error: uErr } = await supabase
     .from("HRMS_users")
@@ -320,8 +291,8 @@ export async function GET(request: NextRequest) {
     const isPurged = log.activity_purged_at != null;
 
     const activity = aggregateActivitySeconds(logSessions);
-    const agentActiveSecondsLive = activity.activeSeconds;
-    const agentIdleSecondsLive = activity.idleSeconds;
+    const activityActiveSeconds = activity.activeSeconds;
+    const activityIdleSeconds = activity.idleSeconds;
     const storedDisconnectedSeconds = activity.disconnectedSecondsStored;
 
     const breakWindows = breakWindowsFromLog(log, nowMs);
@@ -336,55 +307,44 @@ export async function GET(request: NextRequest) {
           breakWindows,
         );
 
-    /**
-     * Use calculated disconnected seconds because it excludes lunch/tea windows.
-     * Using max(stored, calculated) can double-count lunch/tea as disconnected.
-     */
+    /** Audit only — never fold disconnect gaps into displayed Idle. */
     const disconnectedSeconds = calculatedDisconnectedSeconds;
 
-    const agentActiveMinutes = isPurged
+    /**
+     * Active = SUM(active_seconds) from HRMS_activity_sessions, capped ≤ Gross.
+     * Idle  = Gross − Active − Lunch/Tea.
+     */
+    const activeMinutesRaw = isPurged
       ? Math.max(0, Number(log.agent_active_minutes) || 0)
-      : Math.max(0, Math.round(agentActiveSecondsLive / 60));
+      : Math.max(0, Math.floor(activityActiveSeconds / 60));
+    const activeMinutes = clampActivityMinutesToGross(activeMinutesRaw, grossMin);
+    const idleMinutes = idleMinutesFromGrossActiveBreak({
+      grossMinutes: grossMin,
+      activeMinutes,
+      breakMinutes: manualBreakIdleMinutes,
+    });
+
+    const agentActiveMinutes = activeMinutes;
     const agentIdleMinutes = isPurged
       ? Math.max(0, Number(log.agent_idle_minutes) || 0)
-      : Math.max(0, Math.round(agentIdleSecondsLive / 60));
-    // Floor (not round): 30–59s gaps after punch-in would otherwise show as a
-    // full "1m idle" while gross is still small — confusing vs true offline time.
+      : Math.max(0, Math.floor(activityIdleSeconds / 60));
     const disconnectedMinutes = Math.max(0, Math.floor(disconnectedSeconds / 60));
     const storedDisconnectedMinutes = isPurged
       ? Math.max(0, Number(log.agent_disconnected_minutes) || 0)
       : Math.max(0, Math.floor(storedDisconnectedSeconds / 60));
 
-    const idleMinutes =
-      grossMin != null
-        ? Math.max(
-            0,
-            manualBreakIdleMinutes + agentIdleMinutes + disconnectedMinutes,
-          )
-        : null;
+    const grossSeconds = grossMin != null ? Math.max(0, grossMin) * 60 : null;
 
-    const calculatedActiveMinutes =
-      grossMin != null
-        ? Math.max(0, grossMin - (idleMinutes ?? 0))
-        : null;
-
-    const hasLiveAgentActivity =
-      !isPurged && activity.dedupedSessionCount > 0 && agentActiveSecondsLive > 0;
-
-    const activeMinutes = hasLiveAgentActivity
-      ? agentActiveMinutes
-      : calculatedActiveMinutes;
-
-    if (process.env.NODE_ENV === "development") {
-      console.debug("[attendance/me] row", {
-        employee_id: log.employee_id,
-        attendance_log_id: log.id,
-        active_seconds: agentActiveSecondsLive,
-        idle_seconds: agentIdleSecondsLive,
-        active_minutes: activeMinutes,
-        sessions_deduped: activity.dedupedSessionCount,
-      });
-    }
+    console.debug("[attendance/me] activity totals", {
+      attendance_log_id: log.id,
+      gross_seconds: grossSeconds,
+      activity_active_seconds: activityActiveSeconds,
+      activity_idle_seconds: activityIdleSeconds,
+      break_minutes: manualBreakIdleMinutes,
+      final_active_minutes: activeMinutes,
+      final_idle_minutes: idleMinutes,
+      sessions_count: activity.sessionCount,
+    });
 
     return {
       logId: log.id,
