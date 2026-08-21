@@ -5,6 +5,8 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import {
+  getScreenshotUrl,
+  getScreenshotUrlSource,
   inlineScreenshotUrl,
   isAbsoluteHttpUrl,
   pickScreenshotUrlFields,
@@ -67,12 +69,12 @@ export async function GET(request: NextRequest) {
 
   let rows: any[] | null = null;
   {
+    // Filter by attendance_log_id (session). Log already company-scoped above.
     const full = await supabaseAdmin
       .from("HRMS_activity_screenshots")
       .select(
         "id, captured_at, trigger_type, storage_bucket, storage_path, file_url, file_path, app_name, window_title, mouse_active, keyboard_active, idle_seconds",
       )
-      .eq("company_id", me.company_id)
       .eq("attendance_log_id", logId)
       .order("captured_at", { ascending: true });
 
@@ -82,7 +84,6 @@ export async function GET(request: NextRequest) {
         .select(
           "id, captured_at, trigger_type, storage_bucket, storage_path, app_name, window_title, mouse_active, keyboard_active, idle_seconds",
         )
-        .eq("company_id", me.company_id)
         .eq("attendance_log_id", logId)
         .order("captured_at", { ascending: true });
       if (fallback.error) {
@@ -103,9 +104,16 @@ export async function GET(request: NextRequest) {
 
   for (const r of rows ?? []) {
     const id = String((r as any).id);
-    const picked = pickScreenshotUrlFields(r as any);
-    sourceByRowId.set(id, picked.source);
+    const source = getScreenshotUrlSource(r as any);
+    sourceByRowId.set(id, source);
 
+    const direct = getScreenshotUrl(r as any);
+    if (direct && isAbsoluteHttpUrl(direct)) {
+      urlByRowId.set(id, direct);
+      continue;
+    }
+
+    const picked = pickScreenshotUrlFields(r as any);
     if (picked.url && isAbsoluteHttpUrl(picked.url)) {
       urlByRowId.set(id, picked.url);
       continue;
@@ -172,12 +180,17 @@ export async function GET(request: NextRequest) {
     .filter(Boolean);
 
   if (process.env.NODE_ENV === "development") {
+    const sourceTally: Record<string, number> = {};
+    for (const s of screenshots as any[]) {
+      const src = String(s.urlSource ?? "unknown");
+      sourceTally[src] = (sourceTally[src] ?? 0) + 1;
+    }
     console.debug("[attendance/screenshots]", {
-      logId,
-      employeeId: (log as any).employee_id,
-      rowsFound: (rows ?? []).length,
-      withUrl: screenshots.length,
-      sources: screenshots.map((s: any) => ({ id: s.id, urlSource: s.urlSource })),
+      employee_id: (log as any).employee_id,
+      attendance_log_id: logId,
+      screenshot_rows_found: (rows ?? []).length,
+      screenshot_count: screenshots.length,
+      url_source_tally: sourceTally,
     });
   }
 

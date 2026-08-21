@@ -214,20 +214,19 @@ export async function autoCloseForgottenPunchOuts(args: {
       .eq("id", row.id);
     if (upErr) continue;
 
-    try {
-      await args.supabase.from("HRMS_attendance_state").upsert(
-        {
-          company_id: args.companyId,
-          employee_id: args.employeeId,
-          attendance_log_id: row.id,
-          work_date: row.work_date,
-          status: "INACTIVE",
-          updated_at: checkOutIso,
-        } as any,
-        { onConflict: "company_id,employee_id" },
-      );
-    } catch {
-      // best-effort
+    const { error: stateErr } = await args.supabase.from("HRMS_attendance_state").upsert(
+      {
+        company_id: args.companyId,
+        employee_id: args.employeeId,
+        attendance_log_id: row.id,
+        work_date: row.work_date,
+        status: "INACTIVE",
+        updated_at: checkOutIso,
+      } as any,
+      { onConflict: "company_id,employee_id" },
+    );
+    if (stateErr && process.env.NODE_ENV === "development") {
+      console.warn("[autoPunchOut] attendance_state upsert failed", stateErr.message);
     }
 
     try {

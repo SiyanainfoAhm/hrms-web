@@ -537,12 +537,13 @@ export default function AttendancePage() {
       const nextRows: Row[] = data.rows ?? [];
       if (process.env.NODE_ENV === "development" && isManagerial) {
         for (const r of nextRows) {
-          console.debug("[Company Attendance screenshots]", {
+          console.debug("[Company Attendance]", {
             employeeName: r.employeeName,
             employee_id: r.employeeId,
             attendance_log_id: r.logId,
-            screenshotCount: r.screenshotCount ?? 0,
-            note: "URL field (file_url / storage_path / file_path) is resolved when opening the viewer",
+            screenshot_count: r.screenshotCount ?? 0,
+            active_minutes: r.activeMinutes,
+            note: "URL source (file_url/storage_path/file_path) resolved in screenshot viewer",
           });
         }
       }
