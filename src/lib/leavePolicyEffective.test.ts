@@ -163,6 +163,20 @@ describe("computeLeaveBalanceRows with effective policies", () => {
     assert.equal(cl.remaining, 4);
   });
 
+  it("manual adjustment offsets remaining balance", () => {
+    const rows = computeLeaveBalanceRows(
+      policies,
+      [],
+      null,
+      "2026-07-15",
+      [{ leave_type_id: clId, adjustment_days: -2, effective_from: "2026-07-01" }],
+    );
+    const cl = rows.find((r) => r.leaveTypeId === clId)!;
+    assert.equal(cl.entitled, 3);
+    assert.equal(cl.adjustmentOffset, -2);
+    assert.equal(cl.remaining, 1);
+  });
+
   it("other company policies are not mixed when only company A versions are passed", () => {
     // balance compute is fed company-scoped rows only — empty policies → empty balances
     assert.deepEqual(computeLeaveBalanceRows([], [], null, "2026-07-15"), []);

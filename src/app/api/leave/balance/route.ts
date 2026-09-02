@@ -5,6 +5,7 @@ import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { istTodayYmd } from "@/lib/istCalendar";
 import { computeLeaveBalanceRows } from "@/lib/leaveBalancesCompute";
+import { loadLeaveBalanceAdjustments } from "@/lib/leaveBalanceAdjustments";
 import { asOfYmdForLeaveEntitlementBooking } from "@/lib/leavePolicy";
 
 function isApprover(role: string): boolean {
@@ -62,6 +63,16 @@ export async function GET(request: NextRequest) {
     .eq("status", "approved");
   if (leaveErr) return NextResponse.json({ error: leaveErr.message }, { status: 400 });
 
+  let adjustments: Awaited<ReturnType<typeof loadLeaveBalanceAdjustments>> = [];
+  try {
+    adjustments = await loadLeaveBalanceAdjustments(supabase, me.company_id, targetUserId);
+  } catch (adjErr: any) {
+    // Table may not exist until migration is applied — balances still work without adjustments.
+    if (!adjErr?.message?.includes("HRMS_leave_balance_adjustments")) {
+      return NextResponse.json({ error: adjErr?.message || "Failed to load adjustments" }, { status: 400 });
+    }
+  }
+
   const rows = computeLeaveBalanceRows(
     (policies ?? []) as any[],
     (leaves ?? []).map((r: any) => ({
@@ -72,6 +83,7 @@ export async function GET(request: NextRequest) {
     })),
     targetUser.date_of_joining ? String(targetUser.date_of_joining).slice(0, 10) : null,
     asOfYmd,
+    adjustments,
   );
 
   const balances = rows.map((row) => ({
@@ -81,6 +93,7 @@ export async function GET(request: NextRequest) {
     isPaid: row.isPaid,
     entitled: row.entitled,
     used: row.used,
+    adjustmentOffset: row.adjustmentOffset,
     remaining: row.remaining,
     requestEnabled: row.requestEnabled,
     periodStart: row.periodStart,

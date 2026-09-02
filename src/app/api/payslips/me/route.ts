@@ -10,6 +10,7 @@ import {
   slipBalanceAsOfYmd,
   type GovernmentLeavePayslipDisplay,
 } from "@/lib/leaveBalancesCompute";
+import { loadLeaveBalanceAdjustments } from "@/lib/leaveBalanceAdjustments";
 
 export async function GET() {
   const cookieStore = await cookies();
@@ -113,11 +114,23 @@ export async function GET() {
     total_days: Number(r.total_days) || 0,
   }));
   const joinStr = user?.date_of_joining ? String(user.date_of_joining).slice(0, 10) : null;
+  let leaveAdjustments: Awaited<ReturnType<typeof loadLeaveBalanceAdjustments>> = [];
+  try {
+    leaveAdjustments = await loadLeaveBalanceAdjustments(supabase, me.company_id, session.id);
+  } catch {
+    leaveAdjustments = [];
+  }
   const leaveLineCache = new Map<string, GovernmentLeavePayslipDisplay>();
   const leaveLinesFor = (periodEnd: string, periodStart: string, generatedAtIso: string) => {
     const asOf = slipBalanceAsOfYmd(periodEnd, periodStart, generatedAtIso);
     if (!leaveLineCache.has(asOf)) {
-      const rows = computeLeaveBalanceRows((policyRows ?? []) as any[], approvedLeaves, joinStr, asOf);
+      const rows = computeLeaveBalanceRows(
+        (policyRows ?? []) as any[],
+        approvedLeaves,
+        joinStr,
+        asOf,
+        leaveAdjustments,
+      );
       leaveLineCache.set(asOf, formatGovernmentLeavePayslipDisplay(rows));
     }
     return leaveLineCache.get(asOf)!;

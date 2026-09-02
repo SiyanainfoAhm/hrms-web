@@ -9,6 +9,7 @@ import {
   slipBalanceAsOfYmd,
   type GovernmentLeavePayslipDisplay,
 } from "@/lib/leaveBalancesCompute";
+import { loadLeaveBalanceAdjustments } from "@/lib/leaveBalanceAdjustments";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -121,11 +122,23 @@ export async function GET(request: NextRequest) {
     total_days: Number(r.total_days) || 0,
   }));
   const joinStr = empUser?.date_of_joining ? String((empUser as any).date_of_joining).slice(0, 10) : null;
+  let leaveAdjustments: Awaited<ReturnType<typeof loadLeaveBalanceAdjustments>> = [];
+  try {
+    leaveAdjustments = await loadLeaveBalanceAdjustments(supabase, me.company_id, employeeUserId);
+  } catch {
+    leaveAdjustments = [];
+  }
   const leaveLineCache = new Map<string, GovernmentLeavePayslipDisplay>();
   const leaveLinesFor = (periodEnd: string, periodStart: string, generatedAtIso: string) => {
     const asOf = slipBalanceAsOfYmd(periodEnd, periodStart, generatedAtIso);
     if (!leaveLineCache.has(asOf)) {
-      const rows = computeLeaveBalanceRows((policyRows ?? []) as any[], approvedLeaves, joinStr, asOf);
+      const rows = computeLeaveBalanceRows(
+        (policyRows ?? []) as any[],
+        approvedLeaves,
+        joinStr,
+        asOf,
+        leaveAdjustments,
+      );
       leaveLineCache.set(asOf, formatGovernmentLeavePayslipDisplay(rows));
     }
     return leaveLineCache.get(asOf)!;

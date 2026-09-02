@@ -7,6 +7,7 @@ import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
 import { istTodayYmd } from "@/lib/istCalendar";
 import { type ApprovedLeave } from "@/lib/leavePolicy";
 import { computeLeavePaidUnpaidSplit, leavePolicyFromRow, validateRequestEnabledAcrossRange } from "@/lib/leavePaidUnpaidSplit";
+import { loadLeaveBalanceAdjustments } from "@/lib/leaveBalanceAdjustments";
 import { selectPolicyForDate } from "@/lib/leavePolicyEffective";
 import { notifyLeaveRequestCreated, notifyLeaveRequestDecided } from "@/lib/hrmsTransactionNotify";
 import { computeLeaveBookingSummary, type HolidayRow } from "@/lib/leaveBookingDays";
@@ -338,6 +339,13 @@ export async function POST(request: NextRequest) {
     .eq("status", "approved");
   if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
 
+  let leaveAdjustments: Awaited<ReturnType<typeof loadLeaveBalanceAdjustments>> = [];
+  try {
+    leaveAdjustments = await loadLeaveBalanceAdjustments(supabase, me.company_id, targetEmployeeUserId);
+  } catch {
+    leaveAdjustments = [];
+  }
+
   const split = computeLeavePaidUnpaidSplit({
     totalDays,
     startDateYmd: startDate,
@@ -349,6 +357,7 @@ export async function POST(request: NextRequest) {
     joinDateYmd: targetJoinDate,
     todayYmd: istTodayYmd(),
     approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
+    adjustments: leaveAdjustments,
   });
   const paidDays = isOfficeLeave ? 0 : split.paidDays;
   const unpaidDays = isOfficeLeave ? 0 : split.unpaidDays;
@@ -502,6 +511,17 @@ export async function PATCH(request: NextRequest) {
       .neq("id", id);
     if (usedErr) return NextResponse.json({ error: usedErr.message }, { status: 400 });
 
+    let leaveAdjustments: Awaited<ReturnType<typeof loadLeaveBalanceAdjustments>> = [];
+    try {
+      leaveAdjustments = await loadLeaveBalanceAdjustments(
+        supabase,
+        me.company_id,
+        existing.employee_user_id as string,
+      );
+    } catch {
+      leaveAdjustments = [];
+    }
+
     const split = computeLeavePaidUnpaidSplit({
       totalDays: Number(existing.total_days) || 0,
       startDateYmd: startYmd,
@@ -513,6 +533,7 @@ export async function PATCH(request: NextRequest) {
       joinDateYmd: empUser?.date_of_joining ? String(empUser.date_of_joining).slice(0, 10) : null,
       todayYmd: istTodayYmd(),
       approvedLeaves: (approvedLeaves ?? []) as ApprovedLeave[],
+      adjustments: leaveAdjustments,
     });
     paidDaysUpdate = isOfficeLeave ? 0 : split.paidDays;
     unpaidDaysUpdate = isOfficeLeave ? 0 : split.unpaidDays;

@@ -36,6 +36,7 @@ import {
 } from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
 import { computeLeaveBalanceRows } from "@/lib/leaveBalancesCompute";
+import { loadLeaveBalanceAdjustmentsForUsers } from "@/lib/leaveBalanceAdjustments";
 import * as XLSX from "xlsx-js-style";
 
 function ymd(v: string): string {
@@ -636,10 +637,23 @@ async function loadPaidLeaveRemainingByUser(args: {
     approvedByUser.set(uid, arr);
   }
 
+  let adjustmentsByUser = new Map<string, import("@/lib/leaveBalanceAdjustments").LeaveBalanceAdjustment[]>();
+  try {
+    adjustmentsByUser = await loadLeaveBalanceAdjustmentsForUsers(supabase, companyId, userIds);
+  } catch {
+    adjustmentsByUser = new Map();
+  }
+
   const remainingByUser = new Map<string, number>();
   for (const uid of userIds) {
     const joinDateStr = joinDateByUserId.get(uid) ?? null;
-    const rows = computeLeaveBalanceRows(policyRows as any, approvedByUser.get(uid) || [], joinDateStr, asOfYmd);
+    const rows = computeLeaveBalanceRows(
+      policyRows as any,
+      approvedByUser.get(uid) || [],
+      joinDateStr,
+      asOfYmd,
+      adjustmentsByUser.get(uid) || [],
+    );
     const remaining = rows.reduce((sum, r) => sum + (Number(r.remaining) || 0), 0);
     remainingByUser.set(uid, Math.max(0, remaining));
   }

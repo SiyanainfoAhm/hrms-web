@@ -11,6 +11,7 @@ import { fmtDmy } from "@/lib/dateFormat";
 import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { validateIsoDateRequired, validatePositiveNumber, validateRequired } from "@/lib/validationMaster";
 import { computeLeaveBookingSummary, type HolidayRow, type ExistingLeaveRow } from "@/lib/leaveBookingDays";
+import { istTodayYmd } from "@/lib/istCalendar";
 
 function payrollHintFromClaimDate(claimDate: string): string | null {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(claimDate)) return null;
@@ -120,6 +121,19 @@ export function ApprovalsContent() {
 
   const [deleteTypeFor, setDeleteTypeFor] = useState<null | { leaveTypeId: string; name: string }>(null);
   const [deletingType, setDeletingType] = useState(false);
+
+  const [adjustDialogOpen, setAdjustDialogOpen] = useState(false);
+  const [adjustEmployeeId, setAdjustEmployeeId] = useState("");
+  const [adjustLeaveTypeId, setAdjustLeaveTypeId] = useState("");
+  const [adjustDays, setAdjustDays] = useState("");
+  const [adjustReason, setAdjustReason] = useState("");
+  const [adjustEffectiveFrom, setAdjustEffectiveFrom] = useState(() => istTodayYmd());
+  const [adjustEmployees, setAdjustEmployees] = useState<{ id: string; name: string | null; email: string }[]>([]);
+  const [adjustBalances, setAdjustBalances] = useState<
+    { leaveTypeId: string; leaveTypeName: string; payslipSlot: string | null; remaining: number | null }[]
+  >([]);
+  const [adjustBalancesLoading, setAdjustBalancesLoading] = useState(false);
+  const [adjustSaving, setAdjustSaving] = useState(false);
 
   const [reimbClaims, setReimbClaims] = useState<any[]>([]);
   const [reimbLoading, setReimbLoading] = useState(false);
@@ -487,6 +501,68 @@ export function ApprovalsContent() {
   }, [leaveDialogOpen, canApprove, selectedEmployeeId, sessionUserId]);
 
   useEffect(() => {
+    if (!adjustDialogOpen || !canApprove) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/employees");
+        const data = await res.json();
+        if (!res.ok) throw new Error(data?.error || "Failed to load employees");
+        if (cancelled) return;
+        const current = (data.employees || []).filter((e: any) => e.employmentStatus === "current");
+        const mapped = current
+          .map((e: any) => ({
+            id: e.id,
+            name: e.name ?? null,
+            email: e.email,
+          }))
+          .filter((e: any) => e.id);
+        setAdjustEmployees(mapped);
+        if (!adjustEmployeeId && mapped.length) setAdjustEmployeeId(mapped[0].id);
+      } catch {
+        if (!cancelled) setAdjustEmployees([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [adjustDialogOpen, canApprove, adjustEmployeeId]);
+
+  useEffect(() => {
+    if (!adjustDialogOpen || !adjustEmployeeId) {
+      setAdjustBalances([]);
+      return;
+    }
+    let cancelled = false;
+    setAdjustBalancesLoading(true);
+    (async () => {
+      try {
+        const params = new URLSearchParams({ userId: adjustEmployeeId });
+        if (adjustEffectiveFrom) params.set("asOf", adjustEffectiveFrom);
+        const res = await fetch(`/api/leave/balance?${params.toString()}`);
+        const data = await res.json();
+        if (cancelled) return;
+        if (!res.ok) throw new Error(data?.error || "Failed to load balance");
+        setAdjustBalances(
+          (data.balances || []).map((b: any) => ({
+            leaveTypeId: b.leaveTypeId,
+            leaveTypeName: b.leaveTypeName,
+            payslipSlot: b.payslipSlot ?? null,
+            remaining: b.remaining,
+          })),
+        );
+      } catch {
+        if (!cancelled) setAdjustBalances([]);
+      } finally {
+        if (!cancelled) setAdjustBalancesLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [adjustDialogOpen, adjustEmployeeId, adjustEffectiveFrom]);
+
+  useEffect(() => {
     if (!singleDayHalfDayEligible && singleDayHalfDay) setSingleDayHalfDay(false);
   }, [singleDayHalfDayEligible, singleDayHalfDay]);
 
@@ -846,6 +922,71 @@ export function ApprovalsContent() {
     }
   }
 
+  function openAdjustDialog() {
+    setError(null);
+    setAdjustEmployeeId("");
+    setAdjustLeaveTypeId("");
+    setAdjustDays("");
+    setAdjustReason("");
+    setAdjustEffectiveFrom(istTodayYmd());
+    setAdjustBalances([]);
+    setAdjustDialogOpen(true);
+  }
+
+  function adjustSelectedBalance(): { remaining: number | null } | null {
+    if (!adjustLeaveTypeId) return null;
+    const row = adjustBalances.find((b) => b.leaveTypeId === adjustLeaveTypeId);
+    return row ? { remaining: row.remaining } : null;
+  }
+
+  function applySetBalanceToZero() {
+    const row = adjustBalances.find((b) => b.leaveTypeId === adjustLeaveTypeId);
+    if (!row || row.remaining == null) return;
+    if (row.remaining <= 0) {
+      showToast("info", "Balance is already zero.");
+      return;
+    }
+    setAdjustDays(String(-row.remaining));
+  }
+
+  async function submitBalanceAdjust(e: FormEvent) {
+    e.preventDefault();
+    if (!adjustEmployeeId || !adjustLeaveTypeId) return;
+    const days = parseFloat(adjustDays);
+    if (!Number.isFinite(days) || days === 0) {
+      showToast("error", "Enter a non-zero adjustment (negative to reduce balance).");
+      return;
+    }
+    if (!adjustReason.trim()) {
+      showToast("error", "Reason is required.");
+      return;
+    }
+    setAdjustSaving(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/leave/balance/adjustments", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          employeeUserId: adjustEmployeeId,
+          leaveTypeId: adjustLeaveTypeId,
+          adjustmentDays: days,
+          effectiveFrom: adjustEffectiveFrom,
+          reason: adjustReason.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Failed to save adjustment");
+      showToast("success", "Leave balance updated");
+      setAdjustDialogOpen(false);
+    } catch (e: any) {
+      setError(e?.message || "Failed to save adjustment");
+      showToast("error", e?.message || "Failed to save adjustment");
+    } finally {
+      setAdjustSaving(false);
+    }
+  }
+
   async function submitReimbursement(e: FormEvent) {
     e.preventDefault();
     setReimbSubmitted(true);
@@ -1058,9 +1199,14 @@ export function ApprovalsContent() {
                     Configure accrual/quota rules per leave type. Saving creates a new effective-dated version so history is preserved.
                   </p>
                 </div>
-                <button type="button" className="btn btn-outline" onClick={() => setManageTypesOpen(true)}>
-                  Add leave type
-                </button>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" className="btn btn-outline" onClick={() => setManageTypesOpen(true)}>
+                    Add leave type
+                  </button>
+                  <button type="button" className="btn btn-outline" onClick={openAdjustDialog}>
+                    Adjust employee balance
+                  </button>
+                </div>
               </div>
 
               <div className="mt-4 overflow-x-auto">
@@ -1504,6 +1650,153 @@ export function ApprovalsContent() {
                         disabled={submitting || loading || (canApprove && currentEmployees.length === 0)}
                       >
                         {submitting ? (canApprove ? "Adding..." : "Submitting...") : canApprove ? "Add leave" : "Submit request"}
+                      </button>
+                    </div>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+          {adjustDialogOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+              <button
+                type="button"
+                className="absolute inset-0 bg-black/40"
+                aria-label="Close dialog"
+                onClick={() => setAdjustDialogOpen(false)}
+              />
+              <div
+                role="dialog"
+                aria-modal="true"
+                className="relative z-10 w-full max-w-md rounded-xl border border-slate-200 bg-white shadow-xl"
+              >
+                <div className="border-b border-slate-200 px-5 py-4">
+                  <h3 className="text-base font-semibold text-slate-900">Adjust leave balance</h3>
+                  <p className="mt-1 text-sm text-slate-500">
+                    Credit or debit days for one employee. Use negative values to reduce balance.
+                  </p>
+                </div>
+                <form noValidate onSubmit={submitBalanceAdjust} className="p-5 space-y-4">
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Employee</label>
+                    <select
+                      value={adjustEmployeeId}
+                      onChange={(e) => {
+                        setAdjustEmployeeId(e.target.value);
+                        setAdjustLeaveTypeId("");
+                        setAdjustDays("");
+                      }}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="">Select employee</option>
+                      {adjustEmployees.map((e) => (
+                        <option key={e.id} value={e.id}>
+                          {e.name || e.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {adjustEmployeeId && (
+                    <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                      {adjustBalancesLoading ? (
+                        <span className="text-slate-500">Loading balances…</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-x-4 gap-y-1">
+                          {adjustBalances
+                            .filter((b) => b.payslipSlot === "CL" || b.payslipSlot === "SL")
+                            .map((b) => (
+                              <span key={b.leaveTypeId}>
+                                {b.payslipSlot || b.leaveTypeName}:{" "}
+                                <strong>{b.remaining == null ? "∞" : fmtDays(b.remaining)}</strong>
+                              </span>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Leave type</label>
+                    <select
+                      value={adjustLeaveTypeId}
+                      onChange={(e) => {
+                        setAdjustLeaveTypeId(e.target.value);
+                        setAdjustDays("");
+                      }}
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="">Select type</option>
+                      {typeRows.map((t: any) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                          {t.payslip_slot ? ` (${t.payslip_slot})` : ""}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <label className="text-sm font-medium text-slate-700">Adjustment (days)</label>
+                      {adjustLeaveTypeId && (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-emerald-700 hover:text-emerald-800"
+                          onClick={applySetBalanceToZero}
+                        >
+                          Set balance to 0
+                        </button>
+                      )}
+                    </div>
+                    <input
+                      type="number"
+                      step="0.5"
+                      value={adjustDays}
+                      onChange={(e) => setAdjustDays(e.target.value)}
+                      placeholder="e.g. -2 to reduce, +1 to credit"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                    {adjustLeaveTypeId && adjustDays && Number(adjustDays) !== 0 && (
+                      <p className="mt-1 text-xs text-slate-500">
+                        After:{" "}
+                        {(() => {
+                          const sel = adjustSelectedBalance();
+                          const cur = sel?.remaining;
+                          const delta = parseFloat(adjustDays);
+                          if (cur == null || !Number.isFinite(delta)) return "—";
+                          return fmtDays(Math.max(0, cur + delta));
+                        })()}
+                        days available
+                      </p>
+                    )}
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Effective from</label>
+                    <DatePickerField value={adjustEffectiveFrom} onChange={setAdjustEffectiveFrom} />
+                  </div>
+
+                  <div>
+                    <label className="mb-1 block text-sm font-medium text-slate-700">Reason</label>
+                    <input
+                      type="text"
+                      value={adjustReason}
+                      onChange={(e) => setAdjustReason(e.target.value)}
+                      placeholder="Required — e.g. balance held until backend update"
+                      className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                    {error && <p className="text-sm text-red-600">{error}</p>}
+                    <div className="flex gap-2">
+                      <button type="button" className="btn btn-outline" onClick={() => setAdjustDialogOpen(false)} disabled={adjustSaving}>
+                        Cancel
+                      </button>
+                      <button type="submit" className="btn btn-primary" disabled={adjustSaving || !adjustEmployeeId || !adjustLeaveTypeId}>
+                        {adjustSaving ? "Saving…" : "Apply adjustment"}
                       </button>
                     </div>
                   </div>

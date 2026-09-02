@@ -5,6 +5,10 @@ import {
   type LeavePolicy,
 } from "@/lib/leavePolicy";
 import {
+  type LeaveBalanceAdjustment,
+  sumAdjustmentDays,
+} from "@/lib/leaveBalanceAdjustments";
+import {
   computeEntitledForPolicyPeriod,
   computeUsedDaysForPolicyPeriod,
   policySegmentsForRange,
@@ -52,6 +56,7 @@ export function computeLeavePaidUnpaidSplit(args: {
   joinDateYmd: string | null;
   todayYmd: string;
   approvedLeaves: ApprovedLeave[];
+  adjustments?: LeaveBalanceAdjustment[];
 }): {
   paidDays: number;
   unpaidDays: number;
@@ -71,6 +76,7 @@ export function computeLeavePaidUnpaidSplit(args: {
     joinDateYmd,
     todayYmd,
     approvedLeaves,
+    adjustments,
   } = args;
   const totalSafe = Math.max(0, Number(totalDays) || 0);
   const endYmd = (endDateYmd || startDateYmd).slice(0, 10);
@@ -120,7 +126,9 @@ export function computeLeavePaidUnpaidSplit(args: {
           seg.policy,
           asOf,
         );
-        const remaining = entitled == null ? null : Math.max(0, entitled - usedBeforeBooking);
+        const adjustmentOffset = sumAdjustmentDays(adjustments ?? [], leaveTypeId, asOfYmd);
+        const remaining =
+          entitled == null ? null : Math.max(0, entitled - usedBeforeBooking + adjustmentOffset);
         const paidSeg = remaining == null ? spanUnits : Math.min(spanUnits, remaining);
         paidDays += paidSeg;
         if (entitled != null) {
@@ -130,13 +138,14 @@ export function computeLeavePaidUnpaidSplit(args: {
         }
       }
 
+      const adjustmentOffset = sumAdjustmentDays(adjustments ?? [], leaveTypeId, asOfYmd);
       const paidClamped = Math.min(totalSafe, Math.round(paidDays * 1000) / 1000);
       return {
         paidDays: paidClamped,
         unpaidDays: Math.max(0, totalSafe - paidClamped),
         entitled: hasFinite ? entitledSum : null,
         usedBeforeBooking: usedSum,
-        remainingBeforeBooking: hasFinite ? Math.max(0, entitledSum - usedSum) : null,
+        remainingBeforeBooking: hasFinite ? Math.max(0, entitledSum - usedSum + adjustmentOffset) : null,
         asOfYmd,
       };
     }
@@ -159,7 +168,9 @@ export function computeLeavePaidUnpaidSplit(args: {
 
   const entitled = computeEntitledForPolicyPeriod(policy, joinDate, asOf);
   const usedBeforeBooking = computeUsedDaysForPolicyPeriod(approvedLeaves, leaveTypeId, policy, asOf);
-  const remainingBeforeBooking = entitled == null ? null : Math.max(0, entitled - usedBeforeBooking);
+  const adjustmentOffset = sumAdjustmentDays(adjustments ?? [], leaveTypeId, asOfYmd);
+  const remainingBeforeBooking =
+    entitled == null ? null : Math.max(0, entitled - usedBeforeBooking + adjustmentOffset);
   const paidDays =
     remainingBeforeBooking == null ? totalSafe : Math.min(totalSafe, remainingBeforeBooking);
   const unpaidDays = totalSafe - paidDays;

@@ -3,6 +3,10 @@ import {
   type LeavePolicy,
 } from "@/lib/leavePolicy";
 import {
+  type LeaveBalanceAdjustment,
+  sumAdjustmentDays,
+} from "@/lib/leaveBalanceAdjustments";
+import {
   computeEntitledForPolicyPeriod,
   computeUsedDaysForPolicyPeriod,
   policyEntitlementWindow,
@@ -21,6 +25,8 @@ export type LeaveBalanceComputedRow = {
   isPaid: boolean;
   entitled: number | null;
   used: number;
+  /** Sum of manual HR adjustments effective on asOf date. */
+  adjustmentOffset: number;
   remaining: number | null;
   requestEnabled: boolean;
   periodStart: string;
@@ -34,6 +40,7 @@ export function computeLeaveBalanceRows(
   approvedLeaves: ApprovedLeave[],
   joinDateStr: string | null,
   asOfYmd: string,
+  adjustments?: LeaveBalanceAdjustment[],
 ): LeaveBalanceComputedRow[] {
   const asOf = new Date(asOfYmd + "T00:00:00Z");
   const joinDate = joinDateStr ? new Date(joinDateStr + "T00:00:00Z") : null;
@@ -46,7 +53,9 @@ export function computeLeaveBalanceRows(
     const { start, endExclusive } = policyEntitlementWindow(policy, asOf);
     const entitled = computeEntitledForPolicyPeriod(policy, joinDate, asOf);
     const used = computeUsedDaysForPolicyPeriod(approvedLeaves, p.leave_type_id, policy, asOf);
-    const remaining = entitled == null ? null : Math.max(0, entitled - used);
+    const adjustmentOffset = sumAdjustmentDays(adjustments ?? [], p.leave_type_id, asOfYmd);
+    const remaining =
+      entitled == null ? null : Math.max(0, entitled - used + adjustmentOffset);
     const periodEndInclusive = new Date(endExclusive.getTime() - 24 * 60 * 60 * 1000)
       .toISOString()
       .slice(0, 10);
@@ -58,6 +67,7 @@ export function computeLeaveBalanceRows(
       isPaid: Boolean(p.HRMS_leave_types?.is_paid),
       entitled,
       used,
+      adjustmentOffset,
       remaining,
       requestEnabled: policy.request_enabled !== false,
       periodStart: start.toISOString().slice(0, 10),
