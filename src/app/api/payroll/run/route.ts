@@ -4,7 +4,24 @@ import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { leaveUnitsInWindow, overlapDaysInclusive } from "@/lib/leavePolicy";
+import { leaveUnitsInWindow } from "@/lib/leavePolicy";
+import {
+  attendancePayCreditFromGrossHours as attendanceCreditFromHours,
+  breakdownToPayDayCalc,
+  computePayableDays,
+  type PayableDaysBreakdown,
+  type PayrollAttendanceInput,
+  type PayrollHolidayInput,
+  type PayrollLeaveInput,
+} from "@/lib/payrollPayableDays";
+import {
+  RECALC_REASON_HR_SOURCE_CHANGE,
+  canOverwritePayroll,
+  isFinalizedOrPaid,
+  requiresRecalcReason,
+  resolvePayrollLifecycleStatus,
+  shouldMarkPayslipStale,
+} from "@/lib/payrollStaleDetection";
 import {
   officeLeavePresentDatesInWindow,
   OFFICE_LEAVE_TYPE_CODE,
@@ -35,8 +52,6 @@ import {
   netPayBeforeVariableLines,
 } from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
-import { computeLeaveBalanceRows } from "@/lib/leaveBalancesCompute";
-import { loadLeaveBalanceAdjustmentsForUsers } from "@/lib/leaveBalanceAdjustments";
 import * as XLSX from "xlsx-js-style";
 
 function ymd(v: string): string {
@@ -298,9 +313,7 @@ const MIN_GROSS_HOURS_HALF_ATTENDANCE_DAY = 4;
 
 /** Weekday attendance pay credit from gross hours: 1 (≥9h), 0.5 (>4h and <9h), 0 (≤4h). */
 function attendancePayCreditFromGrossHours(grossHours: number): number {
-  if (grossHours >= MIN_GROSS_HOURS_FULL_ATTENDANCE_DAY) return 1;
-  if (grossHours > MIN_GROSS_HOURS_HALF_ATTENDANCE_DAY) return 0.5;
-  return 0;
+  return attendanceCreditFromHours(grossHours);
 }
 
 // Removed minimum-qualifying-days gating. Pay days must reflect attendance/leave directly.
@@ -344,37 +357,6 @@ function* iterateYmdInclusive(startYmd: string, endYmd: string): Generator<strin
   }
 }
 
-/**
- * Weekday company holidays in the employment window that are not already covered by
- * a weekday attendance punch or any approved leave (paid or unpaid).
- */
-function countEligibleWeekdayHolidaysNotOverlapping(
-  holidayDates: Set<string>,
-  eligStartYmd: string,
-  eligEndYmd: string,
-  presentDates: Set<string> | undefined,
-  leaveDates: Set<string> | undefined,
-): number {
-  let n = 0;
-  for (const ymd of iterateYmdInclusive(eligStartYmd, eligEndYmd)) {
-    if (!isWeekdayUtc(ymd)) continue;
-    if (!holidayDates.has(ymd)) continue;
-    if (presentDates?.has(ymd)) continue;
-    if (leaveDates?.has(ymd)) continue;
-    n++;
-  }
-  return n;
-}
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n));
-}
-
-function roundToHalfDay(n: number): number {
-  if (!Number.isFinite(n)) return 0;
-  return Math.round(n * 2) / 2;
-}
-
 function countCalendarDaysInclusive(startYmd: string, endYmd: string): number {
   if (startYmd > endYmd) return 0;
   const s = toUtcMidnightFromYmd(startYmd).getTime();
@@ -393,271 +375,38 @@ function monthlySalaryProrationDays(daysInMonth: number): number {
   return Math.max(1, daysInMonth);
 }
 
-/**
- * Pay days, capped by eligible employment days in the period (calendar days ∩ DOJ–DOL).
- *
- * **presentDays** = weekend pay days + weekday attendance credits (1 if gross ≥ 9h, 0.5 if > 4h and < 9h).
- * **holidayPayDays** = weekday company holidays not already covered by attendance or leave.
- *
- * Formula: weekends + holidays + paid leave + attendance credits − unpaid leave.
- */
-function resolvePayDaysFromAttendance(args: {
-  presentDays: number;
-  paidLeaveDays: number;
-  unpaidLeaveDays: number;
-  /** Max payable days in window (calendar days ∩ employment). */
-  eligibleDays: number;
-  holidayPayDays?: number;
-}): number {
-  const { presentDays, paidLeaveDays, unpaidLeaveDays, eligibleDays, holidayPayDays = 0 } = args;
-  const cap = Math.max(0, eligibleDays);
-  return clamp(
-    roundToHalfDay(presentDays + paidLeaveDays + holidayPayDays - unpaidLeaveDays),
-    0,
-    cap,
-  );
-}
-
-/** Sat/Sun in the employment window that are not on approved leave or company holiday. */
-function countWeekendPayDaysInWindow(
-  eligStartYmd: string,
-  eligEndYmd: string,
-  leaveDates: Set<string> | undefined,
-  holidayDates: Set<string>,
-): number {
-  let n = 0;
-  for (const ymd of iterateYmdInclusive(eligStartYmd, eligEndYmd)) {
-    const dow = weekdayUtc(ymd);
-    if (dow !== 0 && dow !== 6) continue;
-    if (leaveDates?.has(ymd)) continue;
-    if (holidayDates.has(ymd)) continue;
-    n++;
-  }
-  return n;
-}
-
 function resolveEmployeePayDaysFromAttendance(args: {
-  userId: string;
-  eligibleCalendarDays: number;
-  eligStartYmd: string;
-  eligEndYmd: string;
-  unionHolidaySet: Set<string>;
-  presentDaysByUser: Map<string, number>;
-  paidLeaveDaysByUser: Map<string, number>;
-  unpaidLeaveDaysByUser: Map<string, number>;
-  presentDatesByUser: Map<string, Set<string>>;
-  leaveDaysByUser: Map<string, Set<string>>;
-  plRemaining: number;
+  year: number;
+  month: number;
+  runDay: number;
+  dateOfJoiningYmd: string | null;
+  dateOfLeavingYmd: string | null;
+  employeeDivisionId: string | null;
+  holidays: PayrollHolidayInput[];
+  leaves: PayrollLeaveInput[];
+  attendance: PayrollAttendanceInput[];
+  fullMonthOverride: boolean;
 }): {
   payDays: number;
   unpaidLeaveDays: number;
   attendanceQualifyingDays: number;
   holidayPayDays: number;
   weekendPayDays: number;
+  breakdown: PayableDaysBreakdown;
 } {
-  const {
-    userId,
-    eligibleCalendarDays,
-    eligStartYmd,
-    eligEndYmd,
-    unionHolidaySet,
-    presentDaysByUser,
-    paidLeaveDaysByUser,
-    unpaidLeaveDaysByUser,
-    presentDatesByUser,
-    leaveDaysByUser,
-    plRemaining,
-  } = args;
-
-  let unpaidLeaveDays = unpaidLeaveDaysByUser.get(userId) || 0;
-  const plCover = Math.min(Math.max(0, plRemaining), unpaidLeaveDays);
-  if (plCover > 0) unpaidLeaveDays -= plCover;
-  const paidLeaveDays = (paidLeaveDaysByUser.get(userId) || 0) + plCover;
-  const attendanceQualifyingDays = presentDaysByUser.get(userId) || 0;
-  const leaveDates = leaveDaysByUser.get(userId);
-  const weekendPayDays = countWeekendPayDaysInWindow(eligStartYmd, eligEndYmd, leaveDates, unionHolidaySet);
-  const holidayPayDays = countEligibleWeekdayHolidaysNotOverlapping(
-    unionHolidaySet,
-    eligStartYmd,
-    eligEndYmd,
-    presentDatesByUser.get(userId),
-    leaveDates,
-  );
-  const payDays = resolvePayDaysFromAttendance({
-    presentDays: attendanceQualifyingDays + weekendPayDays,
-    paidLeaveDays,
-    unpaidLeaveDays,
-    eligibleDays: eligibleCalendarDays,
-    holidayPayDays,
+  const breakdown = computePayableDays({
+    year: args.year,
+    month: args.month,
+    runDay: args.runDay,
+    dateOfJoiningYmd: args.dateOfJoiningYmd,
+    dateOfLeavingYmd: args.dateOfLeavingYmd,
+    employeeDivisionId: args.employeeDivisionId,
+    holidays: args.holidays,
+    leaves: args.leaves,
+    attendance: args.attendance,
+    fullMonthOverride: args.fullMonthOverride,
   });
-  return { payDays, unpaidLeaveDays, attendanceQualifyingDays, holidayPayDays, weekendPayDays };
-}
-
-/** Full calendar-month pay days for employees with payroll_full_month_override (ignores attendance / run-day window). */
-function fullMonthOverridePayDayCalc(daysInMonth: number): {
-  payDays: number;
-  unpaidLeaveDays: number;
-  attendanceQualifyingDays: number;
-  holidayPayDays: number;
-  weekendPayDays: number;
-} {
-  const payDays = Math.max(1, daysInMonth);
-  return {
-    payDays,
-    unpaidLeaveDays: 0,
-    attendanceQualifyingDays: 0,
-    holidayPayDays: 0,
-    weekendPayDays: 0,
-  };
-}
-
-/** Company holidays (single or multi-day) that fall inside [rangeStartYmd, rangeEndYmd]. */
-async function loadCompanyHolidayDateSet(
-  companyId: string,
-  rangeStartYmd: string,
-  rangeEndYmd: string
-): Promise<Set<string>> {
-  const set = new Set<string>();
-  const { data, error } = await supabase
-    .from("HRMS_holidays")
-    .select("holiday_date, holiday_end_date")
-    .eq("company_id", companyId);
-  if (error) throw new Error(error.message);
-  for (const h of data ?? []) {
-    const start = String((h as any).holiday_date ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) continue;
-    const endRaw = (h as any).holiday_end_date != null ? String((h as any).holiday_end_date).slice(0, 10) : start;
-    const end = /^\d{4}-\d{2}-\d{2}$/.test(endRaw) && endRaw >= start ? endRaw : start;
-    for (const ymd of iterateYmdInclusive(start, end)) {
-      if (ymd >= rangeStartYmd && ymd <= rangeEndYmd) set.add(ymd);
-    }
-  }
-  return set;
-}
-
-/**
- * Division-aware holiday sets for payroll.
- *
- * Rules:
- * - `division_id` NULL => global holiday (counts for everyone)
- * - `division_id` set => counts only for employees in that division
- */
-async function loadCompanyHolidayDateSetsByDivision(
-  companyId: string,
-  rangeStartYmd: string,
-  rangeEndYmd: string,
-): Promise<{ global: Set<string>; byDivision: Map<string, Set<string>> }> {
-  const global = new Set<string>();
-  const byDivision = new Map<string, Set<string>>();
-  const { data, error } = await supabase
-    .from("HRMS_holidays")
-    .select("holiday_date, holiday_end_date, division_id, is_optional")
-    .eq("company_id", companyId);
-  if (error) throw new Error(error.message);
-  for (const h of data ?? []) {
-    // Optional holidays are NOT auto-counted in payroll.
-    // They affect payroll only if the employee applies an approved leave for that date.
-    if ((h as any)?.is_optional === true) continue;
-    const start = String((h as any).holiday_date ?? "").slice(0, 10);
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) continue;
-    const endRaw = (h as any).holiday_end_date != null ? String((h as any).holiday_end_date).slice(0, 10) : start;
-    const end = /^\d{4}-\d{2}-\d{2}$/.test(endRaw) && endRaw >= start ? endRaw : start;
-    const divId = (h as any).division_id ? String((h as any).division_id) : null;
-    for (const ymd of iterateYmdInclusive(start, end)) {
-      if (ymd < rangeStartYmd || ymd > rangeEndYmd) continue;
-      if (!divId) {
-        global.add(ymd);
-      } else {
-        const set = byDivision.get(divId) || new Set<string>();
-        set.add(ymd);
-        byDivision.set(divId, set);
-      }
-    }
-  }
-  return { global, byDivision };
-}
-
-async function loadPaidLeaveRemainingByUser(args: {
-  companyId: string;
-  userIds: string[];
-  joinDateByUserId: Map<string, string | null>;
-  asOfYmd: string;
-}): Promise<Map<string, number>> {
-  const { companyId, userIds, joinDateByUserId, asOfYmd } = args;
-  const asOf = new Date(asOfYmd + "T00:00:00Z");
-
-  const { data: policies, error: polErr } = await supabase
-    .from("HRMS_leave_policies")
-    .select("*, HRMS_leave_types(id, name, is_paid, code, payslip_slot)")
-    .eq("company_id", companyId);
-  if (polErr) throw new Error(polErr.message);
-
-  // Use ANY paid leave policy (not only EL) to cover short/unpaid days.
-  const paidPolicies = (policies ?? []).filter((p: any) => {
-    const t = Array.isArray(p.HRMS_leave_types) ? p.HRMS_leave_types[0] : p.HRMS_leave_types;
-    return t?.is_paid === true;
-  });
-  if (!paidPolicies.length) return new Map();
-
-  const policyRows = paidPolicies.map((p: any) => ({
-    leave_type_id: p.leave_type_id,
-    accrual_method: p.accrual_method,
-    monthly_accrual_rate: p.monthly_accrual_rate,
-    annual_quota: p.annual_quota,
-    prorate_on_join: p.prorate_on_join,
-    reset_month: p.reset_month,
-    reset_day: p.reset_day,
-    allow_carryover: p.allow_carryover,
-    carryover_limit: p.carryover_limit,
-    HRMS_leave_types: Array.isArray(p.HRMS_leave_types) ? p.HRMS_leave_types[0] : p.HRMS_leave_types,
-  }));
-
-  // Approved leaves for users for these paid leave types only.
-  const paidTypeIds = new Set(policyRows.map((p: any) => p.leave_type_id));
-  const { data: leaves, error: leaveErr } = await supabase
-    .from("HRMS_leave_requests")
-    .select("employee_user_id, leave_type_id, start_date, end_date, total_days")
-    .eq("company_id", companyId)
-    .eq("status", "approved")
-    .in("employee_user_id", userIds)
-    .in("leave_type_id", [...paidTypeIds]);
-  if (leaveErr) throw new Error(leaveErr.message);
-
-  const approvedByUser = new Map<string, any[]>();
-  for (const r of leaves ?? []) {
-    const uid = (r as any).employee_user_id as string | null;
-    if (!uid) continue;
-    const arr = approvedByUser.get(uid) || [];
-    arr.push({
-      leave_type_id: (r as any).leave_type_id,
-      start_date: String((r as any).start_date).slice(0, 10),
-      end_date: String((r as any).end_date).slice(0, 10),
-      total_days: Number((r as any).total_days) || 0,
-    });
-    approvedByUser.set(uid, arr);
-  }
-
-  let adjustmentsByUser = new Map<string, import("@/lib/leaveBalanceAdjustments").LeaveBalanceAdjustment[]>();
-  try {
-    adjustmentsByUser = await loadLeaveBalanceAdjustmentsForUsers(supabase, companyId, userIds);
-  } catch {
-    adjustmentsByUser = new Map();
-  }
-
-  const remainingByUser = new Map<string, number>();
-  for (const uid of userIds) {
-    const joinDateStr = joinDateByUserId.get(uid) ?? null;
-    const rows = computeLeaveBalanceRows(
-      policyRows as any,
-      approvedByUser.get(uid) || [],
-      joinDateStr,
-      asOfYmd,
-      adjustmentsByUser.get(uid) || [],
-    );
-    const remaining = rows.reduce((sum, r) => sum + (Number(r.remaining) || 0), 0);
-    remainingByUser.set(uid, Math.max(0, remaining));
-  }
-  return remainingByUser;
+  return breakdownToPayDayCalc(breakdown);
 }
 
 type LeaveRow = {
@@ -729,6 +478,10 @@ async function computeAttendanceDrivenPayDays(args: {
   presentDatesByUser: Map<string, Set<string>>;
   leaveDaysByUser: Map<string, Set<string>>;
   shortHoursUnpaidDaysByUser: Map<string, number>;
+  holidays: PayrollHolidayInput[];
+  divisionIdByUser: Map<string, string | null>;
+  leavesByUser: Map<string, PayrollLeaveInput[]>;
+  attendanceByUser: Map<string, PayrollAttendanceInput[]>;
 }> {
   const { companyId, userIds, periodStartYmd, periodEndExclusive } = args;
 
@@ -754,10 +507,11 @@ async function computeAttendanceDrivenPayDays(args: {
 
   const { data: holidayRows, error: holErr } = await supabase
     .from("HRMS_holidays")
-    .select("holiday_date, holiday_end_date, division_id")
+    .select("holiday_date, holiday_end_date, division_id, is_optional, name")
     .eq("company_id", companyId);
   if (holErr) throw new Error(holErr.message);
-  const companyHolidays = (holidayRows ?? []) as HolidayRow[];
+  const holidays: PayrollHolidayInput[] = (holidayRows ?? []) as PayrollHolidayInput[];
+  const companyHolidays = holidays as HolidayRow[];
 
   const officeLeaveRows: Array<{
     employee_user_id: string;
@@ -768,15 +522,15 @@ async function computeAttendanceDrivenPayDays(args: {
   // Approved leaves (paid/unpaid totals + leave day override)
   const { data: leaves, error: leaveErr } = await supabase
     .from("HRMS_leave_requests")
-    .select("employee_user_id, start_date, end_date, total_days, paid_days, unpaid_days, HRMS_leave_types(is_paid, code)")
+    .select("employee_user_id, start_date, end_date, total_days, paid_days, unpaid_days, status, HRMS_leave_types(is_paid, code)")
     .eq("company_id", companyId)
-    .eq("status", "approved")
     .in("employee_user_id", userIds);
   if (leaveErr) throw new Error(leaveErr.message);
 
   const paidLeaveDaysByUser = new Map<string, number>();
   const unpaidLeaveDaysByUser = new Map<string, number>();
   const leaveDaysByUser = new Map<string, Set<string>>();
+  const leavesByUser = new Map<string, PayrollLeaveInput[]>();
   for (const lAny of (leaves ?? []) as any[]) {
     const l = lAny as LeaveRow;
     const uid = l?.employee_user_id;
@@ -784,7 +538,21 @@ async function computeAttendanceDrivenPayDays(args: {
     const ltRaw: any = (l as any).HRMS_leave_types;
     const ltObj = Array.isArray(ltRaw) ? ltRaw[0] : ltRaw;
     const leaveCode = String(ltObj?.code ?? "").toUpperCase();
-    // Office Leave is credited via attendance (9h gross), not as a leave day override.
+    const status = String((lAny as any).status ?? "approved");
+    const leaveInput: PayrollLeaveInput = {
+      start_date: String(l.start_date).slice(0, 10),
+      end_date: String(l.end_date).slice(0, 10),
+      total_days: l.total_days,
+      paid_days: l.paid_days,
+      unpaid_days: l.unpaid_days,
+      status,
+      is_paid_type: ltObj?.is_paid !== false,
+      leave_type_code: leaveCode,
+    };
+    const arr = leavesByUser.get(uid) || [];
+    arr.push(leaveInput);
+    leavesByUser.set(uid, arr);
+    if (status.toLowerCase() !== "approved") continue;
     if (leaveCode === OFFICE_LEAVE_TYPE_CODE) {
       officeLeaveRows.push({
         employee_user_id: uid,
@@ -795,7 +563,6 @@ async function computeAttendanceDrivenPayDays(args: {
     }
     const r = computeLeavePaidUnpaidInWindow(l, periodStartYmd, periodEndExclusive);
     if (r.overlapDays <= 0) continue;
-    // Keep paid/unpaid days as-is; may be fractional (e.g. 0.5 HL).
     paidLeaveDaysByUser.set(uid, (paidLeaveDaysByUser.get(uid) || 0) + Number(r.paidDays || 0));
     unpaidLeaveDaysByUser.set(uid, (unpaidLeaveDaysByUser.get(uid) || 0) + Number(r.unpaidDays || 0));
     const set = leaveDaysByUser.get(uid) || new Set<string>();
@@ -806,6 +573,7 @@ async function computeAttendanceDrivenPayDays(args: {
   const presentDaysByUser = new Map<string, number>();
   const presentDatesByUser = new Map<string, Set<string>>();
   const shortHoursUnpaidDaysByUser = new Map<string, number>();
+  const attendanceByUser = new Map<string, PayrollAttendanceInput[]>();
   if (!employeeIds.length) {
     return {
       presentDaysByUser,
@@ -814,6 +582,10 @@ async function computeAttendanceDrivenPayDays(args: {
       presentDatesByUser,
       leaveDaysByUser,
       shortHoursUnpaidDaysByUser,
+      holidays,
+      divisionIdByUser,
+      leavesByUser,
+      attendanceByUser,
     };
   }
 
@@ -839,9 +611,9 @@ async function computeAttendanceDrivenPayDays(args: {
     if (!uid) continue;
 
     const workDate = String(row.work_date).slice(0, 10);
-    const leaveSet = leaveDaysByUser.get(uid);
-    if (leaveSet?.has(workDate)) continue; // leave overrides punch-based presence
-    // Weekdays only — weekends are paid separately; holidays via holidayPayDays.
+    // Weekdays only for present-credit maps; the calendar payable-days calculator
+    // also ignores weekend punches. Do not skip leave dates — half-day leave + half-day
+    // attendance must combine on the same working day.
     if (!isWeekdayUtc(workDate)) continue;
 
     let durationMinutes: number | null = null;
@@ -856,6 +628,9 @@ async function computeAttendanceDrivenPayDays(args: {
     if (durationMinutes == null) continue;
 
     const grossHours = durationMinutes / 60;
+    const attList = attendanceByUser.get(uid) || [];
+    attList.push({ work_date: workDate, grossHours });
+    attendanceByUser.set(uid, attList);
     const credit = attendancePayCreditFromGrossHours(grossHours);
     if (credit > 0) {
       presentDaysByUser.set(uid, (presentDaysByUser.get(uid) || 0) + credit);
@@ -895,6 +670,10 @@ async function computeAttendanceDrivenPayDays(args: {
     presentDatesByUser,
     leaveDaysByUser,
     shortHoursUnpaidDaysByUser,
+    holidays,
+    divisionIdByUser,
+    leavesByUser,
+    attendanceByUser,
   };
 }
 
@@ -1007,12 +786,10 @@ async function computeFreshPayrollPreviewFromMasters(
   const periodEndExclusive = new Date(Date.UTC(year, month - 1, effectiveRunDay + 1, 0, 0, 0, 0));
 
   const {
-    presentDaysByUser,
-    paidLeaveDaysByUser,
-    unpaidLeaveDaysByUser,
-    presentDatesByUser,
-    leaveDaysByUser,
-    shortHoursUnpaidDaysByUser,
+    holidays,
+    divisionIdByUser,
+    leavesByUser,
+    attendanceByUser,
   } = await computeAttendanceDrivenPayDays({
     companyId,
     userIds,
@@ -1021,30 +798,6 @@ async function computeFreshPayrollPreviewFromMasters(
   });
 
   const reimbByUser = isFuturePeriod ? new Map<string, number>() : await fetchApprovedReimbursementTotalsByUser(companyId, year, month);
-
-  const periodEndYmdInclusive = toYmdUtc(new Date(periodEndExclusive.getTime() - 24 * 60 * 60 * 1000));
-  const holidaySets = isFuturePeriod
-    ? { global: new Set<string>(), byDivision: new Map<string, Set<string>>() }
-    : await loadCompanyHolidayDateSetsByDivision(companyId, periodStart, periodEndYmdInclusive);
-  const { data: empDivRows } = await supabase
-    .from("HRMS_employees")
-    .select("user_id, division_id")
-    .eq("company_id", companyId)
-    .in("user_id", userIds);
-  const divisionIdByUserId = new Map<string, string | null>(
-    (empDivRows ?? []).map((r: any) => [String(r.user_id), r.division_id ? String(r.division_id) : null]),
-  );
-  const joinDateByUserId = new Map<string, string | null>(
-    (users ?? []).map((u: any) => [u.id as string, u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null]),
-  );
-  const plRemainingByUser = isFuturePeriod
-    ? new Map<string, number>()
-    : await loadPaidLeaveRemainingByUser({
-        companyId,
-        userIds,
-        joinDateByUserId,
-        asOfYmd: periodEndYmdInclusive,
-      });
 
   const rows: any[] = [];
   for (const m of masters) {
@@ -1057,50 +810,20 @@ async function computeFreshPayrollPreviewFromMasters(
     if (dol && dol < periodStartDate) continue;
     if (doj && doj > periodEndExclusive) continue;
 
-    const employmentStart = doj && doj > periodStartDate ? doj : periodStartDate;
-    const employmentEndInclusive =
-      dol && dol < new Date(periodEndExclusive.getTime() - 1) ? dol : new Date(periodEndExclusive.getTime() - 1);
-    const eligibleStartYmd = toYmdUtc(employmentStart);
-    const eligibleEndYmd = toYmdUtc(employmentEndInclusive);
-    const eligStartYmd = eligibleStartYmd > periodStart ? eligibleStartYmd : periodStart;
-    const eligEndYmd = eligibleEndYmd < periodEndYmdInclusive ? eligibleEndYmd : periodEndYmdInclusive;
-    const eligibleCalendarDays = countCalendarDaysInclusive(eligStartYmd, eligEndYmd);
-
-    const divId = divisionIdByUserId.get(m.employee_user_id) ?? null;
-    const divSet = !isFuturePeriod && divId ? holidaySets.byDivision.get(divId) : undefined;
-    const unionHolidaySet =
-      !isFuturePeriod && (holidaySets.global.size || (divSet?.size ?? 0))
-        ? new Set<string>([...holidaySets.global, ...(divSet ? [...divSet] : [])])
-        : new Set<string>();
-    const plRemaining = isFuturePeriod ? 0 : plRemainingByUser.get(m.employee_user_id) || 0;
     const fullMonthOverride = u.payroll_full_month_override === true;
-    const payDayCalc = fullMonthOverride
-      ? fullMonthOverridePayDayCalc(daysInMonth)
-      : isFuturePeriod
-        ? {
-            payDays: Math.max(
-              0,
-              eligibleCalendarDays - (unpaidLeaveDaysByUser.get(m.employee_user_id) || 0),
-            ),
-            unpaidLeaveDays: unpaidLeaveDaysByUser.get(m.employee_user_id) || 0,
-            attendanceQualifyingDays: 0,
-            holidayPayDays: 0,
-            weekendPayDays: 0,
-          }
-        : resolveEmployeePayDaysFromAttendance({
-            userId: m.employee_user_id,
-            eligibleCalendarDays,
-            eligStartYmd,
-            eligEndYmd,
-            unionHolidaySet,
-            presentDaysByUser,
-            paidLeaveDaysByUser,
-            unpaidLeaveDaysByUser,
-            presentDatesByUser,
-            leaveDaysByUser,
-            plRemaining,
-          });
-    const { payDays, unpaidLeaveDays, attendanceQualifyingDays } = payDayCalc;
+    const payDayCalc = resolveEmployeePayDaysFromAttendance({
+      year,
+      month,
+      runDay: effectiveRunDay,
+      dateOfJoiningYmd: u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null,
+      dateOfLeavingYmd: u.date_of_leaving ? String(u.date_of_leaving).slice(0, 10) : null,
+      employeeDivisionId: divisionIdByUser.get(m.employee_user_id) ?? null,
+      holidays: isFuturePeriod ? [] : holidays,
+      leaves: leavesByUser.get(m.employee_user_id) || [],
+      attendance: isFuturePeriod ? [] : attendanceByUser.get(m.employee_user_id) || [],
+      fullMonthOverride,
+    });
+    const { payDays, unpaidLeaveDays, attendanceQualifyingDays, breakdown: payableDaysBreakdown } = payDayCalc;
     const rawPayDays = payDays;
 
     if (m.payroll_mode === "government") {
@@ -1145,6 +868,7 @@ async function computeFreshPayrollPreviewFromMasters(
         payDaysSuppressedMinAttendance: false,
         payrollFullMonthOverride: fullMonthOverride,
         unpaidLeaveDays,
+        payableDaysBreakdown,
         grossMonthly: Math.round(grossBasic),
         grossPay: comp.totalEarnings,
         deductions: comp.totalDeductions,
@@ -1247,6 +971,7 @@ async function computeFreshPayrollPreviewFromMasters(
       payDaysSuppressedMinAttendance: false,
       payrollFullMonthOverride: fullMonthOverride,
       unpaidLeaveDays,
+      payableDaysBreakdown,
       grossMonthly: Math.round(grossMonthly),
       grossPay,
       basicPay,
@@ -1323,6 +1048,28 @@ function governmentMonthlyFromDbRow(g: any | undefined | null) {
   };
 }
 
+const PAYSLIP_SELECT_WITH_RECALC =
+  "employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode, generated_at, payable_days_breakdown, recalculation_required, recalculation_reason, source_changed_at, source_change_summary, last_recalculated_at, payroll_status";
+
+const PAYSLIP_SELECT_LEGACY =
+  "employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode, generated_at";
+
+async function loadPayslipsForPeriod(companyId: string, periodId: string): Promise<any[]> {
+  const full = await supabase
+    .from("HRMS_payslips")
+    .select(PAYSLIP_SELECT_WITH_RECALC)
+    .eq("payroll_period_id", periodId)
+    .eq("company_id", companyId);
+  if (!full.error) return full.data ?? [];
+  const legacy = await supabase
+    .from("HRMS_payslips")
+    .select(PAYSLIP_SELECT_LEGACY)
+    .eq("payroll_period_id", periodId)
+    .eq("company_id", companyId);
+  if (legacy.error) throw new Error(legacy.error.message);
+  return legacy.data ?? [];
+}
+
 function mapSavedPayslipToPreviewRow(p: any, u: any | undefined, gov: any | undefined) {
   const tds = Math.round(Number(p.tds) ?? 0);
   const inc = Math.round(Number(p.incentive) ?? 0);
@@ -1338,12 +1085,23 @@ function mapSavedPayslipToPreviewRow(p: any, u: any | undefined, gov: any | unde
     reimbursement: reimb,
   });
   const isGov = p.payroll_mode === "government" || !!gov;
+  const breakdown = p.payable_days_breakdown && typeof p.payable_days_breakdown === "object" ? p.payable_days_breakdown : null;
   return {
     employeeUserId: p.employee_user_id,
     employeeName: u?.name ?? null,
     employeeEmail: u?.email ?? "",
     payDays: Number(p.pay_days) ?? 0,
-    unpaidLeaveDays: gov ? Number(gov.unpaid_days) || 0 : 0,
+    unpaidLeaveDays: gov
+      ? Number(gov.unpaid_days) || 0
+      : Number(breakdown?.unpaidLeaveDays) || 0,
+    payableDaysBreakdown: breakdown,
+    recalculationRequired: Boolean(p.recalculation_required),
+    recalculationReason: p.recalculation_reason ?? null,
+    sourceChangedAt: p.source_changed_at ?? null,
+    sourceChangeSummary: p.source_change_summary ?? null,
+    generatedAt: p.generated_at ?? null,
+    lastRecalculatedAt: p.last_recalculated_at ?? null,
+    payrollStatus: p.payroll_status ?? "generated",
     grossPay: Math.round(Number(p.gross_pay) ?? 0),
     grossMonthly: undefined as number | undefined,
     pfEmployee: Math.round(Number(p.pf_employee) ?? 0),
@@ -1416,7 +1174,7 @@ async function computePreview(
 
   const { data: existingPeriod } = await supabase
     .from("HRMS_payroll_periods")
-    .select("id, period_end")
+    .select("id, period_end, is_locked")
     .eq("company_id", companyId)
     .eq("period_start", periodStart)
     .maybeSingle();
@@ -1459,13 +1217,7 @@ async function computePreview(
     };
   }
 
-  const { data: payslips } = await supabase
-    .from("HRMS_payslips")
-    .select(
-      "employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode",
-    )
-    .eq("payroll_period_id", existingPeriod.id)
-    .eq("company_id", companyId);
+  const payslips = await loadPayslipsForPeriod(companyId, existingPeriod.id);
   const { data: govSaved } = await supabase
     .from("HRMS_government_monthly_payroll")
     .select("*")
@@ -1496,12 +1248,52 @@ async function computePreview(
 
   const merged: any[] = [];
   const freshIdSet = new Set(freshIds);
+  const periodLocked = Boolean((existingPeriod as { is_locked?: boolean })?.is_locked);
   for (const fr of freshRows) {
     const uid = fr.employeeUserId as string;
     if (slipIds.has(uid)) {
       const p = savedByUser.get(uid);
       if (p) {
-        merged.push(mapSavedPayslipToPreviewRow(p, nameById.get(uid), govByUser.get(uid)));
+        const stored = mapSavedPayslipToPreviewRow(p, nameById.get(uid), govByUser.get(uid));
+        const stale = shouldMarkPayslipStale({
+          generatedAtIso: p.generated_at,
+          sourceChangedAtIso: p.source_changed_at,
+          storedPayableDays: Number(p.pay_days) || 0,
+          livePayableDays: Number(fr.payDays) || 0,
+        });
+        const lifecycle = resolvePayrollLifecycleStatus({
+          payrollStatus: p.payroll_status,
+          periodLocked,
+        });
+        merged.push({
+          ...stored,
+          liveCalculation: {
+            payDays: fr.payDays,
+            unpaidLeaveDays: fr.unpaidLeaveDays,
+            payableDaysBreakdown: fr.payableDaysBreakdown ?? null,
+            grossPay: fr.grossPay,
+            netPay: fr.netPay,
+            takeHome: fr.takeHome,
+            deductions: fr.deductions,
+            pfEmployee: fr.pfEmployee,
+            pfEmployer: fr.pfEmployer,
+            esicEmployee: fr.esicEmployee,
+            esicEmployer: fr.esicEmployer,
+            profTax: fr.profTax,
+            ctc: fr.ctc,
+          },
+          recalculationRequired: Boolean(stored.recalculationRequired) || stale.stale,
+          recalculationReason:
+            stored.recalculationReason ||
+            (stale.reason === "source"
+              ? RECALC_REASON_HR_SOURCE_CHANGE
+              : stale.reason === "formula"
+                ? "Payable days changed because attendance, leave, holiday or employee data no longer matches the generated snapshot."
+                : null),
+          payrollLocked: isFinalizedOrPaid(lifecycle),
+          canRecalculate: canOverwritePayroll(lifecycle),
+          requiresRecalcReason: requiresRecalcReason(lifecycle),
+        });
       }
     } else {
       merged.push({ ...fr, payslipPending: true });
@@ -1677,10 +1469,159 @@ export async function POST(request: NextRequest) {
 
   const { data: existingPeriod } = await supabase
     .from("HRMS_payroll_periods")
-    .select("id")
+    .select("id, is_locked, period_end")
     .eq("company_id", me.company_id)
     .eq("period_start", periodStart)
     .maybeSingle();
+
+  const action = typeof body?.action === "string" ? body.action : "";
+  if (action === "previewRecalculate" || action === "confirmRecalculate") {
+    if (!existingPeriod?.id) {
+      return NextResponse.json({ error: "No generated payroll exists for this month." }, { status: 400 });
+    }
+    const periodLocked = Boolean((existingPeriod as { is_locked?: boolean }).is_locked);
+    const lifecycle = resolvePayrollLifecycleStatus({ periodLocked });
+    if (isFinalizedOrPaid(lifecycle)) {
+      return NextResponse.json(
+        { error: "Finalized or paid payroll cannot be overwritten. Use a payroll correction or arrears workflow." },
+        { status: 400 },
+      );
+    }
+    const reason =
+      typeof body?.reason === "string" && body.reason.trim()
+        ? body.reason.trim()
+        : RECALC_REASON_HR_SOURCE_CHANGE;
+    if (action === "confirmRecalculate" && requiresRecalcReason("approved") && body?.requireReason === true && !String(body?.reason || "").trim()) {
+      return NextResponse.json({ error: "A reason is required to recalculate approved payroll." }, { status: 400 });
+    }
+
+    const preview = await computePreview(me.company_id, year, month, runDay);
+    const requestedIds: string[] = Array.isArray(body?.employeeUserIds)
+      ? body.employeeUserIds.filter((id: unknown) => typeof id === "string")
+      : [];
+    const targets = preview.rows.filter((r: any) => {
+      if (r.payslipPending) return false;
+      if (requestedIds.length) return requestedIds.includes(r.employeeUserId);
+      return Boolean(r.recalculationRequired);
+    });
+    if (action === "previewRecalculate") {
+      const previewRows = targets.map((r: any) => ({
+        employeeUserId: r.employeeUserId,
+        employeeName: r.employeeName,
+        old: { payDays: r.payDays, unpaidLeaveDays: r.unpaidLeaveDays, grossPay: r.grossPay, takeHome: r.takeHome },
+        next: r.liveCalculation ?? null,
+        recalculationReason: r.recalculationReason,
+        payableDaysBreakdown: r.liveCalculation?.payableDaysBreakdown ?? r.payableDaysBreakdown ?? null,
+      }));
+      try {
+        await supabaseAdmin.from("HRMS_payroll_recalc_audit").insert(
+          previewRows.map((r: any) => ({
+            company_id: me.company_id,
+            payroll_period_id: existingPeriod.id,
+            employee_user_id: r.employeeUserId,
+            action: "preview",
+            reason,
+            actor_user_id: session.id,
+            old_breakdown: r.old,
+            new_breakdown: r.next,
+            changed_source_records: { summary: r.recalculationReason || reason },
+          })),
+        );
+      } catch {
+        // Audit must not block preview.
+      }
+      return NextResponse.json({
+        ok: true,
+        action,
+        rows: previewRows,
+      });
+    }
+
+    const now = new Date().toISOString();
+    let updated = 0;
+    for (const r of targets as any[]) {
+      if (!r.canRecalculate && r.payrollLocked) {
+        return NextResponse.json(
+          { error: `Cannot recalculate ${r.employeeName || r.employeeEmail}: payroll is finalized or paid.` },
+          { status: 400 },
+        );
+      }
+      const live = r.liveCalculation;
+      if (!live) continue;
+      const { data: slip } = await supabase
+        .from("HRMS_payslips")
+        .select("id, pay_days, payable_days_breakdown, payroll_status")
+        .eq("company_id", me.company_id)
+        .eq("payroll_period_id", existingPeriod.id)
+        .eq("employee_user_id", r.employeeUserId)
+        .maybeSingle();
+      if (!slip?.id) continue;
+      const slipStatus = resolvePayrollLifecycleStatus({
+        payrollStatus: (slip as any).payroll_status,
+        periodLocked,
+      });
+      if (isFinalizedOrPaid(slipStatus)) continue;
+      if (requiresRecalcReason(slipStatus) && !String(body?.reason || "").trim()) {
+        return NextResponse.json({ error: "A reason is required to recalculate approved payroll." }, { status: 400 });
+      }
+
+      const { error: upErr } = await supabaseAdmin
+        .from("HRMS_payslips")
+        .update({
+          pay_days: live.payDays,
+          gross_pay: live.grossPay,
+          net_pay: live.takeHome,
+          deductions: live.deductions,
+          pf_employee: live.pfEmployee,
+          pf_employer: live.pfEmployer,
+          esic_employee: live.esicEmployee,
+          esic_employer: live.esicEmployer,
+          professional_tax: live.profTax,
+          ctc: live.ctc,
+          payable_days_breakdown: live.payableDaysBreakdown,
+          recalculation_required: false,
+          recalculation_reason: null,
+          last_recalculated_at: now,
+          last_recalculated_by: session.id,
+          source_changed_at: null,
+          source_change_summary: null,
+        })
+        .eq("id", slip.id);
+      if (upErr) return NextResponse.json({ error: upErr.message }, { status: 400 });
+
+      if (r.payrollMode === "government") {
+        await supabaseAdmin
+          .from("HRMS_government_monthly_payroll")
+          .update({
+            paid_days: live.payDays,
+            unpaid_days: Math.max(0, daysInMonth - Number(live.payDays) || 0),
+          })
+          .eq("payslip_id", slip.id);
+      }
+
+      await supabaseAdmin.from("HRMS_payroll_recalc_audit").insert({
+        company_id: me.company_id,
+        payroll_period_id: existingPeriod.id,
+        payslip_id: slip.id,
+        employee_user_id: r.employeeUserId,
+        action: "confirmed",
+        reason,
+        actor_user_id: session.id,
+        old_breakdown: (slip as any).payable_days_breakdown ?? { payDays: (slip as any).pay_days },
+        new_breakdown: live.payableDaysBreakdown ?? { payDays: live.payDays },
+        changed_source_records: { summary: r.recalculationReason || reason },
+      });
+      updated += 1;
+    }
+
+    let excelPath: string | null = null;
+    try {
+      excelPath = await persistPayrollExcelWorkbook(me.company_id, existingPeriod.id, year, month, periodEnd);
+    } catch {
+      excelPath = null;
+    }
+    return NextResponse.json({ ok: true, action, updated, excelPath });
+  }
 
   const completeMissingPayslips = body?.completeMissingPayslips === true;
   const overrideRowsEarly = Array.isArray(body?.rows) ? body.rows : null;
@@ -1742,15 +1683,12 @@ export async function POST(request: NextRequest) {
 
     const periodStartDateCm = new Date(periodStart + "T00:00:00Z");
     const periodEndExclusiveCm = new Date(Date.UTC(year, month - 1, effectiveRunDay + 1, 0, 0, 0, 0));
-    const periodEndYmdInclusivePostCm = toYmdUtc(new Date(periodEndExclusiveCm.getTime() - 24 * 60 * 60 * 1000));
 
     const {
-      presentDaysByUser: presCm,
-      paidLeaveDaysByUser: paidCm,
-      unpaidLeaveDaysByUser: unpaidCm,
-      presentDatesByUser: presDatesCm,
-      leaveDaysByUser: leaveDaysCm,
-      shortHoursUnpaidDaysByUser: shortHoursUnpaidCm,
+      holidays: holidaysCm,
+      divisionIdByUser: divisionIdByUserCm,
+      leavesByUser: leavesByUserCm,
+      attendanceByUser: attendanceByUserCm,
     } = await computeAttendanceDrivenPayDays({
       companyId: me.company_id,
       userIds: userIdsCm,
@@ -1759,24 +1697,6 @@ export async function POST(request: NextRequest) {
     });
 
     const reimbByUserCm = await fetchApprovedReimbursementTotalsByUser(me.company_id, year, month);
-    const holidaySetsCm = await loadCompanyHolidayDateSetsByDivision(me.company_id, periodStart, periodEndYmdInclusivePostCm);
-    const { data: empDivRowsCm } = await supabase
-      .from("HRMS_employees")
-      .select("user_id, division_id")
-      .eq("company_id", me.company_id)
-      .in("user_id", userIdsCm);
-    const divisionIdByUserIdCm = new Map<string, string | null>(
-      (empDivRowsCm ?? []).map((r: any) => [String(r.user_id), r.division_id ? String(r.division_id) : null]),
-    );
-    const joinDateByUserIdCm = new Map<string, string | null>(
-      (usersCm ?? []).map((u: any) => [u.id as string, u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null]),
-    );
-    const plRemainingByUserCm = await loadPaidLeaveRemainingByUser({
-      companyId: me.company_id,
-      userIds: userIdsCm,
-      joinDateByUserId: joinDateByUserIdCm,
-      asOfYmd: periodEndYmdInclusivePostCm,
-    });
 
     for (const m of mastersCm ?? []) {
       if (slipUids.has(m.employee_user_id)) continue;
@@ -1789,38 +1709,20 @@ export async function POST(request: NextRequest) {
       if (dol && dol < periodStartDateCm) continue;
       if (doj && doj > periodEndExclusiveCm) continue;
 
-      const employmentStart = doj && doj > periodStartDateCm ? doj : periodStartDateCm;
-      const employmentEndInclusive =
-        dol && dol < new Date(periodEndExclusiveCm.getTime() - 1) ? dol : new Date(periodEndExclusiveCm.getTime() - 1);
-      const eligibleStartYmd = toYmdUtc(employmentStart);
-      const eligibleEndYmd = toYmdUtc(employmentEndInclusive);
-      const eligStartYmd = eligibleStartYmd > periodStart ? eligibleStartYmd : periodStart;
-      const eligEndYmd = eligibleEndYmd < periodEndYmdInclusivePostCm ? eligibleEndYmd : periodEndYmdInclusivePostCm;
-      const eligibleCalendarDays = countCalendarDaysInclusive(eligStartYmd, eligEndYmd);
-
-      let unpaidLeaveDays = unpaidCm.get(m.employee_user_id) || 0;
-      const divId = divisionIdByUserIdCm.get(m.employee_user_id) ?? null;
-      const divSet = divId ? holidaySetsCm.byDivision.get(divId) : undefined;
-      const unionHolidaySet = new Set<string>([...holidaySetsCm.global, ...(divSet ? [...divSet] : [])]);
-      const plRemaining = plRemainingByUserCm.get(m.employee_user_id) || 0;
       const fullMonthOverride = u.payroll_full_month_override === true;
-      const payDayCalc = fullMonthOverride
-        ? fullMonthOverridePayDayCalc(daysInMonth)
-        : resolveEmployeePayDaysFromAttendance({
-            userId: m.employee_user_id,
-            eligibleCalendarDays,
-            eligStartYmd,
-            eligEndYmd,
-            unionHolidaySet,
-            presentDaysByUser: presCm,
-            paidLeaveDaysByUser: paidCm,
-            unpaidLeaveDaysByUser: unpaidCm,
-            presentDatesByUser: presDatesCm,
-            leaveDaysByUser: leaveDaysCm,
-            plRemaining,
-          });
-      const { payDays, unpaidLeaveDays: unpaidLeaveDaysResolved } = payDayCalc;
-      unpaidLeaveDays = unpaidLeaveDaysResolved;
+      const payDayCalc = resolveEmployeePayDaysFromAttendance({
+        year,
+        month,
+        runDay: effectiveRunDay,
+        dateOfJoiningYmd: u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null,
+        dateOfLeavingYmd: u.date_of_leaving ? String(u.date_of_leaving).slice(0, 10) : null,
+        employeeDivisionId: divisionIdByUserCm.get(m.employee_user_id) ?? null,
+        holidays: holidaysCm,
+        leaves: leavesByUserCm.get(m.employee_user_id) || [],
+        attendance: attendanceByUserCm.get(m.employee_user_id) || [],
+        fullMonthOverride,
+      });
+      const { payDays, unpaidLeaveDays, breakdown: payableDaysBreakdown } = payDayCalc;
 
       if (m.payroll_mode === "government") {
         const grossBasic = Number(m.gross_basic) || Number(m.gross_salary) || 0;
@@ -1866,6 +1768,9 @@ export async function POST(request: NextRequest) {
           gross_pay: comp.totalEarnings,
           net_pay: takeHomeIns,
           pay_days: paidDaysGov,
+          payable_days_breakdown: payableDaysBreakdown,
+          payroll_status: "generated",
+          recalculation_required: false,
           ctc: Math.round(Number(m.ctc) || grossBasic),
           pf_employee: pfEmpGov,
           pf_employer: 0,
@@ -1955,6 +1860,9 @@ export async function POST(request: NextRequest) {
         gross_pay: grossPay,
         net_pay: takeHomeIns,
         pay_days: payDays,
+        payable_days_breakdown: payableDaysBreakdown,
+        payroll_status: "generated",
+        recalculation_required: false,
         ctc: periodCtcCm,
         pf_employee: pfEmp,
         pf_employer: pfEmpr,
@@ -2204,6 +2112,8 @@ export async function POST(request: NextRequest) {
           gross_pay: comp.totalEarnings,
           net_pay: takeHomeIns,
           pay_days: payDays,
+        payroll_status: "generated",
+        recalculation_required: false,
           ctc: Math.round(Number(master.ctc) || grossBasic),
           pf_employee: pfEmpGov,
           pf_employer: 0,
@@ -2273,6 +2183,8 @@ export async function POST(request: NextRequest) {
         gross_pay: grossPay,
         net_pay: takeHome,
         pay_days: payDays,
+        payroll_status: "generated",
+        recalculation_required: false,
         ctc: periodCtcOverride,
         pf_employee: pfEmp,
         pf_employer: pfEmpr,
@@ -2291,15 +2203,12 @@ export async function POST(request: NextRequest) {
   } else {
     const periodStartDate = new Date(periodStart + "T00:00:00Z");
     const periodEndExclusive = new Date(Date.UTC(year, month - 1, effectiveRunDay + 1, 0, 0, 0, 0));
-    const periodEndYmdInclusivePost = toYmdUtc(new Date(periodEndExclusive.getTime() - 24 * 60 * 60 * 1000));
 
     const {
-      presentDaysByUser,
-      paidLeaveDaysByUser,
-      unpaidLeaveDaysByUser,
-      presentDatesByUser,
-      leaveDaysByUser,
-      shortHoursUnpaidDaysByUser,
+      holidays: holidaysPost,
+      divisionIdByUser: divisionIdByUserPost,
+      leavesByUser: leavesByUserPost,
+      attendanceByUser: attendanceByUserPost,
     } =
       await computeAttendanceDrivenPayDays({
         companyId: me.company_id,
@@ -2309,24 +2218,6 @@ export async function POST(request: NextRequest) {
       });
 
     const reimbByUser = await fetchApprovedReimbursementTotalsByUser(me.company_id, year, month);
-    const holidaySetsPost = await loadCompanyHolidayDateSetsByDivision(me.company_id, periodStart, periodEndYmdInclusivePost);
-    const { data: empDivRowsPost } = await supabase
-      .from("HRMS_employees")
-      .select("user_id, division_id")
-      .eq("company_id", me.company_id)
-      .in("user_id", userIds);
-    const divisionIdByUserIdPost = new Map<string, string | null>(
-      (empDivRowsPost ?? []).map((r: any) => [String(r.user_id), r.division_id ? String(r.division_id) : null]),
-    );
-    const joinDateByUserId = new Map<string, string | null>(
-      (users ?? []).map((u: any) => [u.id as string, u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null]),
-    );
-    const plRemainingByUser = await loadPaidLeaveRemainingByUser({
-      companyId: me.company_id,
-      userIds,
-      joinDateByUserId,
-      asOfYmd: periodEndYmdInclusivePost,
-    });
 
     for (const m of masters ?? []) {
       const u = userById.get(m.employee_user_id);
@@ -2338,38 +2229,20 @@ export async function POST(request: NextRequest) {
       if (dol && dol < periodStartDate) continue;
       if (doj && doj > periodEndExclusive) continue;
 
-      const employmentStart = doj && doj > periodStartDate ? doj : periodStartDate;
-      const employmentEndInclusive =
-        dol && dol < new Date(periodEndExclusive.getTime() - 1) ? dol : new Date(periodEndExclusive.getTime() - 1);
-      const eligibleStartYmd = toYmdUtc(employmentStart);
-      const eligibleEndYmd = toYmdUtc(employmentEndInclusive);
-      const eligStartYmd = eligibleStartYmd > periodStart ? eligibleStartYmd : periodStart;
-      const eligEndYmd = eligibleEndYmd < periodEndYmdInclusivePost ? eligibleEndYmd : periodEndYmdInclusivePost;
-      const eligibleCalendarDays = countCalendarDaysInclusive(eligStartYmd, eligEndYmd);
-
-      let unpaidLeaveDays = unpaidLeaveDaysByUser.get(m.employee_user_id) || 0;
-      const divId = divisionIdByUserIdPost.get(m.employee_user_id) ?? null;
-      const divSet = divId ? holidaySetsPost.byDivision.get(divId) : undefined;
-      const unionHolidaySet = new Set<string>([...holidaySetsPost.global, ...(divSet ? [...divSet] : [])]);
-      const plRemaining = plRemainingByUser.get(m.employee_user_id) || 0;
       const fullMonthOverride = u.payroll_full_month_override === true;
-      const payDayCalc = fullMonthOverride
-        ? fullMonthOverridePayDayCalc(daysInMonth)
-        : resolveEmployeePayDaysFromAttendance({
-            userId: m.employee_user_id,
-            eligibleCalendarDays,
-            eligStartYmd,
-            eligEndYmd,
-            unionHolidaySet,
-            presentDaysByUser,
-            paidLeaveDaysByUser,
-            unpaidLeaveDaysByUser,
-            presentDatesByUser,
-            leaveDaysByUser,
-            plRemaining,
-          });
-      const { payDays, unpaidLeaveDays: unpaidLeaveDaysResolved } = payDayCalc;
-      unpaidLeaveDays = unpaidLeaveDaysResolved;
+      const payDayCalc = resolveEmployeePayDaysFromAttendance({
+        year,
+        month,
+        runDay: effectiveRunDay,
+        dateOfJoiningYmd: u.date_of_joining ? String(u.date_of_joining).slice(0, 10) : null,
+        dateOfLeavingYmd: u.date_of_leaving ? String(u.date_of_leaving).slice(0, 10) : null,
+        employeeDivisionId: divisionIdByUserPost.get(m.employee_user_id) ?? null,
+        holidays: holidaysPost,
+        leaves: leavesByUserPost.get(m.employee_user_id) || [],
+        attendance: attendanceByUserPost.get(m.employee_user_id) || [],
+        fullMonthOverride,
+      });
+      const { payDays, unpaidLeaveDays, breakdown: payableDaysBreakdown } = payDayCalc;
 
       if (m.payroll_mode === "government") {
         const grossBasic = Number(m.gross_basic) || Number(m.gross_salary) || 0;
@@ -2415,6 +2288,9 @@ export async function POST(request: NextRequest) {
           gross_pay: comp.totalEarnings,
           net_pay: takeHomeIns,
           pay_days: paidDaysGov,
+          payable_days_breakdown: payableDaysBreakdown,
+          payroll_status: "generated",
+          recalculation_required: false,
           ctc: Math.round(Number(m.ctc) || grossBasic),
           pf_employee: pfEmpGov,
           pf_employer: 0,
@@ -2505,6 +2381,9 @@ export async function POST(request: NextRequest) {
         gross_pay: grossPay,
         net_pay: takeHomeIns,
         pay_days: payDays,
+        payable_days_breakdown: payableDaysBreakdown,
+        payroll_status: "generated",
+        recalculation_required: false,
         ctc: periodCtcRun,
         pf_employee: pfEmp,
         pf_employer: pfEmpr,

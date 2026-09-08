@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { markGeneratedPayrollOutdated } from "@/lib/payrollStaleMark";
 
 function canManageHolidays(role: string): boolean {
   return role === "super_admin";
@@ -144,6 +145,16 @@ export async function PATCH(request: NextRequest, ctx: { params: Promise<{ id: s
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
   if (!data) return NextResponse.json({ error: "Holiday not found" }, { status: 404 });
 
+  void markGeneratedPayrollOutdated({
+    companyId: me.company_id,
+    actorUserId: session.id,
+    kind: "holiday",
+    dateStartYmd: String((data as any).holiday_date).slice(0, 10),
+    dateEndYmd: String((data as any).holiday_end_date || (data as any).holiday_date).slice(0, 10),
+    holidayDivisionId: (data as any).division_id ? String((data as any).division_id) : null,
+    summary: "HR updated a holiday after payroll generation",
+  });
+
   return NextResponse.json({ holiday: data });
 }
 
@@ -164,12 +175,33 @@ export async function DELETE(_request: NextRequest, ctx: { params: Promise<{ id:
   if (meErr) return NextResponse.json({ error: meErr.message }, { status: 400 });
   if (!me?.company_id) return NextResponse.json({ error: "User not linked to company" }, { status: 400 });
 
+  const { data: existingHoliday } = await supabase
+    .from("HRMS_holidays")
+    .select("holiday_date, holiday_end_date, division_id")
+    .eq("id", id)
+    .eq("company_id", me.company_id)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("HRMS_holidays")
     .delete()
     .eq("id", id)
     .eq("company_id", me.company_id);
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  if (existingHoliday) {
+    void markGeneratedPayrollOutdated({
+      companyId: me.company_id,
+      actorUserId: session.id,
+      kind: "holiday",
+      dateStartYmd: String((existingHoliday as any).holiday_date).slice(0, 10),
+      dateEndYmd: String((existingHoliday as any).holiday_end_date || (existingHoliday as any).holiday_date).slice(0, 10),
+      holidayDivisionId: (existingHoliday as any).division_id
+        ? String((existingHoliday as any).division_id)
+        : null,
+      summary: "HR deleted a holiday after payroll generation",
+    });
+  }
 
   return NextResponse.json({ ok: true });
 }

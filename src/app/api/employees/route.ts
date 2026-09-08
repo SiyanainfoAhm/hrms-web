@@ -25,6 +25,7 @@ import {
 } from "@/lib/employeeValidators";
 import { getRequestAppBaseUrl, sendInviteEmail } from "@/lib/inviteEmail";
 import { ensureEmployeeMirrorForUser } from "@/lib/ensureEmployeeMirror";
+import { markGeneratedPayrollOutdated } from "@/lib/payrollStaleMark";
 import bcrypt from "bcryptjs";
 
 import { publicUrlForStoragePath } from "@/lib/profilePictureStorage";
@@ -1223,6 +1224,14 @@ export async function PUT(request: NextRequest) {
       // ignore
     }
   }
+
+  void markGeneratedPayrollOutdated({
+    companyId,
+    actorUserId: session.id,
+    kind: divisionId != null ? "division" : "employment_dates",
+    employeeUserIds: [userId],
+    summary: "HR updated employee division, joining/exit date or profile after payroll generation",
+  });
 
   return NextResponse.json({ employee: mapRow(updated) });
 }

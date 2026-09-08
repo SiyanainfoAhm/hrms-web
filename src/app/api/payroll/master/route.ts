@@ -17,6 +17,7 @@ import {
 } from "@/lib/payrollMasterEmail";
 import { sendPayrollMasterUpdatedEmail } from "@/services/payrollNotificationService";
 import { getPublicAppUrl } from "@/lib/publicAppUrl";
+import { markGeneratedPayrollOutdated } from "@/lib/payrollStaleMark";
 
 function isManagerial(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -772,6 +773,14 @@ export async function PATCH(request: NextRequest) {
     effectiveStartDate,
     changes,
     newValuesSummary: `CTC ${moneyLabel(ctc)}, Gross ${moneyLabel(grossSalary)}, Take home ${moneyLabel(takeHome)}, PF ${moneyLabel(pfEmp)}, ESIC ${moneyLabel(esicEmp)}, PT ${moneyLabel(ptStored)}, TDS ${moneyLabel(tdsVal)}`,
+  });
+
+  void markGeneratedPayrollOutdated({
+    companyId: me.company_id,
+    actorUserId: session.id,
+    kind: "salary_component",
+    employeeUserIds: [userId],
+    summary: "HR updated salary components after payroll generation",
   });
 
   return NextResponse.json({ ok: true, emailSent });

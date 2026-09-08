@@ -4,10 +4,11 @@ import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { HrmsShellPage } from "@/components/layout/HrmsShellPage";
 import { useHrmsSession } from "@/hooks/useHrmsSession";
-import { FormEvent, useEffect, useState, useRef, useMemo, Suspense } from "react";
+import { FormEvent, Fragment, useEffect, useState, useRef, useMemo, Suspense } from "react";
 import Image from "next/image";
 import { useToast } from "@/components/common/ToastProvider";
 import { SkeletonTable, SkeletonText } from "@/components/common/Skeleton";
+import { ConfirmDialog } from "@/components/common/ConfirmDialog";
 import { DatePickerField } from "@/components/ui/DatePickerField";
 import {
   computePayrollFromGross,
@@ -758,6 +759,19 @@ function PayrollPageContent() {
   const [runDay, setRunDay] = useState(() => String(new Date().getDate()));
   const [running, setRunning] = useState(false);
   const [runError, setRunError] = useState<string | null>(null);
+  const [recalcBusy, setRecalcBusy] = useState(false);
+  const [breakdownUserId, setBreakdownUserId] = useState<string | null>(null);
+  const [recalcConfirmOpen, setRecalcConfirmOpen] = useState(false);
+  const [recalcTargetIds, setRecalcTargetIds] = useState<string[]>([]);
+  const [recalcPreviewRows, setRecalcPreviewRows] = useState<
+    Array<{
+      employeeUserId: string;
+      employeeName: string | null;
+      old: { payDays: number; unpaidLeaveDays?: number; grossPay?: number; takeHome?: number };
+      next: { payDays: number; unpaidLeaveDays?: number; grossPay?: number; takeHome?: number } | null;
+      recalculationReason?: string | null;
+    }>
+  >([]);
   const [preview, setPreview] = useState<{
     periodName: string;
     periodStart: string;
@@ -807,6 +821,32 @@ function PayrollPageContent() {
       govRecalc?: GovRecalcPayload;
       error?: string;
       payslipPending?: boolean;
+      recalculationRequired?: boolean;
+      recalculationReason?: string | null;
+      sourceChangedAt?: string | null;
+      sourceChangeSummary?: string | null;
+      generatedAt?: string | null;
+      payableDaysBreakdown?: {
+        calendarDays?: number;
+        workingDays?: number;
+        weekendDays?: number;
+        holidayDays?: number;
+        presentDays?: number;
+        paidLeaveDays?: number;
+        unpaidLeaveDays?: number;
+        absentDays?: number;
+        payableDays?: number;
+        holidays?: { date: string; name: string; source: string }[];
+      } | null;
+      liveCalculation?: {
+        payDays?: number;
+        unpaidLeaveDays?: number;
+        grossPay?: number;
+        takeHome?: number;
+        payableDaysBreakdown?: Record<string, unknown> | null;
+      } | null;
+      canRecalculate?: boolean;
+      payrollLocked?: boolean;
     }[];
   } | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
@@ -848,6 +888,30 @@ function PayrollPageContent() {
       governmentMonthly?: unknown;
       govRecalc?: GovRecalcPayload;
       payslipPending?: boolean;
+      recalculationRequired?: boolean;
+      recalculationReason?: string | null;
+      sourceChangedAt?: string | null;
+      payableDaysBreakdown?: {
+        calendarDays?: number;
+        workingDays?: number;
+        weekendDays?: number;
+        holidayDays?: number;
+        presentDays?: number;
+        paidLeaveDays?: number;
+        unpaidLeaveDays?: number;
+        absentDays?: number;
+        payableDays?: number;
+        holidays?: { date: string; name: string; source: string }[];
+      } | null;
+      liveCalculation?: {
+        payDays?: number;
+        unpaidLeaveDays?: number;
+        grossPay?: number;
+        takeHome?: number;
+        payableDaysBreakdown?: Record<string, unknown> | null;
+      } | null;
+      canRecalculate?: boolean;
+      payrollLocked?: boolean;
     }[]
   >([]);
 
@@ -2244,6 +2308,64 @@ function PayrollPageContent() {
     const refreshRes = await fetch(`/api/payroll/run?year=${runYear}&month=${runMonth}&runDay=${runDay}`);
     const refreshData = await refreshRes.json();
     if (refreshRes.ok && refreshData.preview) setPreview(refreshData.preview);
+  }
+
+  async function handlePreviewRecalculation(employeeUserIds: string[]) {
+    if (!employeeUserIds.length) return;
+    setRecalcBusy(true);
+    setRunError(null);
+    try {
+      const res = await fetch("/api/payroll/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          year: parseInt(runYear, 10),
+          month: parseInt(runMonth, 10),
+          runDay: parseInt(runDay, 10),
+          action: "previewRecalculate",
+          employeeUserIds,
+          reason: "HR modified attendance/leave after payroll generation",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Preview failed");
+      setRecalcPreviewRows(Array.isArray(data.rows) ? data.rows : []);
+      setRecalcTargetIds(employeeUserIds);
+      setRecalcConfirmOpen(true);
+    } catch (e: any) {
+      setRunError(e?.message || "Preview failed");
+    } finally {
+      setRecalcBusy(false);
+    }
+  }
+
+  async function handleConfirmRecalculation(employeeUserIds: string[]) {
+    if (!employeeUserIds.length) return;
+    setRecalcBusy(true);
+    setRunError(null);
+    try {
+      const res = await fetch("/api/payroll/run", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          year: parseInt(runYear, 10),
+          month: parseInt(runMonth, 10),
+          runDay: parseInt(runDay, 10),
+          action: "confirmRecalculate",
+          employeeUserIds,
+          reason: "HR modified attendance/leave after payroll generation",
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Recalculation failed");
+      showToast("success", `Recalculated ${data.updated ?? employeeUserIds.length} employee(s).`);
+      await refreshRunPreview();
+    } catch (e: any) {
+      setRunError(e?.message || "Recalculation failed");
+    } finally {
+      setRecalcBusy(false);
+      setRecalcConfirmOpen(false);
+    }
   }
 
   async function handleRunPayroll(e: FormEvent) {
@@ -3744,7 +3866,7 @@ function PayrollPageContent() {
                   {preview.effectiveRunDay != null ? ` · Through selected run date: ${preview.effectiveRunDay}` : null}
                 </p>
               )}
-              {preview?.alreadyRun && (
+                  {preview?.alreadyRun && (
                 <div className="flex flex-wrap items-center gap-3">
                   <p className="text-sm text-amber-700">
                     Payroll already run for this period.
@@ -3786,6 +3908,62 @@ function PayrollPageContent() {
                   ) : null}
                 </div>
               )}
+              {preview?.alreadyRun && editableRows.some((r) => r.recalculationRequired) ? (
+                <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+                  <p className="font-medium">Recalculation required</p>
+                  <p>
+                    Payroll is outdated because attendance, leave, holiday or employee data changed after generation.
+                    Stored payable days are not current.
+                  </p>
+                  <button
+                    type="button"
+                    className="btn btn-primary mt-2 !py-1 !text-sm"
+                    disabled={recalcBusy}
+                    onClick={() => {
+                      void handlePreviewRecalculation(
+                        editableRows.filter((r) => r.recalculationRequired && r.canRecalculate !== false).map((r) => r.employeeUserId),
+                      );
+                    }}
+                  >
+                    Preview Recalculation
+                  </button>
+                </div>
+              ) : null}
+              <ConfirmDialog
+                open={recalcConfirmOpen}
+                title="Confirm payroll recalculation"
+                description={
+                  <div className="max-h-64 space-y-2 overflow-y-auto">
+                    <p>
+                      Stored payable days are snapshots. Confirming writes the live calculation to draft/generated
+                      payroll and keeps the previous values in audit history. Finalized or paid payroll is not overwritten.
+                    </p>
+                    {recalcPreviewRows.length ? (
+                      <ul className="space-y-1">
+                        {recalcPreviewRows.map((row) => (
+                          <li key={row.employeeUserId}>
+                            <span className="font-medium text-gray-800">{row.employeeName || row.employeeUserId}:</span>{" "}
+                            payable days {row.old.payDays}
+                            {row.next ? ` → ${row.next.payDays}` : ""}
+                            {row.old.takeHome != null && row.next?.takeHome != null
+                              ? ` · take-home ${row.old.takeHome.toLocaleString("en-IN")} → ${row.next.takeHome.toLocaleString("en-IN")}`
+                              : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p>No live-versus-stored preview is available for the selected employees.</p>
+                    )}
+                  </div>
+                }
+                confirmText="Confirm Recalculation"
+                loading={recalcBusy}
+                onClose={() => {
+                  setRecalcConfirmOpen(false);
+                  setRecalcPreviewRows([]);
+                }}
+                onConfirm={() => handleConfirmRecalculation(recalcTargetIds)}
+              />
               {previewLoading ? (
                 <div className="py-4">
                   <SkeletonTable rows={8} columns={8} />
@@ -3798,8 +3976,8 @@ function PayrollPageContent() {
                         ? "Saved payslips are read-only. Rows marked as pending will get payslips when you add missing payslips."
                         : "Payroll generated for this period. Values are read-only."
                       : previewAllGovernment
-                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Paid days = weekends + holidays + paid leave + weekday attendance (1 if gross ≥ 9h, 0.5 if > 4h and < 9h). Changing days recomputes Basic, DA, HRA, CPF, and totals."
-                        : "Edit values before generating. Changing pay days will recalculate gross, PF, ESIC and deductions. Default pay days = weekends + holidays + paid leave + weekday attendance (1 if gross ≥ 9h, 0.5 if > 4h and < 9h), minus unpaid leave. Salary = monthly amount × pay days ÷ days in month."}
+                        ? "Government payroll: preview matches the pay slip earnings and deduction columns. Payable days = calendar days through the run date minus unpaid leave/LOP. Changing days recomputes Basic, DA, HRA, CPF, and totals."
+                        : "Edit values before generating. Payable days = calendar days through the run date minus unpaid leave/LOP and unpaid absence. Paid leave and weekends/holidays do not reduce salary days. Salary = monthly amount × payable days ÷ days in month."}
                   </p>
                   {previewAllGovernment && preview?.daysInMonth ? (
                     <GovernmentRunPreviewTable
@@ -3830,7 +4008,7 @@ function PayrollPageContent() {
                               </th>
                             ) : null}
                             <th className="w-[100px] px-1.5 py-1">Employee</th>
-                            <th className="w-[72px] px-1 py-1">Days</th>
+                            <th className="w-[88px] px-1 py-1">Payable Days</th>
                             <th className="w-[60px] px-1 py-1">Gross</th>
                             <th
                               className="w-[60px] px-1 py-1"
@@ -3858,8 +4036,10 @@ function PayrollPageContent() {
                         <tbody>
                           {editableRows.map((r) => {
                             const readOnly = !!preview?.alreadyRun;
+                            const bd = (r.liveCalculation?.payableDaysBreakdown as typeof r.payableDaysBreakdown) || r.payableDaysBreakdown;
                             return (
-                              <tr key={r.employeeUserId} className="border-t border-slate-200">
+                              <Fragment key={r.employeeUserId}>
+                              <tr className="border-t border-slate-200">
                                 {role === "super_admin" && preview?.alreadyRun ? (
                                   <td className="px-1 py-1">
                                     <input
@@ -3888,12 +4068,25 @@ function PayrollPageContent() {
                                       Pending slip
                                     </span>
                                   ) : null}
+                                  {r.recalculationRequired ? (
+                                    <span
+                                      className="ml-1 inline-block align-middle rounded bg-amber-200 px-1 py-0 text-[10px] font-medium text-amber-950"
+                                      title={r.recalculationReason || undefined}
+                                    >
+                                      Recalculation required
+                                    </span>
+                                  ) : null}
                                 </td>
                                 <td className="px-1 py-1">
                                   {readOnly ? (
                                     <span className="py-0.5">
                                       {r.payDays}
-                                      {r.unpaidLeaveDays > 0 ? ` (-${r.unpaidLeaveDays})` : ""}
+                                      {r.unpaidLeaveDays > 0 ? ` (-${r.unpaidLeaveDays} LOP)` : ""}
+                                      {r.liveCalculation && r.liveCalculation.payDays !== r.payDays ? (
+                                        <span className="ml-1 text-[10px] text-amber-800">
+                                          live {r.liveCalculation.payDays}
+                                        </span>
+                                      ) : null}
                                     </span>
                                   ) : (
                                     <>
@@ -3918,6 +4111,15 @@ function PayrollPageContent() {
                                       {r.payDaysSuppressedMinAttendance ? null : null}
                                     </>
                                   )}
+                                  <button
+                                    type="button"
+                                    className="mt-0.5 block text-[10px] text-sky-700 underline"
+                                    onClick={() =>
+                                      setBreakdownUserId((id) => (id === r.employeeUserId ? null : r.employeeUserId))
+                                    }
+                                  >
+                                    {breakdownUserId === r.employeeUserId ? "Hide breakdown" : "Breakdown"}
+                                  </button>
                                 </td>
                                 <td className="px-1 py-1">
                                   {readOnly ? (
@@ -4115,6 +4317,56 @@ function PayrollPageContent() {
                                   )}
                                 </td>
                               </tr>
+                              {breakdownUserId === r.employeeUserId ? (
+                                <tr className="border-t border-slate-100 bg-slate-50">
+                                  <td
+                                    colSpan={role === "super_admin" && preview?.alreadyRun ? 16 : 15}
+                                    className="px-2 py-2 text-[11px] text-slate-700"
+                                  >
+                                    <p className="font-medium text-slate-900">Payable days breakdown</p>
+                                    {r.recalculationRequired ? (
+                                      <p className="text-amber-800">
+                                        {r.recalculationReason || "HR modified attendance/leave after payroll generation."}
+                                        {r.sourceChangedAt
+                                          ? ` Source last changed ${new Date(r.sourceChangedAt).toLocaleString("en-IN")}.`
+                                          : ""}
+                                      </p>
+                                    ) : null}
+                                    {bd ? (
+                                      <p>
+                                        Calendar {bd.calendarDays} · Working {bd.workingDays} · Present {bd.presentDays} · Paid leave{" "}
+                                        {bd.paidLeaveDays} · Unpaid/LOP {bd.unpaidLeaveDays} · Absent {bd.absentDays} · Payable{" "}
+                                        {bd.payableDays}
+                                        {typeof bd.weekendDays === "number" ? ` · Weekends ${bd.weekendDays}` : ""}
+                                        {typeof bd.holidayDays === "number" ? ` · Holidays ${bd.holidayDays}` : ""}
+                                      </p>
+                                    ) : (
+                                      <p>Breakdown will be stored on the next generate or recalculation.</p>
+                                    )}
+                                    {r.liveCalculation && r.liveCalculation.payDays !== r.payDays ? (
+                                      <p>
+                                        Stored payable days {r.payDays} → live {r.liveCalculation.payDays}
+                                        {r.canRecalculate === false
+                                          ? " (finalized/paid — cannot overwrite)"
+                                          : ""}
+                                      </p>
+                                    ) : null}
+                                    {readOnly && r.recalculationRequired && r.canRecalculate !== false ? (
+                                      <button
+                                        type="button"
+                                        className="btn btn-outline mt-1 !py-0.5 !text-[11px]"
+                                        disabled={recalcBusy}
+                                        onClick={() => {
+                                          void handlePreviewRecalculation([r.employeeUserId]);
+                                        }}
+                                      >
+                                        Preview Recalculation
+                                      </button>
+                                    ) : null}
+                                  </td>
+                                </tr>
+                              ) : null}
+                              </Fragment>
                             );
                           })}
                         </tbody>

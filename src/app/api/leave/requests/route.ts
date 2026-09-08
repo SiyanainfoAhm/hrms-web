@@ -17,6 +17,7 @@ import {
   removeOfficeLeaveAttendance,
   syncOfficeLeaveToAttendance,
 } from "@/lib/officeLeaveAttendance";
+import { markGeneratedPayrollOutdated } from "@/lib/payrollStaleMark";
 
 function isApprover(role: string): boolean {
   return role === "super_admin" || role === "admin" || role === "hr";
@@ -390,6 +391,18 @@ export async function POST(request: NextRequest) {
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
 
+  void markGeneratedPayrollOutdated({
+    companyId: me.company_id,
+    actorUserId: session.id,
+    kind: "leave",
+    employeeUserIds: [String(targetEmployeeUserId)],
+    dateStartYmd: startDate,
+    dateEndYmd: endDate,
+    summary: autoApprove
+      ? "HR created and approved leave after payroll generation"
+      : "Leave request created after payroll generation",
+  });
+
   // Email notifications via Power Automate (best-effort; do not block leave creation).
   try {
     await notifyLeaveRequestCreated(String((data as any).id));
@@ -626,6 +639,19 @@ export async function PATCH(request: NextRequest) {
       );
     }
   }
+
+  void markGeneratedPayrollOutdated({
+    companyId: me.company_id,
+    actorUserId: session.id,
+    kind: "leave",
+    employeeUserIds: existing.employee_user_id ? [String(existing.employee_user_id)] : [],
+    dateStartYmd: String(existing.start_date).slice(0, 10),
+    dateEndYmd: String(existing.end_date).slice(0, 10),
+    summary:
+      action === "approve"
+        ? "HR approved leave after payroll generation"
+        : "HR rejected leave after payroll generation",
+  });
 
   return NextResponse.json({ request: data });
 }

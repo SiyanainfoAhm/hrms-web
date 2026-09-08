@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { supabase } from "@/lib/supabaseClient";
+import { markGeneratedPayrollOutdated } from "@/lib/payrollStaleMark";
 
 /** Only Super Admin may create/update/delete company holidays. */
 function canManageHolidays(role: string): boolean {
@@ -135,6 +136,16 @@ export async function POST(request: NextRequest) {
     .select("*")
     .single();
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+
+  void markGeneratedPayrollOutdated({
+    companyId: me.company_id,
+    actorUserId: session.id,
+    kind: "holiday",
+    dateStartYmd: holidayDate,
+    dateEndYmd: holidayEndDate || holidayDate,
+    holidayDivisionId: divisionId === undefined ? null : divisionId,
+    summary: "HR added a holiday after payroll generation",
+  });
 
   return NextResponse.json({ holiday: data });
 }

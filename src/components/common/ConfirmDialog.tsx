@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Dialog, DialogPanel, DialogTitle } from "@headlessui/react";
 import { cn } from "../../lib/cn";
 
@@ -16,7 +17,7 @@ export function ConfirmDialog({
 }: {
   open: boolean;
   title: string;
-  description?: string;
+  description?: ReactNode;
   confirmText?: string;
   cancelText?: string;
   danger?: boolean;
@@ -28,11 +29,17 @@ export function ConfirmDialog({
     <Dialog open={open} onClose={onClose} className="relative z-50">
       <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" aria-hidden="true" />
       <div className="fixed inset-0 flex items-center justify-center p-4">
-        <DialogPanel className="w-full max-w-md bg-white rounded-xl shadow-lg border border-gray-100 p-6 animate-fade-in">
+        <DialogPanel className="w-full max-w-lg bg-white rounded-xl shadow-lg border border-gray-100 p-6 animate-fade-in">
           <DialogTitle as="h3" className="text-lg font-semibold text-gray-900">
             {title}
           </DialogTitle>
-          {description && <p className="mt-2 text-sm text-gray-600">{description}</p>}
+          {description ? (
+            typeof description === "string" ? (
+              <p className="mt-2 text-sm text-gray-600">{description}</p>
+            ) : (
+              <div className="mt-2 text-sm text-gray-600">{description}</div>
+            )
+          ) : null}
           <div className="mt-6 flex justify-end gap-2">
             <button
               type="button"

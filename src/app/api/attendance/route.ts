@@ -10,6 +10,7 @@ import {
 } from "@/lib/halfDayLeaveAttendance";
 import { canUserMarkAttendance } from "@/lib/attendanceEmployee";
 import { autoCloseForgottenPunchOuts } from "@/lib/attendanceAutoPunchOut";
+import { markGeneratedPayrollOutdated } from "@/lib/payrollStaleMark";
 import { computeWorkDateForNow, getAttendanceContextForUser } from "@/lib/attendanceTimeZone";
 
 async function workDateForUser(args: { companyId: string; attendanceEmployeeId: string }): Promise<{
@@ -411,6 +412,15 @@ export async function POST(request: NextRequest) {
       status: "ACTIVE",
       updatedAtIso: nowIso,
     });
+    void markGeneratedPayrollOutdated({
+      companyId: meCompanyId,
+      actorUserId: session.id,
+      kind: "attendance",
+      employeeUserIds: [session.id],
+      dateStartYmd: wd,
+      dateEndYmd: wd,
+      summary: "Attendance changed after payroll generation",
+    });
     return NextResponse.json({ ok: true, log: inserted, warning: warn });
   }
 
@@ -549,6 +559,16 @@ export async function POST(request: NextRequest) {
     employeeId: attendanceEmployeeId,
     attendanceLogId: finalAttendanceLogId,
     endedAtIso: nowIso,
+  });
+
+  void markGeneratedPayrollOutdated({
+    companyId: meCompanyId,
+    actorUserId: session.id,
+    kind: "attendance",
+    employeeUserIds: [session.id],
+    dateStartYmd: wd,
+    dateEndYmd: wd,
+    summary: "Attendance changed after payroll generation",
   });
 
   return NextResponse.json({ ok: true, log: updated, warning: warnOut });

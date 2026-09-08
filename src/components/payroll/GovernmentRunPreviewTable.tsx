@@ -217,7 +217,7 @@ export function GovernmentRunPreviewTable({
                 </th>
               ) : null}
               <th className={`${th} w-[140px]`}>Employee</th>
-              <th className={`${th} w-[88px]`}>Days</th>
+              <th className={`${th} w-[88px]`}>Payable Days</th>
               <th className={`${th} w-[100px]`}>Gr. basic</th>
               <th className={th}>Earnings row / Deductions row</th>
               <th className={`${th} w-[88px] text-right`}>Σ Earn</th>
