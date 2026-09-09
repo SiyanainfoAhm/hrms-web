@@ -2,9 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   agentRules: false,
-  devIndicators: {
-    buildActivity: false,
-  },
+  // Next.js 16 removed buildActivity; false hides the on-screen route indicator.
+  devIndicators: false,
   images: {
     remotePatterns: [
       {
@@ -17,4 +16,3 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
-
