@@ -29,6 +29,8 @@ export type PrivatePayrollConfig = {
    * as long as the user explicitly marks ESIC eligible (manual override).
    */
   esicApplyAboveCeilingWhenEligible?: boolean;
+  /** Employer ESIC derives from the rounded employee ESIC amount. */
+  esicEmployerFromEmployeeEsic?: boolean;
   ptMonthlyDefault: number;
   ptMode?: "fixed" | "slab";
   ptSlabs?: PrivatePayrollPtSlab[];
@@ -40,6 +42,8 @@ export type PrivatePayrollConfig = {
   basicDaFloorWhenHalfGrossLow: number;
   /** Advance bonus column (stored as `medical`): ROUND(Basic+DA × rate). Default 8.33%. */
   advanceBonusRateOnBasic: number;
+  /** Salary-master components are rounded to whole rupees before balancing. */
+  roundMasterComponents?: boolean;
   /**
    * Private payslip earnings layout (labels/visible heads).
    * Stored in company payroll config so new periods can adopt a new format without changing old payslips.
@@ -58,6 +62,7 @@ export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
   esicWageCeilingInclusive: 21000,
   // Excel/statutory behaviour: ESIC applies only when Basic+DA is within ceiling (≤ 21,000).
   esicApplyAboveCeilingWhenEligible: false,
+  esicEmployerFromEmployeeEsic: false,
   ptMonthlyDefault: 200,
   // Default to slabs (matches common PT practice and PowerApps logic used in this project).
   ptMode: "slab",
@@ -80,6 +85,9 @@ export const DEFAULT_PRIVATE_PAYROLL_CONFIG: PrivatePayrollConfig = {
   hraZeroWhenPotentialHraBelow: 6000,
   basicDaFloorWhenHalfGrossLow: 14290,
   advanceBonusRateOnBasic: 0.0833,
+  // Payroll Master earnings are whole-rupee values for every policy version.
+  // Existing generated payslips remain stored snapshots and are untouched.
+  roundMasterComponents: true,
   payslipEarningsMode: "classic",
   payslipEarningsEffectiveFromYm: "",
 };
@@ -202,6 +210,10 @@ export function normalizePrivatePayrollConfig(raw: unknown): PrivatePayrollConfi
       typeof r.esicApplyAboveCeilingWhenEligible === "boolean"
         ? r.esicApplyAboveCeilingWhenEligible
         : DEFAULT_PRIVATE_PAYROLL_CONFIG.esicApplyAboveCeilingWhenEligible,
+    esicEmployerFromEmployeeEsic:
+      typeof r.esicEmployerFromEmployeeEsic === "boolean"
+        ? r.esicEmployerFromEmployeeEsic
+        : DEFAULT_PRIVATE_PAYROLL_CONFIG.esicEmployerFromEmployeeEsic,
     ptMonthlyDefault: Math.max(0, n(r.ptMonthlyDefault) ?? DEFAULT_PRIVATE_PAYROLL_CONFIG.ptMonthlyDefault),
     ptMode,
     ptSlabs: ptSlabs.length ? ptSlabs : DEFAULT_PRIVATE_PAYROLL_CONFIG.ptSlabs,
@@ -210,6 +222,9 @@ export function normalizePrivatePayrollConfig(raw: unknown): PrivatePayrollConfi
     hraZeroWhenPotentialHraBelow,
     basicDaFloorWhenHalfGrossLow,
     advanceBonusRateOnBasic,
+    // Whole rupees are the Payroll Master convention for every effective
+    // policy. This does not recalculate stored payroll/payslip snapshots.
+    roundMasterComponents: true,
     payslipEarningsMode,
     payslipEarningsEffectiveFromYm,
   };

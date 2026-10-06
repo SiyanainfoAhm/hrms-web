@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "npx --yes tsx --test src/lib/payrollPayableDays.test.ts src/lib/payrollStaleDetection.test.ts src/lib/officeLeaveAttendance.test.ts src/lib/leavePolicyEffective.test.ts src/lib/attendanceActivityAggregate.test.ts",
+    "test": "npx --yes tsx --test src/lib/payrollPayableDays.test.ts src/lib/payrollStaleDetection.test.ts src/lib/officeLeaveAttendance.test.ts src/lib/leavePolicyEffective.test.ts src/lib/attendanceActivityAggregate.test.ts src/lib/privatePayrollPolicy.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

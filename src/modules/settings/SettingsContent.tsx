@@ -1603,17 +1603,17 @@ export function SettingsContent() {
                   </div>
 
                   <div className="rounded-lg border border-slate-200 bg-slate-50 p-4">
-                    <h3 className="text-sm font-semibold text-slate-900">Default salary breakup (%)</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">Salary breakup policy — effective from 01 September 2026</h3>
                     <p className="mt-1 text-xs text-slate-500">Used when the employee doesn’t override component amounts.</p>
                     <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
                       {(
                         [
-                          ["basicPct", "Basic"],
-                          ["hraPct", "HRA"],
-                          ["medicalPct", "Medical"],
-                          ["transPct", "Trans"],
-                          ["ltaPct", "LTA"],
-                          ["personalPct", "Personal"],
+                          ["basicPct", "Basic + DA"],
+                          ["hraPct", "Legacy HRA (unused)"],
+                          ["medicalPct", "Legacy Medical (unused)"],
+                          ["transPct", "Legacy Transport (unused)"],
+                          ["ltaPct", "Legacy LTA (unused)"],
+                          ["personalPct", "Special Allowance (remainder)"],
                         ] as const
                       ).map(([k, label]) => (
                         <label key={k} className="text-sm">

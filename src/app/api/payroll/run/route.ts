@@ -52,6 +52,7 @@ import {
   netPayBeforeVariableLines,
 } from "@/lib/payrollCalc";
 import { computeProfessionalTaxMonthly, normalizePrivatePayrollConfig, type PrivatePayrollConfig } from "@/lib/payrollConfig";
+import { applicablePrivatePayrollPolicy } from "@/lib/privatePayrollPolicy";
 import * as XLSX from "xlsx-js-style";
 
 function ymd(v: string): string {
@@ -76,14 +77,18 @@ function resolvePrivatePayrollMasterProfTax(
   return Number.isFinite(masterPt) && masterPt >= 0 ? masterPt : fromConfig;
 }
 
-async function fetchCompanyPrivatePayrollConfig(companyId: string): Promise<PrivatePayrollConfig> {
+async function fetchCompanyPrivatePayrollConfig(companyId: string, payrollMonth: string): Promise<PrivatePayrollConfig> {
   try {
     const { data: cfgRow } = await supabase
       .from("HRMS_company_payroll_config")
       .select("private_config")
       .eq("company_id", companyId)
       .maybeSingle();
-    return normalizePrivatePayrollConfig((cfgRow as any)?.private_config);
+    const { data: policies } = await supabase
+      .from("HRMS_private_payroll_policy_versions")
+      .select("effective_from, effective_to, private_config")
+      .eq("company_id", companyId);
+    return applicablePrivatePayrollPolicy(payrollMonth, policies as any, (cfgRow as any)?.private_config);
   } catch {
     return normalizePrivatePayrollConfig(null);
   }
@@ -165,11 +170,21 @@ function privateStatutoryMonthlyFromMaster(
       : ctcMonthly > 0
         ? computePayrollFromCtc(ctcMonthly, pfOk, esicOk, profTaxMonthlyRounded, salaryBreakup, privateCfg)
         : computePayrollFromGross(0, pfOk, esicOk, profTaxMonthlyRounded, salaryBreakup, privateCfg);
+  // Payroll Master is the effective-dated statutory snapshot.  A September
+  // run must use the PF/ESIC amounts saved on the master revision applicable
+  // to September, rather than recalculating them using a later policy (e.g.
+  // an October PF cap). Legacy rows without stored statutory amounts fall
+  // back to the authoritative calculator.
+  const storedAmount = (value: unknown, fallback: number): number => {
+    if (value == null || value === "") return fallback;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : fallback;
+  };
   return {
-    pfEmp: calc.pfEmp,
-    pfEmpr: calc.pfEmpr,
-    esicEmp: calc.esicEmp,
-    esicEmpr: calc.esicEmpr,
+    pfEmp: storedAmount(m.pf_employee, calc.pfEmp),
+    pfEmpr: storedAmount(m.pf_employer, calc.pfEmpr),
+    esicEmp: storedAmount(m.esic_employee, calc.esicEmp),
+    esicEmpr: storedAmount(m.esic_employer, calc.esicEmpr),
     ctc: ctcMonthly > 0 ? Math.round(ctcMonthly) : calc.ctc,
   };
 }
@@ -191,7 +206,7 @@ async function fetchApplicablePayrollMasters(companyId: string, periodStart: str
   const { data, error } = await supabase
     .from("HRMS_payroll_master")
     .select(
-      "id, employee_user_id, payroll_mode, gross_salary, gross_basic, ctc, pf_employee, pf_employer, esic_employee, esic_employer, pf_eligible, esic_eligible, basic, hra, medical, trans, lta, personal, pt, tds, advance_bonus, da_percent, hra_percent, medical_fixed, transport_da_percent, income_tax_default, pt_default, lic_default, cpf_default, da_cpf_default, vpf_default, pf_loan_default, post_office_default, credit_society_default, std_licence_fee_default, electricity_default, water_default, mess_default, horticulture_default, welfare_default, veh_charge_default, other_deduction_default, effective_start_date, effective_end_date",
+      "id, employee_user_id, payroll_mode, gross_salary, gross_basic, ctc, pf_employee, pf_employer, esic_employee, esic_employer, pf_eligible, esic_eligible, basic, hra, medical, trans, lta, personal, pt, tds, advance_bonus, da_percent, hra_percent, medical_fixed, transport_da_percent, income_tax_default, pt_default, lic_default, cpf_default, da_cpf_default, vpf_default, pf_loan_default, post_office_default, credit_society_default, std_licence_fee_default, electricity_default, water_default, mess_default, horticulture_default, welfare_default, veh_charge_default, other_deduction_default, effective_start_date, effective_end_date, created_at",
     )
     .eq("company_id", companyId)
     // At least not ended before the period starts (or open-ended).
@@ -215,7 +230,11 @@ async function fetchApplicablePayrollMasters(companyId: string, periodStart: str
     const prev = byUser.get(uid);
     const curStart = ymd(r.effective_start_date || "0000-01-01");
     const prevStart = prev ? ymd(prev.effective_start_date || "0000-01-01") : "";
-    if (!prev || curStart > prevStart) byUser.set(uid, r);
+    // Same-start rows are a legacy/data-race edge case. Choose the latest
+    // saved revision deterministically, matching the Payroll Master screen.
+    const curCreated = String(r.created_at ?? "");
+    const prevCreated = String(prev?.created_at ?? "");
+    if (!prev || curStart > prevStart || (curStart === prevStart && curCreated > prevCreated)) byUser.set(uid, r);
   }
   return [...byUser.values()];
 }
@@ -769,7 +788,7 @@ async function computeFreshPayrollPreviewFromMasters(
     .eq("id", companyId)
     .single();
   const ptFixed = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
-  const privateCfg = await fetchCompanyPrivatePayrollConfig(companyId);
+  const privateCfg = await fetchCompanyPrivatePayrollConfig(companyId, periodStart);
 
   // Use month end for applicability (master effective dates are monthly, not "through run day").
   const masters = await fetchApplicablePayrollMasters(companyId, periodStart, monthEnd);
@@ -1049,10 +1068,10 @@ function governmentMonthlyFromDbRow(g: any | undefined | null) {
 }
 
 const PAYSLIP_SELECT_WITH_RECALC =
-  "employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode, generated_at, payable_days_breakdown, recalculation_required, recalculation_reason, source_changed_at, source_change_summary, last_recalculated_at, payroll_status";
+  "employee_user_id, pay_days, gross_pay, net_pay, basic, hra, medical, trans, lta, personal, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode, generated_at, payable_days_breakdown, recalculation_required, recalculation_reason, source_changed_at, source_change_summary, last_recalculated_at, payroll_status";
 
 const PAYSLIP_SELECT_LEGACY =
-  "employee_user_id, pay_days, gross_pay, net_pay, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode, generated_at";
+  "employee_user_id, pay_days, gross_pay, net_pay, basic, hra, medical, trans, lta, personal, pf_employee, pf_employer, esic_employee, esic_employer, professional_tax, incentive, pr_bonus, reimbursement, tds, deductions, ctc, payroll_mode, generated_at";
 
 async function loadPayslipsForPeriod(companyId: string, periodId: string): Promise<any[]> {
   const full = await supabase
@@ -1103,6 +1122,12 @@ function mapSavedPayslipToPreviewRow(p: any, u: any | undefined, gov: any | unde
     lastRecalculatedAt: p.last_recalculated_at ?? null,
     payrollStatus: p.payroll_status ?? "generated",
     grossPay: Math.round(Number(p.gross_pay) ?? 0),
+    basicPay: Math.round(Number(p.basic) ?? 0),
+    hraPay: Math.round(Number(p.hra) ?? 0),
+    medicalPay: Math.round(Number(p.medical) ?? 0),
+    transPay: Math.round(Number(p.trans) ?? 0),
+    ltaPay: Math.round(Number(p.lta) ?? 0),
+    personalPay: Math.round(Number(p.personal) ?? 0),
     grossMonthly: undefined as number | undefined,
     pfEmployee: Math.round(Number(p.pf_employee) ?? 0),
     pfEmployer: Math.round(Number(p.pf_employer) ?? 0),
@@ -1281,15 +1306,30 @@ async function computePreview(
             esicEmployer: fr.esicEmployer,
             profTax: fr.profTax,
             ctc: fr.ctc,
+            basicPay: fr.basicPay,
+            hraPay: fr.hraPay,
+            medicalPay: fr.medicalPay,
+            transPay: fr.transPay,
+            ltaPay: fr.ltaPay,
+            personalPay: fr.personalPay,
           },
-          recalculationRequired: Boolean(stored.recalculationRequired) || stale.stale,
+          recalculationRequired:
+            Boolean(stored.recalculationRequired) ||
+            stale.stale ||
+            ["basicPay", "hraPay", "medicalPay", "transPay", "ltaPay", "personalPay"].some(
+              (key) => Number((stored as any)[key]) !== Number((fr as any)[key]),
+            ),
           recalculationReason:
             stored.recalculationReason ||
             (stale.reason === "source"
               ? RECALC_REASON_HR_SOURCE_CHANGE
               : stale.reason === "formula"
                 ? "Payable days changed because attendance, leave, holiday or employee data no longer matches the generated snapshot."
-                : null),
+                : ["basicPay", "hraPay", "medicalPay", "transPay", "ltaPay", "personalPay"].some(
+                      (key) => Number((stored as any)[key]) !== Number((fr as any)[key]),
+                    )
+                  ? "Payroll Master salary breakup changed after generation."
+                  : null),
           payrollLocked: isFinalizedOrPaid(lifecycle),
           canRecalculate: canOverwritePayroll(lifecycle),
           requiresRecalcReason: requiresRecalcReason(lifecycle),
@@ -1578,6 +1618,12 @@ export async function POST(request: NextRequest) {
           esic_employer: live.esicEmployer,
           professional_tax: live.profTax,
           ctc: live.ctc,
+          basic: live.basicPay,
+          hra: live.hraPay,
+          medical: live.medicalPay,
+          trans: live.transPay,
+          lta: live.ltaPay,
+          personal: live.personalPay,
           payable_days_breakdown: live.payableDaysBreakdown,
           recalculation_required: false,
           recalculation_reason: null,
@@ -1653,7 +1699,7 @@ export async function POST(request: NextRequest) {
       .eq("id", me.company_id)
       .single();
     const ptFixedCm = companyCm?.professional_tax_monthly != null ? Number(companyCm.professional_tax_monthly) : 200;
-    const privateCfgCm = await fetchCompanyPrivatePayrollConfig(me.company_id);
+    const privateCfgCm = await fetchCompanyPrivatePayrollConfig(me.company_id, periodStart);
 
     const monthEndCm = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
     const mastersCm = await fetchApplicablePayrollMasters(me.company_id, periodStart, monthEndCm);
@@ -2015,7 +2061,7 @@ export async function POST(request: NextRequest) {
     .eq("id", me.company_id)
     .single();
   const ptFixed = company?.professional_tax_monthly != null ? Number(company.professional_tax_monthly) : 200;
-  const privateCfgRun = await fetchCompanyPrivatePayrollConfig(me.company_id);
+  const privateCfgRun = await fetchCompanyPrivatePayrollConfig(me.company_id, periodStart);
 
   const monthEnd = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
   const masters = await fetchApplicablePayrollMasters(me.company_id, periodStart, monthEnd);
