@@ -7,6 +7,7 @@ export type AuthProvider = "password" | "google";
 export type User = {
   id: string;
   email: string;
+  companyId: string | null;
   passwordHash: string | null;
   name: string | null;
   role: UserRole;
@@ -45,6 +46,7 @@ function mapDbRowToUser(row: any): User {
   return {
     id: row.id,
     email: row.email,
+    companyId: row.company_id ?? null,
     passwordHash: row.password_hash ?? null,
     name: row.name ?? null,
     role: row.role as UserRole,

@@ -31,7 +31,15 @@ export async function POST(request: NextRequest) {
       sv: user.authSessionVersion,
     };
     const cookie = createSessionCookie(session);
-    const res = NextResponse.json({ user: session });
+    const isDesktopAgent = request.headers.get("x-hrms-agent-client") === "desktop";
+    // The desktop agent cannot read this HttpOnly browser cookie. Only its
+    // native login request receives the signed, session-versioned value used
+    // to authenticate agent heartbeats; normal browser logins never expose it.
+    const res = NextResponse.json(
+      isDesktopAgent
+        ? { user: { ...session, companyId: user.companyId }, agentToken: cookie }
+        : { user: session },
+    );
     res.cookies.set(COOKIE_NAME, cookie, getCookieOptions());
     return res;
   } catch (e) {

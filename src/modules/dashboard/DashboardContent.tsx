@@ -241,7 +241,9 @@ export function DashboardContent() {
     }
     const last = (data as any)?.heartbeat?.lastSeenAt ? String((data as any).heartbeat.lastSeenAt) : null;
     const lastMs = last ? new Date(last).getTime() : NaN;
-    const connected = Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000;
+    const connected = typeof (data as any)?.heartbeat?.connected === "boolean"
+      ? (data as any).heartbeat.connected
+      : Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000;
     setAgent({
       connected,
       lastSeenAt: last,
@@ -399,7 +401,9 @@ export function DashboardContent() {
           const d = await hbRes.json().catch(() => ({}));
           const last = (d as any)?.heartbeat?.lastSeenAt ? String((d as any).heartbeat.lastSeenAt) : null;
           const lastMs = last ? new Date(last).getTime() : NaN;
-          const connected = Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000;
+          const connected = typeof (d as any)?.heartbeat?.connected === "boolean"
+            ? (d as any).heartbeat.connected
+            : Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000;
           setAgent({
             connected,
             lastSeenAt: last,

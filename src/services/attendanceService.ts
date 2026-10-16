@@ -157,7 +157,9 @@ export async function getAgentHeartbeat(): Promise<AgentHeartbeatStatus | null> 
   const last = hb.lastSeenAt != null ? String(hb.lastSeenAt) : null;
   const lastMs = last ? new Date(last).getTime() : NaN;
   return {
-    connected: Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000,
+    connected: typeof hb.connected === "boolean"
+      ? hb.connected
+      : Number.isFinite(lastMs) && Date.now() - lastMs <= 60_000,
     lastSeenAt: last,
     appVersion: hb.appVersion != null ? String(hb.appVersion) : null,
     deviceName: hb.deviceName != null ? String(hb.deviceName) : null,
