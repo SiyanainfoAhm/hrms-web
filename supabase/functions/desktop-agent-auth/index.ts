@@ -17,7 +17,14 @@ type HeartbeatBody = {
   appVersion?: string | null;
 };
 
-type RequestBody = LoginBody | HeartbeatBody;
+type ActivityBody = {
+  action: "activity";
+  token?: string;
+  activeSeconds?: number;
+  idleSeconds?: number;
+};
+
+type RequestBody = LoginBody | HeartbeatBody | ActivityBody;
 
 const JSON_HEADERS = {
   "Content-Type": "application/json",
@@ -35,6 +42,10 @@ function json(body: unknown, status = 200) {
 
 function text(value: unknown, limit: number) {
   return typeof value === "string" && value.trim() ? value.trim().slice(0, limit) : null;
+}
+
+function seconds(value: unknown) {
+  return Math.max(0, Math.min(120, Math.floor(Number(value) || 0)));
 }
 
 function base64UrlEncode(value: string) {
@@ -195,6 +206,86 @@ Deno.serve(async (request) => {
       if (heartbeatError) throw heartbeatError;
 
       return json({ ok: true, companyId: String(claims.companyId), employeeId: String(claims.employeeId) });
+    }
+
+    if (body.action === "activity") {
+      const token = text(body.token, 2048);
+      if (!token) return json({ error: "Desktop session is required." }, 401);
+
+      const claims = await readToken(token);
+      if (!claims || Number(claims.exp) <= Date.now()) {
+        return json({ error: "Desktop session expired. Sign in again." }, 401);
+      }
+
+      const { data: currentUser, error: currentUserError } = await supabase
+        .from("HRMS_users")
+        .select("company_id, employment_status, auth_session_version")
+        .eq("id", String(claims.userId ?? ""))
+        .maybeSingle();
+      if (currentUserError) throw currentUserError;
+      if (
+        !currentUser ||
+        (currentUser as any).employment_status !== "current" ||
+        String((currentUser as any).company_id) !== String(claims.companyId) ||
+        Number((currentUser as any).auth_session_version ?? 0) !== Number(claims.sessionVersion)
+      ) {
+        return json({ error: "Desktop session expired. Sign in again." }, 401);
+      }
+
+      const { data: log, error: logError } = await supabase
+        .from("HRMS_attendance_logs")
+        .select("id, lunch_break_started_at, tea_break_started_at")
+        .eq("company_id", String(claims.companyId))
+        .eq("employee_id", String(claims.employeeId))
+        .is("check_out_at", null)
+        .order("check_in_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (logError) throw logError;
+      if (!log || (log as any).lunch_break_started_at || (log as any).tea_break_started_at) {
+        return json({ ok: true, tracking: false });
+      }
+
+      const activeSeconds = seconds(body.activeSeconds);
+      const idleSeconds = seconds(body.idleSeconds);
+      if (activeSeconds + idleSeconds > 120) return json({ error: "Invalid activity duration." }, 400);
+
+      const { data: existing, error: existingError } = await supabase
+        .from("HRMS_activity_sessions")
+        .select("id, active_seconds, idle_seconds")
+        .eq("attendance_log_id", (log as any).id)
+        .is("ended_at", null)
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (existingError) throw existingError;
+
+      const now = new Date().toISOString();
+      if (!existing) {
+        const { error: insertError } = await supabase.from("HRMS_activity_sessions").insert({
+          company_id: String(claims.companyId),
+          employee_id: String(claims.employeeId),
+          attendance_log_id: (log as any).id,
+          started_at: now,
+          active_seconds: activeSeconds,
+          idle_seconds: idleSeconds,
+          last_heartbeat_at: now,
+          source: "desktop_agent",
+        });
+        if (insertError) throw insertError;
+      } else {
+        const { error: updateError } = await supabase
+          .from("HRMS_activity_sessions")
+          .update({
+            active_seconds: Math.max(0, Number((existing as any).active_seconds) || 0) + activeSeconds,
+            idle_seconds: Math.max(0, Number((existing as any).idle_seconds) || 0) + idleSeconds,
+            last_heartbeat_at: now,
+          })
+          .eq("id", (existing as any).id);
+        if (updateError) throw updateError;
+      }
+
+      return json({ ok: true, tracking: true });
     }
 
     return json({ error: "Unknown action." }, 400);
