@@ -1,5 +1,4 @@
 import bcrypt from "bcryptjs";
-import { supabase } from "@/lib/supabaseClient";
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export type UserRole = "super_admin" | "admin" | "hr" | "manager" | "employee";
@@ -58,7 +57,10 @@ function mapDbRowToUser(row: any): User {
 
 export async function findUserByEmail(email: string): Promise<User | null> {
   const normalized = email.trim().toLowerCase();
-  const { data, error } = await supabase
+  // This runs before our application session cookie exists. Querying through the
+  // anon client would therefore be blocked by RLS (and must not be fixed by
+  // granting anonymous users access to password hashes).
+  const { data, error } = await supabaseAdmin
     .from("HRMS_users")
     .select("*")
     .eq("email", normalized)
@@ -71,7 +73,7 @@ export async function findUserByEmail(email: string): Promise<User | null> {
 }
 
 export async function findUserById(id: string): Promise<User | null> {
-  const { data, error } = await supabase
+  const { data, error } = await supabaseAdmin
     .from("HRMS_users")
     .select("*")
     .eq("id", id)
@@ -113,7 +115,7 @@ export async function createUser(data: {
     employment_status: employmentStatus,
   };
 
-  const { data: inserted, error } = await supabase
+  const { data: inserted, error } = await supabaseAdmin
     .from("HRMS_users")
     .insert([insertPayload])
     .select("*")
@@ -153,7 +155,7 @@ export async function changePasswordForUser(
   if (!ok) throw new Error("Current password is incorrect");
   const password_hash = await bcrypt.hash(trimmedNew, 10);
   const nextSv = user.authSessionVersion + 1;
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from("HRMS_users")
     .update({
       password_hash,

@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { COOKIE_NAME, createSessionCookie, getCookieOptions, type SessionUser } from "@/lib/auth";
 import { getValidatedSession } from "@/lib/authValidate";
 import { changePasswordForUser } from "@/lib/users";
-import { supabase } from "@/lib/supabaseClient";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
 
 export async function POST(request: NextRequest) {
   const cookieStore = await cookies();
@@ -11,7 +11,7 @@ export async function POST(request: NextRequest) {
   if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // Block password change for OAuth-only accounts.
-  const { data: userRow, error: userErr } = await supabase
+  const { data: userRow, error: userErr } = await supabaseAdmin
     .from("HRMS_users")
     .select("auth_provider")
     .eq("id", session.id)
