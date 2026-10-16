@@ -13,7 +13,7 @@ begin
     select tablename
     from pg_catalog.pg_tables
     where schemaname = 'public'
-      and tablename like 'HRMS\\_%' escape '\\'
+      and tablename like 'HRMS!_%' escape '!'
   loop
     execute format('alter table public.%I enable row level security', hrms_table.tablename);
     execute format('revoke all privileges on table public.%I from anon, authenticated', hrms_table.tablename);
@@ -30,5 +30,5 @@ $$;
 -- join pg_catalog.pg_namespace n on n.oid = c.relnamespace
 -- where n.nspname = 'public'
 --   and c.relkind = 'r'
---   and c.relname like 'HRMS\\_%' escape '\\'
+--   and c.relname like 'HRMS!_%' escape '!'
 -- order by c.relname;
